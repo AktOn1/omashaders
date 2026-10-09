@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.omashaders",
   "name": "OmaShaders",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "One bar icon, three effect menus you can tick side by side: Screen (full-screen GLSL shaders on the GPU), Wallpaper (41 animated wallpaper effects, wallpaper picker) and Cursor (overlays around the mouse). Hover preview, favorites, Surprise me, GPU use.",
+  "description": "One bar icon, four effect menus you can tick side by side: Screen (full-screen GLSL effects on the GPU), Color (a colour grade that overrides the effect's colours), Wallpaper (41 animated wallpaper effects, wallpaper picker) and Cursor (overlays around the mouse). Hover preview, favorites, Surprise me, GPU use.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "OmaShaders",
-    "description": "Click to open the menu: tick Screen, Wallpaper and Cursor, hover to preview, Enter to keep. Right-click turns effects off, scroll steps the screen shader.",
+    "description": "Click to open the menu: tick Screen, Color, Wallpaper and Cursor, hover to preview, Enter to keep. Right-click turns effects off, scroll steps the screen shader.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",

@@ -5,8 +5,9 @@ import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
-// One bar icon, three effect menus (tick any of them at the top, ticked menus sit side by side):
-//   Screen    full-screen GLSL shaders applied by Hyprland (bin/omashaders)
+// One bar icon, four effect menus (tick any of them at the top, ticked menus sit side by side):
+//   Screen    full-screen GLSL effects applied by Hyprland (bin/omashaders)
+//   Color     a colour grade on top of the screen effect (merged into one shader by bin/compose-shader)
 //   Wallpaper animated GPU effects drawn over the wallpaper (WallpaperFx.qml) plus wallpaper picking
 //   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml)
 // hjkl / arrows move, hovering or moving onto an effect previews it, Enter keeps it and closes,
@@ -23,6 +24,8 @@ BarWidget {
   readonly property string omarchyDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy"
   readonly property string stateDir: omarchyDir + "/io.github.akton1.omashaders"
   readonly property string stateFile: stateDir + "/current"
+  readonly property string colorFile: stateDir + "/color"
+  readonly property string colorFavFile: stateDir + "/color-favorites"
   readonly property string animatedFile: stateDir + "/animated"
   readonly property string mouseFile: stateDir + "/mouse"
   readonly property string screenFavFile: stateDir + "/screen-favorites"
@@ -49,36 +52,40 @@ BarWidget {
 
   // ---------------------------------------------------------------- which menus are shown
   property bool showScreen: true
+  property bool showColor: true
   property bool showWall: true
   property bool showMouse: false
   property bool showCombo: false
   property string activeKind: "screen"
-  function isShown(k) { return k === "screen" ? showScreen : (k === "wall" ? showWall : (k === "mouse" ? showMouse : showCombo)) }
-  function secOf(k) { return k === "screen" ? screenSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : comboSec)) }
-  function kindTitle(k) { return k === "screen" ? "Screen" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : "Combos")) }
-  readonly property var visibleKinds: ["screen", "wall", "mouse", "combo"].filter(function(k) { return isShown(k) })
+  function isShown(k) { return k === "screen" ? showScreen : (k === "color" ? showColor : (k === "wall" ? showWall : (k === "mouse" ? showMouse : showCombo))) }
+  function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : comboSec))) }
+  function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : "Combos"))) }
+  readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "combo"].filter(function(k) { return isShown(k) })
   readonly property int nVis: visibleKinds.length
   // effect menus that "off" and "surprise" act on; with only Combos shown they act on all three
   readonly property var effectKinds: {
     var k = visibleKinds.filter(function(x) { return x !== "combo" })
-    return k.length > 0 ? k : ["screen", "wall", "mouse"]
+    return k.length > 0 ? k : ["screen", "color", "wall", "mouse"]
   }
   readonly property int nEffectVis: visibleKinds.filter(function(x) { return x !== "combo" }).length
   readonly property real comboWeight: 1
-  readonly property real widthUnits: nEffectVis + (showCombo ? comboWeight : 0)
+  readonly property real colorWeight: 0.85
+  readonly property real widthUnits: (showScreen ? 1 : 0) + (showColor ? colorWeight : 0) + (showWall ? 1 : 0) + (showMouse ? 1 : 0) + (showCombo ? comboWeight : 0)
   readonly property string focusKind: visibleKinds.indexOf(activeKind) >= 0 ? activeKind : (visibleKinds[0] || "screen")
   readonly property var activeSec: secOf(focusKind)
 
-  function setShown(s, w, m, persist, c) {
+  function setShown(s, w, m, persist, c, k) {
     if (c === undefined) c = showCombo
-    if (!s && !w && !m && !c) return
-    var before = { screen: showScreen, wall: showWall, mouse: showMouse, combo: showCombo }
+    if (k === undefined) k = showColor
+    if (!s && !w && !m && !c && !k) return
+    var before = { screen: showScreen, color: showColor, wall: showWall, mouse: showMouse, combo: showCombo }
     showScreen = s
+    showColor = k
     showWall = w
     showMouse = m
     showCombo = c
-    ;["screen", "wall", "mouse", "combo"].forEach(function(k) {
-      if (isShown(k) && !before[k]) { secOf(k).sync(); activeKind = k }
+    ;["screen", "color", "wall", "mouse", "combo"].forEach(function(kind) {
+      if (isShown(kind) && !before[kind]) { secOf(kind).sync(); activeKind = kind }
     })
     if (persist) writeFile(sectionsFile, visibleKinds.join(" "))
   }
@@ -86,7 +93,8 @@ BarWidget {
     setShown(kind === "screen" ? !showScreen : showScreen,
              kind === "wall" ? !showWall : showWall,
              kind === "mouse" ? !showMouse : showMouse, true,
-             kind === "combo" ? !showCombo : showCombo)
+             kind === "combo" ? !showCombo : showCombo,
+             kind === "color" ? !showColor : showColor)
   }
   function setSections(mode) {
     var w = String(mode).toLowerCase().split(/[\s,+]+/)
@@ -94,7 +102,8 @@ BarWidget {
     var both = all || w.indexOf("both") >= 0
     setShown(both || w.indexOf("screen") >= 0, both || w.indexOf("wall") >= 0 || w.indexOf("wallpaper") >= 0,
              all || w.indexOf("mouse") >= 0 || w.indexOf("cursor") >= 0, true,
-             all || w.indexOf("combo") >= 0 || w.indexOf("combos") >= 0)
+             all || w.indexOf("combo") >= 0 || w.indexOf("combos") >= 0,
+             both || w.indexOf("color") >= 0 || w.indexOf("colour") >= 0)
   }
   FileView {
     path: root.sectionsFile
@@ -103,9 +112,9 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: {
       var t = String(text() || "")
-      var s = t.indexOf("screen") >= 0, w = t.indexOf("wall") >= 0, m = t.indexOf("mouse") >= 0, c = t.indexOf("combo") >= 0
-      if (!s && !w && !m && !c) { s = true; w = true }
-      root.setShown(s, w, m, false, c)
+      var s = t.indexOf("screen") >= 0, w = t.indexOf("wall") >= 0, m = t.indexOf("mouse") >= 0, c = t.indexOf("combo") >= 0, k = t.indexOf("color") >= 0
+      if (!s && !w && !m && !c && !k) { s = true; k = true; w = true }
+      root.setShown(s, w, m, false, c, k)
     }
   }
 
@@ -135,12 +144,12 @@ BarWidget {
   property bool screenPreviewed: false
   property string screenPending: ""
 
-  readonly property var screenEntries: allEntries.filter(function(e) { return e.section !== "mouse" })
+  readonly property var screenEntries: allEntries.filter(function(e) { return e.section === "screen" })
   function screenItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: e.animated ? "heavy" : "" } }
   readonly property var screenItems: screenEntries.filter(function(e) { return includeAnimated || !e.animated }).map(screenItem)
   readonly property var screenCats: {
     var out = [{ id: "fav", label: "Favorites", items: favList(screenItems, screenFavs), note: favNote }]
-    catList(screenEntries, ["Comfort", "Color", "Retro", "Devices", "Mood", "Motion"]).forEach(function(c) {
+    catList(screenEntries, ["Retro", "Devices", "Mood", "Motion"]).forEach(function(c) {
       out.push({ id: c, label: c,
                  items: screenEntries.filter(function(e) { return e.cat === c && (includeAnimated || !e.animated) }).map(screenItem),
                  note: (c === "Motion" && !includeAnimated) ? "Heavy GPU use. Press a to turn animated screen effects on." : "" })
@@ -151,7 +160,7 @@ BarWidget {
   }
 
   function applyScreen(name) {
-    Quickshell.execDetached(name === "" ? [root.script, "off"] : [root.script, "set", name])
+    Quickshell.execDetached(name === "" ? [root.script, "effect", "off"] : [root.script, "effect", "set", name])
   }
   function previewScreen(it) {
     if (!it || it.id.charAt(0) === "@" || it.id === current) { screenTimer.stop(); return }
@@ -189,7 +198,7 @@ BarWidget {
         })
         var first = root.allEntries.length === 0
         root.allEntries = out
-        if (first && root.popupOpen) { screenSec.sync(); mouseSec.sync() }
+        if (first && root.popupOpen) { screenSec.sync(); colorSec.sync(); mouseSec.sync() }
       }
     }
   }
@@ -220,10 +229,65 @@ BarWidget {
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name === "configreloaded" && root.shaderOn) reapplyTimer.restart()
+      if (event.name === "configreloaded" && (root.shaderOn || root.colorOn)) reapplyTimer.restart()
     }
   }
   Timer { id: reapplyTimer; interval: 400; onTriggered: root.screenStep("reapply") }
+
+  // ---------------------------------------------------------------- colour grade (merged with the screen effect)
+  property string colorCurrent: ""
+  property var colorFavs: []
+  property string colorOrigin: ""
+  property bool colorPreviewed: false
+  property string colorPending: ""
+  readonly property bool colorOn: colorCurrent !== ""
+
+  readonly property var colorEntries: allEntries.filter(function(e) { return e.section === "color" })
+  function colorItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: "" } }
+  readonly property var colorItems: colorEntries.map(colorItem)
+  readonly property var colorCats: {
+    var out = [{ id: "fav", label: "Favorites", items: favList(colorItems, colorFavs), note: favNote }]
+    catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
+      out.push({ id: c, label: c, items: colorEntries.filter(function(e) { return e.cat === c }).map(colorItem), note: "" })
+    })
+    out.push({ id: "@random", label: "Surprise me", action: true })
+    out.push({ id: "@off", label: "Off", action: true })
+    return out
+  }
+
+  function applyColor(name) {
+    Quickshell.execDetached(name === "" ? [root.script, "color", "off"] : [root.script, "color", "set", name])
+  }
+  function previewColor(it) {
+    if (!it || it.id.charAt(0) === "@" || it.id === colorCurrent) { colorTimer.stop(); return }
+    colorPending = it.id
+    colorPreviewed = true
+    colorTimer.restart()
+  }
+  Timer { id: colorTimer; interval: 140; onTriggered: root.applyColor(root.colorPending) }
+  function chooseColor(it, keep) {
+    if (!it) return
+    colorTimer.stop()
+    applyColor(it.id)
+    colorOrigin = it.id
+    colorPreviewed = false
+    if (!keep) popupOpen = false
+  }
+  FileView {
+    path: root.colorFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.colorCurrent = String(text() || "").trim()
+    onLoadFailed: root.colorCurrent = ""
+  }
+  FileView {
+    path: root.colorFavFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.colorFavs = String(text() || "").split(/\s+/).filter(function(f) { return f !== "" })
+  }
 
   // ---------------------------------------------------------------- cursor overlays (MouseFx)
   property string mouseCurrent: ""
@@ -539,23 +603,23 @@ BarWidget {
   }
 
   // ---------------------------------------------------------------- combination favorites
-  // A combo is the Screen shader, Wallpaper effect and Cursor effect together; one line per combo
-  // in the state file: "screen|wall|mouse" (an empty part means off).
+  // A combo is the Screen effect, Wallpaper effect, Cursor effect and Color together; one line per combo
+  // in the state file: "screen|wall|mouse|color" (an empty part means off; older 3-part lines have no colour).
   property var combos: []
   property string comboFlash: ""
-  function comboKey(s, w, m) { return s + "|" + w + "|" + m }
+  function comboKey(s, w, m, c) { return s + "|" + w + "|" + m + "|" + c }
   function comboItem(line) {
     var p = line.split("|")
-    var s = p[0] || "", w = p[1] || "", m = p[2] || ""
-    var names = [s, w !== "" ? wallLabel(w) : "", m].filter(function(x) { return x !== "" })
-    return { id: line, screen: s, wall: w, mouse: m, label: names.join(" + "),
-             desc: "Screen " + (s || "off") + " · Wallpaper " + (w !== "" ? wallLabel(w) : "off") + " · Cursor " + (m || "off") }
+    var s = p[0] || "", w = p[1] || "", m = p[2] || "", c = p[3] || ""
+    var names = [s, c, w !== "" ? wallLabel(w) : "", m].filter(function(x) { return x !== "" })
+    return { id: line, screen: s, wall: w, mouse: m, color: c, label: names.join(" + "),
+             desc: "Screen " + (s || "off") + " · Color " + (c || "off") + " · Wallpaper " + (w !== "" ? wallLabel(w) : "off") + " · Cursor " + (m || "off") }
   }
   readonly property var comboItems: combos.map(comboItem)
-  readonly property string comboNow: comboKey(current, wallShown, mouseCurrent)
+  readonly property string comboNow: comboKey(current, wallShown, mouseCurrent, colorCurrent)
   readonly property var comboCats: [
     { id: "combos", label: "Saved", items: comboItems,
-      note: "No combos yet. Set up Screen, Wallpaper and Cursor the way you like, then press F." },
+      note: "No combos yet. Set up Screen, Color, Wallpaper and Cursor the way you like, then press F." },
     { id: "@save", label: "Save current  (F)", action: true }
   ]
   function flash(msg) { comboFlash = msg; comboFlashTimer.restart() }
@@ -563,7 +627,7 @@ BarWidget {
 
   function saveCombo() {
     var key = comboNow
-    if (key === "||") { flash("Nothing to save: every effect is off"); return }
+    if (key === "|||") { flash("Nothing to save: every effect is off"); return }
     var label = comboItem(key).label
     if (combos.indexOf(key) >= 0) { flash("Already saved: " + label); return }
     combos = combos.concat([key])
@@ -582,12 +646,14 @@ BarWidget {
   function previewCombo(it) {
     if (!it || it.id.charAt(0) === "@") return
     previewScreen({ id: it.screen })
+    previewColor({ id: it.color })
     previewMouse({ id: it.mouse })
     if (it.wall !== "") previewWall({ id: it.wall })
   }
   function applyCombo(it, keep) {
     if (!it || it.id.charAt(0) === "@") return
     chooseScreen({ id: it.screen }, true)
+    chooseColor({ id: it.color }, true)
     chooseMouse({ id: it.mouse }, true)
     setWall(it.wall, true)
     if (!keep) popupOpen = false
@@ -601,7 +667,8 @@ BarWidget {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.combos = String(text() || "").split("\n").filter(function(l) { return l.split("|").length === 3 && l !== "||" })
+    onLoaded: root.combos = String(text() || "").split("\n").map(function(l) { return l.split("|").length === 3 ? l + "|" : l })
+                                .filter(function(l) { return l.split("|").length === 4 && l !== "|||" })
   }
 
   // ---------------------------------------------------------------- GPU use (only while the menu is open)
@@ -646,29 +713,39 @@ BarWidget {
   onPopupOpenChanged: {
     if (popupOpen) {
       screenOrigin = current
+      colorOrigin = colorCurrent
       mouseOrigin = mouseCurrent
       screenPreviewed = false
+      colorPreviewed = false
       mousePreviewed = false
       wallPreviewed = false
       activeKind = visibleKinds[0]
       screenSec.sync()
+      colorSec.sync()
       wallSec.sync()
       mouseSec.sync()
       comboSec.sync()
     } else {
       screenTimer.stop()
+      colorTimer.stop()
       mouseTimer.stop()
       if (screenPreviewed) { applyScreen(screenOrigin); screenPreviewed = false }
+      if (colorPreviewed) { applyColor(colorOrigin); colorPreviewed = false }
       if (mousePreviewed) { applyMouse(mouseOrigin); mousePreviewed = false }
       clearWallPreview()
     }
   }
 
-  function savedOf(k) { return k === "screen" ? current : (k === "wall" ? wallSaved : mouseCurrent) }
-  function favsOf(k) { return k === "screen" ? screenFavs : (k === "wall" ? wallFavs : mouseFavs) }
-  function favFileOf(k) { return k === "screen" ? screenFavFile : (k === "wall" ? wallFavFile : mouseFavFile) }
-  function itemsOf(k) { return k === "screen" ? screenItems : (k === "wall" ? wallEffects : mouseItems) }
-  function chooseIn(k, it, keep) { if (k === "screen") chooseScreen(it, keep); else if (k === "wall") chooseWall(it, keep); else chooseMouse(it, keep) }
+  function savedOf(k) { return k === "screen" ? current : (k === "color" ? colorCurrent : (k === "wall" ? wallSaved : mouseCurrent)) }
+  function favsOf(k) { return k === "screen" ? screenFavs : (k === "color" ? colorFavs : (k === "wall" ? wallFavs : mouseFavs)) }
+  function favFileOf(k) { return k === "screen" ? screenFavFile : (k === "color" ? colorFavFile : (k === "wall" ? wallFavFile : mouseFavFile)) }
+  function itemsOf(k) { return k === "screen" ? screenItems : (k === "color" ? colorItems : (k === "wall" ? wallEffects : mouseItems)) }
+  function chooseIn(k, it, keep) {
+    if (k === "screen") chooseScreen(it, keep)
+    else if (k === "color") chooseColor(it, keep)
+    else if (k === "wall") chooseWall(it, keep)
+    else chooseMouse(it, keep)
+  }
   function offIn(k) {
     if (k === "combo") offAll()
     else if (k === "wall") setWall("", true)
@@ -694,6 +771,7 @@ BarWidget {
     var next = favsOf(k).filter(function(f) { return f !== it.id })
     if (next.length === favsOf(k).length) next.push(it.id)
     if (k === "screen") screenFavs = next
+    else if (k === "color") colorFavs = next
     else if (k === "wall") wallFavs = next
     else mouseFavs = next
     writeFile(favFileOf(k), next.join("\n"))
@@ -730,6 +808,7 @@ BarWidget {
     else if (t === "F") saveCombo()
     else if (t === "m") toggleSection("combo")
     else if (t === "s") toggleSection("screen")
+    else if (t === "C") toggleSection("color")
     else if (t === "w") toggleSection("wall")
     else if (t === "c") toggleSection("mouse")
     else if (t === "x") setShiftOnly(!shiftOnly)
@@ -742,6 +821,7 @@ BarWidget {
     function open(): void { root.open() }
     function close(): void { root.close() }
     function set(name: string): void { root.applyScreen(name === "off" ? "" : name) }
+    function setColor(name: string): void { root.applyColor(name === "off" ? "" : name) }
     function setMouse(name: string): void { root.applyMouse(name === "off" ? "" : name) }
     function wallpaper(name: string): void { root.setWall(name === "off" ? "" : name, true) }
     function sections(mode: string): void { root.setSections(mode) }
@@ -755,7 +835,7 @@ BarWidget {
     wallStep("status")
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; shift 2; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.stateFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile,
+                             root.stateDir, root.wallPreviewFile, root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -768,8 +848,9 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.barGlyph
-    active: root.shaderOn || root.wallOn || root.mouseOn
+    active: root.shaderOn || root.colorOn || root.wallOn || root.mouseOn
     tooltipText: "OmaShaders\nScreen: " + (root.shaderOn ? root.current : "off")
+                 + "\nColor: " + (root.colorOn ? root.colorCurrent : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus : "")
@@ -1124,12 +1205,17 @@ BarWidget {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 5) / 6
+          readonly property real cell: (width - spacing * 6) / 7
 
           MenuRow {
             width: header.cell
             label: (root.showScreen ? root.boxOn : root.boxOff) + "  Screen  (s)"
             onClicked: root.toggleSection("screen")
+          }
+          MenuRow {
+            width: header.cell
+            label: (root.showColor ? root.boxOn : root.boxOff) + "  Color  (C)"
+            onClicked: root.toggleSection("color")
           }
           MenuRow {
             width: header.cell
@@ -1184,7 +1270,30 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showScreen && (root.showWall || root.showMouse || root.showCombo)
+            visible: root.showScreen && (root.showColor || root.showWall || root.showMouse || root.showCombo)
+            width: 1
+            height: screenSec.implicitHeight
+            color: root.fgA(0.2)
+          }
+
+          SectionMenu {
+            id: colorSec
+            visible: root.showColor
+            width: Math.floor(secRow.secWidth * root.colorWeight)
+            title: "Color"
+            cats: root.colorCats
+            saved: root.colorCurrent
+            favs: root.colorFavs
+            focused: root.focusKind === "color"
+            defaultCat: 1
+            onPointed: function(item) { root.previewColor(item) }
+            onChosen: function(item, keep) { root.chooseColor(item, keep) }
+            onActed: function(id) { root.runAction("color", id) }
+            onFocusRequested: root.activeKind = "color"
+          }
+
+          Rectangle {
+            visible: root.showColor && (root.showWall || root.showMouse || root.showCombo)
             width: 1
             height: screenSec.implicitHeight
             color: root.fgA(0.2)
@@ -1266,7 +1375,7 @@ BarWidget {
             if (root.comboFlash !== "") return root.comboFlash
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
-            return "Screen: " + (root.shaderOn ? root.current : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off")
+            return "Screen: " + (root.shaderOn ? root.current : "off") + " · Color: " + (root.colorOn ? root.colorCurrent : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off")
           }
           color: root.fg
           font.family: root.bar.fontFamily
@@ -1279,7 +1388,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "hjkl move · ⏎ apply · space try · tab menu · f fav · F save combo · r/R surprise · o/O off · s w c m menus · esc undo"
+          text: "hjkl move · ⏎ apply · space try · tab menu · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc undo"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""compose-shader EFFECT.frag COLOR.frag OUT.frag: run the effect, then the colour shader on its result."""
+import re, sys
+
+HEADER = re.compile(r'^\s*(#version\b|precision\b|in\s+vec2\s+v_texcoord|uniform\s+sampler2D\s+tex\b|uniform\s+float\s+time\b|layout\s*\(location\s*=\s*0\)\s*out\s+vec4\s+fragColor)')
+
+def body(path, main_name, prefix=None, sample=None):
+    src = open(path).read()
+    lines = [l for l in src.splitlines() if not HEADER.match(l)]
+    text = "\n".join(lines)
+    if prefix:
+        for name in set(re.findall(r'^(?:const\s+)?(?:float|int|vec[234]|mat[234]|void)\s+(\w+)\s*[(\[=]', text, re.M)):
+            if name != "main":
+                text = re.sub(r'\b%s\b' % re.escape(name), prefix + name, text)
+    text = re.sub(r'\bvoid\s+main\s*\(\s*\)', 'void %s()' % main_name, text, count=1)
+    if sample:
+        text = text.replace('texture(tex, v_texcoord)', sample)
+    return src, text
+
+fx_src, fx = body(sys.argv[1], "fx_main")
+_, col = body(sys.argv[2], "col_main", prefix="c_", sample="fx_in")
+animated = re.search(r'uniform\s+float\s+time\b', fx_src) is not None
+out = ["#version 300 es", "// composed: effect %s + colour %s" % (sys.argv[1], sys.argv[2]),
+       "precision highp float;", "in vec2 v_texcoord;", "uniform sampler2D tex;"]
+if animated:
+    out.append("uniform float time;")
+out += ["layout(location = 0) out vec4 fragColor;", fx, "vec4 fx_in;", col,
+        "void main() { fx_main(); fx_in = fragColor; col_main(); }", ""]
+open(sys.argv[3], "w").write("\n".join(out))

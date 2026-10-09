@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # omashaders: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
-# usage: omashaders list [-a] | listall (name, static|animated|motion, category, description, screen|mouse; tab separated) | mouse [status|list|set NAME|off] | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
-# The cycle is: each shader, then off. Shaders that declare `uniform float time` (animated)
+# usage: omashaders list [-a] | listall (name, static|animated|motion, category, description, screen|color|mouse; tab separated)
+#        | effect [status|list|set NAME|off] | color [status|list|set NAME|off] | mouse [status|list|set NAME|off]
+#        | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
+# Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
+# shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
+# `off` turns both layers off; `set NAME` sets the effect (a colour name sets the colour layer instead).
+# The cycle is: each effect, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
-DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/shaders"
-MDIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/mouse-effects"
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+DIR="$ROOT/shaders"
+CDIR="$ROOT/colors"
+MDIR="$ROOT/mouse-effects"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
 STATE="$STATE_DIR/current"
 names() {
@@ -14,7 +21,10 @@ names() {
     basename "$f" .frag
   done
 }
+COLOR_STATE="$STATE_DIR/color"
 current() { cat "$STATE" 2>/dev/null; }
+current_color() { cat "$COLOR_STATE" 2>/dev/null; }
+color_names() { for f in "$CDIR"/*.frag; do [ -e "$f" ] && basename "$f" .frag; done; }
 is_animated() { grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$1"; }
 # "animated" is a persisted on/off switch for the picker and the cycle; prints 1 or 0 (empty = never set)
 animated_flag() { cat "$STATE_DIR/animated" 2>/dev/null; }
@@ -32,26 +42,55 @@ gpu() {
   echo na
 }
 # Animated shaders need damage tracking off (Hyprland warns otherwise); static ones and off restore it.
-apply() {
+hypr_apply() {
   local dt=2
   [ -n "$1" ] && is_animated "$1" && dt=0
   hyprctl eval "hl.config({debug={damage_tracking=$dt}, decoration={screen_shader='$1'}})" >/dev/null
 }
-set_shader() {
-  [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
-  apply "$DIR/$1.frag"; mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"
+# apply the current effect and colour layers: none, one file, or a merged file
+apply() {
+  local fx col file="" out
+  fx=$(current); col=$(current_color)
+  [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
+  [ -n "$col" ] && [ ! -f "$CDIR/$col.frag" ] && col=""
+  if [ -n "$fx" ] && [ -n "$col" ]; then
+    out="$STATE_DIR/composed/$fx+$col.frag"
+    if [ ! -s "$out" ] || [ "$out" -ot "$DIR/$fx.frag" ] || [ "$out" -ot "$CDIR/$col.frag" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
+      mkdir -p "$STATE_DIR/composed"
+      python3 "$ROOT/bin/compose-shader" "$DIR/$fx.frag" "$CDIR/$col.frag" "$out.tmp" && mv "$out.tmp" "$out" || { echo "could not combine $fx + $col" >&2; exit 1; }
+    fi
+    file="$out"
+  elif [ -n "$fx" ]; then file="$DIR/$fx.frag"
+  elif [ -n "$col" ]; then file="$CDIR/$col.frag"
+  fi
+  hypr_apply "$file"
 }
-turn_off() { apply ""; mkdir -p "$STATE_DIR"; : > "$STATE"; }
+# serialise state writes + apply, so a combo that sets effect and colour at once ends in the right state
+lock() { mkdir -p "$STATE_DIR"; exec 9>"$STATE_DIR/lock"; flock 9; }
+set_shader() {
+  lock
+  if [ ! -f "$DIR/$1.frag" ] && [ -f "$CDIR/$1.frag" ]; then set_color "$1"; return; fi
+  [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
+  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; apply
+}
+set_color() {
+  lock
+  [ -f "$CDIR/$1.frag" ] || { echo "unknown colour: $1" >&2; exit 1; }
+  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; apply
+}
+effect_off() { lock; : > "$STATE"; apply; }
+color_off() { lock; : > "$COLOR_STATE"; apply; }
+turn_off() { lock; : > "$STATE"; : > "$COLOR_STATE"; apply; }
 step() { # step DIRECTION(1|-1) [-a]
   local list=() n cur i idx=-1
   while read -r n; do [ -n "$n" ] && list+=("$n"); done < <(names "$2")
   cur=$(current)
-  [ ${#list[@]} -gt 0 ] || { turn_off; return; }
+  [ ${#list[@]} -gt 0 ] || { effect_off; return; }
   for i in "${!list[@]}"; do [ "${list[$i]}" = "$cur" ] && idx=$i; done
   # positions 0..N-1 are shaders, N is "off"; an unknown/off current sits at N
   local total=$(( ${#list[@]} + 1 )) pos=$(( idx < 0 ? ${#list[@]} : idx ))
   pos=$(( (pos + $1 + total) % total ))
-  if [ "$pos" -eq ${#list[@]} ]; then turn_off; else set_shader "${list[$pos]}"; fi
+  if [ "$pos" -eq ${#list[@]} ]; then effect_off; else set_shader "${list[$pos]}"; fi
 }
 case "${1:-}" in
   list) names "$2" ;;
@@ -61,12 +100,34 @@ case "${1:-}" in
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\t%s\t%s\t%s\tscreen\n' "$n" "$kind" "${cat:-Other}" "$desc"
     done
+    for f in "$CDIR"/*.frag; do
+      [ -e "$f" ] || continue
+      n=$(basename "$f" .frag)
+      cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
+      printf '%s\tstatic\t%s\t%s\tcolor\n' "$n" "${cat:-Other}" "$desc"
+    done
     for f in "$MDIR"/*.frag; do
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; [ "$(sed -n 's|^// motion: *||p' "$f" | head -1)" = yes ] && kind=motion
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc"
     done ;;
+  effect)
+    case "${2:-status}" in
+      status) current | grep . || echo off ;;
+      list) names -a ;;
+      off) effect_off ;;
+      set) set_shader "$3" ;;
+      *) echo "usage: omashaders effect [status|list|set NAME|off]" >&2; exit 1 ;;
+    esac ;;
+  color)
+    case "${2:-status}" in
+      status) current_color | grep . || echo off ;;
+      list) color_names ;;
+      off) color_off ;;
+      set) set_color "$3" ;;
+      *) echo "usage: omashaders color [status|list|set NAME|off]" >&2; exit 1 ;;
+    esac ;;
   mouse) # an overlay drawn by the bar icon around the cursor; independent of the screen shader
     MSTATE="$STATE_DIR/mouse"
     case "${2:-status}" in
@@ -86,14 +147,14 @@ case "${1:-}" in
     esac
     mkdir -p "$STATE_DIR"; echo "$val" > "$STATE_DIR/animated"
     cur=$(current)
-    if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && is_animated "$DIR/$cur.frag"; then turn_off; fi ;;
+    if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && is_animated "$DIR/$cur.frag"; then effect_off; fi ;;
   gpu) gpu ;;
   status) current | grep . || echo off ;;
   off) turn_off ;;
   on|set) set_shader "$2" ;;
-  toggle) if [ -n "$(current)" ]; then turn_off; else set_shader "${2:-vignette}"; fi ;;
+  toggle) if [ -n "$(current)$(current_color)" ]; then turn_off; else set_shader "${2:-vignette}"; fi ;;
   next) step 1 "$2" ;;
   prev) step -1 "$2" ;;
-  reapply) cur=$(current); [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && apply "$DIR/$cur.frag" ;;
+  reapply) [ -n "$(current)$(current_color)" ] && apply ;;
   *) sed -n 2,5p "$0" | sed 's/^# \?//' >&2; exit 1 ;;
 esac
