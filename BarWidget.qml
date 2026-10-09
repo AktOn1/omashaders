@@ -34,7 +34,7 @@ BarWidget {
   property bool previewed: false
   property string pending: ""
 
-  readonly property var catOrder: ["Comfort", "Color", "Retro", "Mood", "Motion"]
+  readonly property var catOrder: ["Comfort", "Color", "Retro", "Devices", "Mood", "Motion"]
   readonly property var catNames: {
     var seen = {}, out = []
     root.catOrder.forEach(function(c) { seen[c] = true; out.push(c) })
