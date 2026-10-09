@@ -55,7 +55,8 @@ case "$1" in
   status) status ;;
   list) printf '%s\n' "${LIST[@]}" ;;
   pick)
-    PICKDIR="${XDG_RUNTIME_DIR:-/tmp}/omashaders-wallpaper-pick"
+    [[ -n ${XDG_RUNTIME_DIR:-} ]] || { echo "XDG_RUNTIME_DIR is not set" >&2; exit 1; }
+    PICKDIR="$XDG_RUNTIME_DIR/omashaders-wallpaper-pick"
     rm -rf "$PICKDIR"; mkdir -p "$PICKDIR"
     n=0
     for f in "${LIST[@]}"; do

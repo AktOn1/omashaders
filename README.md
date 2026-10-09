@@ -1,67 +1,138 @@
 # OmaShaders
 
-One bar icon (monitor glyph), four effect menus. Tick **Screen**, **Color**, **Wallpaper** and/or **Cursor** at the top of the menu; ticked menus sit side by side (your choice is remembered).
+<a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-- **Screen**: full-screen GLSL effects over all monitors (38 of them in Lens, Retro, Devices, Art, Mood, Ambient, Motion), applied by Hyprland on the GPU. These change the look (CRT, pixelate, halation, godrays, oil paint, matrix rain, glitch ...).
-- **Color**: a colour grade on top of the screen effect (44 grades in Comfort, Color, Retro, Devices: warm, sepia, e-ink, vaporwave, teal-orange, kodachrome, Game Boy, phosphor ...). It always wins over the colours an effect brings, so any effect + any colour works. Pick only an effect, only a colour, or both.
-- **Wallpaper**: 41 animated effects drawn over your wallpaper in the theme colours (follows the mouse, weather and nature, scenes, looks) and a wallpaper picker (pick an image, next, previous).
-- **Cursor**: small overlays around the mouse pointer (Focus, Glow, Trail).
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 41 animated wallpaper effects and 11 cursor effects. Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
 
-**Strength.** Screen and Color each have a strength slider (0-100 %) under their list. Every effect starts at a value where text stays readable (pixelate 20 %, Game Boy LCD 25 %, C64 25 %, ...; the small tick on the slider marks it) and the value you pick is remembered per effect. Drag the slider, scroll over it, or use `[` `]` (5 %), `{` `}` (1 %), `d` back to the effect's start value; right-click the slider also resets it. Keys act on the focused menu (Screen or Color).
+> **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
-**Enable / disable.** `p` (or the **Enabled** box at the top of the menu) pauses every effect (screen, colour, wallpaper, cursor) and brings them back exactly as they were. A global key binding, `Super+Alt+S`, does the same from anywhere (`bin/omashaders power toggle --notify`, see `~/.config/hypr/bindings.lua`). Picking a new effect also un-pauses.
+![Nine of the screen effects, each combined with a colour grade](preview.png)
 
-Keys: `h j k l` or arrows move, `Tab` jumps between menus (`l` on the last effect of a menu goes to the next menu), moving onto an effect with the keys previews it live; hovering with the mouse only highlights it, and previews only while `Shift` is held (a click always keeps it), `Enter` keeps it and closes, `Space` keeps it and stays open, `Esc`/`q` puts the old effects back. `f` favorite (own list per menu), `r` Surprise me in the focused menu, `R` in every ticked menu, `o` off in the focused menu, `O` in every ticked menu, `s` `C` `w` `c` tick Screen / Color / Wallpaper / Cursor, `a` animated screen shaders, `g`/`G` top/bottom, `1`-`9` jump to a category. The last line shows GPU use: this shell (draws wallpaper and cursor effects), Hyprland (the screen shader) and all apps, plus VRAM.
+*The picture is a sample desktop rendered with the plugin's own shaders (`bin/shader-preview`), not a screenshot of the menu.*
 
-Bar icon: **left click** menu · **right click** all ticked effects off · **middle click** next wallpaper · **scroll** steps the screen shader (wallpapers when Screen is unticked).
-Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power on|off|toggle|strength effect|color N|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|sections screen|color|wall|mouse|both|all`.
-## Combos
-A combo is Screen effect + Color + Wallpaper + Cursor effect saved together. Tick **Combos** (`m`) for another menu: `Enter` applies a combo, moving over one previews it, `Esc` undoes. `F` (anywhere in the menu) saves the current combination; `f` on a combo removes it. They live in `~/.local/state/omarchy/io.github.akton1.omashaders/combos`, one `screen|wall|mouse|color` line each (older 3-part lines still load, without a colour). From a key binding: `omarchy-shell io.github.akton1.omashaders combo N` applies the Nth combo, `combo save` saves the current one.
+## Install
 
-## Shift only
-Cursor effects and the wallpaper effects' mouse reaction can be limited to "only while Shift is held": press `x` in the menu, or `omarchy-shell io.github.akton1.omashaders shiftOnly on|off|toggle` (plugin setting `cursorNeedsShift` is the starting value; default off). Hyprland has to forward the key, add this to `~/.config/hypr/bindings.lua` (and the same line for `Shift_R`):
+```
+omarchy plugin add https://github.com/AktOn1/omashaders.git --enable
+```
 
-    hl.bind("Shift_L", hl.dsp.global("omashaders:shift"), { non_consuming = true, dont_inhibit = true })
+Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy shell settings. Restart the shell once (`omarchy-restart-shell`) if the icon does not appear.
 
-Without that binding the effects would never show while the option is on. Shift still reaches apps normally.
+## Requirements
 
-Hyprland forgets the screen shader on a config reload; the icon re-applies it.
-The animated-screen switch is remembered in the state dir; the plugin setting `includeAnimated` (default off) is only its starting value. `fps` (default 30) is the frame rate of wallpaper and cursor effects.
-Replaces the separate Wallpaper Switcher plugin (`io.github.akton1.wallpaper-switcher`), which can be disabled.
+- Omarchy with the shell plugin system and Hyprland 0.56 or newer (Lua config). The screen effects are set with `hyprctl eval`.
+- `python` 3 and `bash`. For the wallpaper picker: Omarchy's own `omarchy-menu-images` and `omarchy-theme-bg-set`.
+- Optional: `nvidia-smi` (NVIDIA) for the GPU line in the menu footer; on AMD it is read from sysfs. Without either the line is empty.
+- No build tools are needed: the compiled wallpaper and cursor shaders (`.frag.qsb`) are included.
 
-Install: link or clone into `~/.config/omarchy/plugins/io.github.akton1.omashaders`, then
-`omarchy plugin enable io.github.akton1.omashaders`. Removal: `omarchy plugin remove io.github.akton1.omashaders`,
-then `rm -rf ~/.local/state/omarchy/io.github.akton1.omashaders` and `hyprctl reload`.
+## First run
 
+1. Click the monitor icon in the bar. A menu with up to five columns opens: **Screen**, **Color**, **Wallpaper**, **Cursor** and **Combos**. Tick the ones you want at the top; ticked menus sit side by side and your choice is remembered.
+2. Move with `h j k l` or the arrow keys. Moving onto an effect with the keys previews it live; hovering with the mouse only highlights it (hold `Shift` while hovering to preview).
+3. `Enter` keeps the effect and closes, `Space` keeps it and stays open, a click keeps it and stays open, `Esc` puts everything back as it was.
+4. Pick an effect and a colour together: the effect runs first, then the colour grade is applied to its result (for example `crt` + `gameboy` is a CRT look in Game Boy greens).
+5. Lower the **Strength** slider if an effect is too strong. Every effect starts at a readable value (pixelate 20 %, Game Boy LCD 25 %, C64 25 % ...); 0 % is the original screen.
 
-Full-screen GLSL effects over all monitors via Hyprland `decoration:screen_shader`.
-Runs inside the compositor on the GPU: no extra window, no CPU use, same cost on every monitor.
+## Usage
 
-    bin/omashaders list | status | set NAME | off | toggle [NAME] | next | prev   (add -a to include animated) | animated [on|off|toggle] | gpu
-    bin/omashaders effect [status|list|set NAME|off] | color [status|list|set NAME|off]
-    bin/omashaders strength [effect|color [N|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
+Bar icon: **left click** menu, **right click** all effects off, **middle click** next wallpaper, **scroll** steps the screen effect.
 
-Effects live in `shaders/*.frag`, colour grades in `colors/*.frag` (GLSL ES 3.00, uniforms `tex`, `time`, input `v_texcoord`).
-Validate with `glslangValidator -S frag shaders/NAME.frag`. Hyprland runs only one screen shader, so with an effect and a colour set,
-`bin/compose-shader` merges them into `<state dir>/built/EFFECT@S+COLOR@S.frag` (effect first, the colour then reads the effect's result, each with its strength baked in as a constant because Hyprland has no custom uniforms);
-`off` clears both, `effect off` / `color off` one layer. `set NAME` with a colour name sets the colour layer (old behaviour).
-Hyprland 0.56 uses the Lua parser: set via `hyprctl eval`, `hyprctl keyword` does not work.
+| Key | Action |
+| --- | --- |
+| `h j k l`, arrows | move between categories, effects and menus |
+| `Tab` | jump to the next menu |
+| `Enter` / `Space` | keep (and close) / keep and stay open |
+| `Esc`, `q` | undo and close |
+| `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen or Color menu) |
+| `p` | pause or resume every effect; they come back exactly as they were |
+| `f` | favourite (each menu has its own list) |
+| `F` | save the current Screen + Color + Wallpaper + Cursor combination as a combo (`m` shows the Combos menu) |
+| `r` / `R` | Surprise me in the focused menu / in every ticked menu |
+| `o` / `O` | off in the focused menu / in every ticked menu |
+| `s` `C` `w` `c` `m` | tick Screen / Color / Wallpaper / Cursor / Combos |
+| `a` | include the animated (heavy) screen effects |
+| `x` | cursor effects only while Shift is held |
+| `g` / `G`, `1`-`9` | top / bottom, jump to a category |
 
-## Cost warning (AKT-568)
-Any shader that declares `uniform float time;` makes Hyprland show a red warning and need
-`debug:damage_tracking = off`, which redraws the whole screen every frame (big GPU cost).
-Static shaders must NOT declare `time`. Animated ones (Motion, plus hologram, matrix, fireflies, underwater, snowfall in Ambient)
-are costly: `omashaders` sets `debug:damage_tracking=0` itself when an animated shader is applied
-(no Hyprland warning) and back to 2 for static ones/off. A warning left over from before is cleared with `hyprctl reload`.
+The last line of the menu shows GPU use: this shell (draws wallpaper and cursor effects), Hyprland (the screen effect), all apps, and VRAM (the per-process split is NVIDIA only; AMD shows the overall figure). It only updates while the menu is open.
 
-## Adding a shader
-Effect: drop `shaders/NAME.frag` with two comment lines right after `#version 300 es`: `// category: Lens|Retro|Devices|Art|Mood|Ambient|Motion` and `// desc: one line shown in the menu`.
-Colour: `colors/NAME.frag`, category `Comfort|Color|Retro|Devices`; it must be a per-pixel function of `texture(tex, v_texcoord)` only (one such call, no other `v_texcoord`, no `gl_FragCoord`, no `time`), because the composer swaps that call for the effect's output and prefixes the colour's helper functions with `c_`.
-Strength: add `// strength: N` for the start value (default 100). By default the result is blended with the untouched screen (`mix(input, result, S)`), which is right for tints and overlays. Shaders whose look changes shape (pixel blocks, blur radius, curvature) add `// strength-mode: native` and read `STRENGTH` (0.0-1.0) themselves, so 0 % really is the original screen and the start value is readable.
-Check everything with `bin/shader-check` (composes every effect and colour at 50 % and validates it with glslangValidator; standalone validation of a native shader fails on `STRENGTH`). Preview without touching the desktop: `bin/shader-preview IN.png SHADER.frag OUT.png [TIME]` (CPU rendering, build the shader first with `bin/compose-shader`).
+Sample key bindings for `~/.config/hypr/bindings.lua` (they are not added for you):
 
-## Reacting to what moves on screen
-Not possible inside a Hyprland screen shader: it gets only the current frame (no previous frame, no custom inputs), so it cannot compare frames. Possible variants: a cursor-reactive shader (a helper rewrites a constant and re-applies; recompiles each time, so only a few updates per second) or a Quickshell overlay with a screencopy feedback loop (heavy). Not built.
+```lua
+-- pause / resume all effects
+hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd("omarchy-shell io.github.akton1.omashaders power toggle"))
+-- open the menu
+hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("omarchy-shell io.github.akton1.omashaders toggle"))
+```
 
-## Wallpaper effects
-`wallpaper-effects/NAME.frag` (+ compiled `.frag.qsb`) are Qt shaders drawn by `WallpaperFx.qml` in a layer-shell window above the wallpaper, one per monitor, hosted by the first monitor's bar. Recompile after editing with `bin/build-wallpaper-effects` (needs qt6-shadertools). `bin/wallpaper-step next|prev|status|pick` steps or picks the wallpaper image; `bin/gpu-usage` prints `OVERALL SHELL HYPRLAND USED_MB TOTAL_MB`.
+Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power on|off|toggle|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|strength effect|color N|sections screen|color|wall|mouse|both|all|combo N|combo save|shiftOnly on|off|toggle`. The effect script can also be run directly: `bin/omashaders list|status|set NAME|off|effect ...|color ...|strength ...|power ...`.
+
+### Animated effects
+
+Effects that move (grain, scan-sweep, vhs, heat-haze, glitch, hologram, matrix, fireflies, underwater, snowfall and a few more) need Hyprland's damage tracking switched off, which redraws the whole screen every frame and **raises GPU use a lot**. They are hidden until you press `a` (or turn on the setting below). While one is on, the plugin sets `debug:damage_tracking=0` itself so Hyprland shows no warning, and sets it back for static effects and for off. Static effects cost almost nothing.
+
+### Shift only (cursor effects)
+
+Cursor effects and the wallpaper effects' mouse reaction can be limited to "only while Shift is held" (`x` in the menu). For that, Hyprland has to tell the plugin when Shift is down; add this to `~/.config/hypr/bindings.lua`, and the same line for `Shift_R`:
+
+```lua
+hl.bind("Shift_L", hl.dsp.global("omashaders:shift"), { non_consuming = true, dont_inhibit = true })
+```
+
+Shift still reaches your apps normally. Without this binding the effects never show while the option is on.
+
+## Configuration
+
+Plugin settings (Omarchy settings UI):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `includeAnimated` | off | start value of the "animated screen effects" switch (the switch itself is remembered) |
+| `fps` | 30 | frame rate of wallpaper and cursor effects |
+| `cursorNeedsShift` | off | start value of "cursor effects only while Shift is held" |
+
+State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current effects, strengths, favourites, combos, pause flag, built shader files). Hyprland forgets a runtime screen shader on a config reload; the icon re-applies it.
+
+## Permissions and behaviour
+
+- **No network access.** Nothing is downloaded, nothing is sent.
+- **Hyprland:** the screen effect is set at runtime with `hyprctl eval` (`decoration:screen_shader` and `debug:damage_tracking`). Nothing is written to your Hyprland config files; a `hyprctl reload` or `off` clears it.
+- **Subprocesses:** `bin/omashaders` (sets the shader), `bin/compose-shader` (python, merges effect and colour into one file), `bin/cursor-watch` (python; reads the pointer position from the Hyprland socket about 40 times a second, only while a pointer-following effect is running, and exits with the shell), `bin/gpu-usage` (`nvidia-smi` or sysfs, only while the menu is open), `bin/wallpaper-step`, and `notify-send` for the pause key.
+- **Wallpaper picker and next/previous:** these change your wallpaper with Omarchy's `omarchy-theme-bg-set`, on your click only. Picking makes a temporary folder of symlinks to your background images under `$XDG_RUNTIME_DIR` and removes it afterwards.
+- **Files written:** only the state directory above and the temporary folder just mentioned. Existing config of yours is never overwritten.
+- **Windows:** wallpaper and cursor effects are drawn in click-through layer-shell windows, one per monitor, that do not take keyboard focus. The menu takes keyboard focus while it is open.
+- **Bundled binaries:** the `.frag.qsb` files are compiled Qt shader packages (data, not programs), built from the `.frag` sources next to them with `bin/build-*-effects`.
+
+## Update
+
+```
+omarchy plugin update io.github.akton1.omashaders
+```
+
+## Remove
+
+```
+omarchy plugin remove io.github.akton1.omashaders
+rm -rf ~/.local/state/omarchy/io.github.akton1.omashaders
+hyprctl reload
+```
+
+Also remove the key bindings you added.
+
+## Troubleshooting
+
+- **Red Hyprland warning about `time` and damage tracking:** an animated effect was applied by something other than this plugin. Pick a static effect or `off`, then run `hyprctl reload`.
+- **An effect makes text unreadable:** lower its strength (`[`), or press `d` for its start value. Pixel effects start low on purpose.
+- **Icon missing or the menu looks old after an update:** `omarchy-restart-shell`.
+- **Cursor effects never show:** you turned on "only while Shift is held" without the Shift binding above.
+- **GPU line empty:** neither `nvidia-smi` nor an AMD sysfs reading is available.
+
+Report bugs at https://github.com/AktOn1/omashaders/issues. How the effects work and how to add your own: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Support
+
+If this is useful to you, you can [buy me a coffee on Ko-fi](https://ko-fi.com/akton1).
+
+## License
+
+MIT, see [LICENSE](LICENSE). The shaders were written for this plugin; no third-party code or assets are bundled.

@@ -16,7 +16,7 @@ BarWidget {
   id: root
   moduleName: "io.github.akton1.omashaders"
 
-  function path(rel) { return Qt.resolvedUrl(rel).toString().replace(/^file:\/\//, "") }
+  function path(rel) { return decodeURIComponent(Qt.resolvedUrl(rel).toString().replace(/^file:\/\//, "")) }
   readonly property string script: path("bin/omashaders")
   readonly property string stepScript: path("bin/wallpaper-step")
   readonly property string cursorScript: path("bin/cursor-watch")
@@ -937,7 +937,7 @@ BarWidget {
                  + "\nColor: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
-                 + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus : "")
+                 + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus.replace(/[<>&]/g, "?") : "")
                  + "\nclick: menu (hjkl) · right-click: effects off · middle-click: next wallpaper · scroll: step"
     onPressed: function(b) {
       if (b === Qt.RightButton) root.offAll()
