@@ -23,6 +23,6 @@ Hyprland 0.56 uses the Lua parser: set via `hyprctl eval`, `hyprctl keyword` doe
 ## Cost warning (AKT-568)
 Any shader that declares `uniform float time;` makes Hyprland show a red warning and need
 `debug:damage_tracking = off`, which redraws the whole screen every frame (big GPU cost).
-Static shaders (vignette, crt, warm) must NOT declare `time`. Animated ones (grain, scan-sweep)
+Static shaders (vignette, crt, warm, mono, sepia, midnight, phosphor, vivid, invert, posterize) must NOT declare `time`. Animated ones (grain, scan-sweep, vhs, heat-haze, glitch)
 are costly: `screen-shader` sets `debug:damage_tracking=0` itself when an animated shader is applied
 (no Hyprland warning) and back to 2 for static ones/off. A warning left over from before is cleared with `hyprctl reload`.
