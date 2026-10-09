@@ -273,7 +273,7 @@ BarWidget {
           var p = line.split("\t")
           if (p[0]) out.push({ name: p[0], animated: p[1] === "animated", motion: p[1] === "motion", bend: p[5] === "bend", cat: p[2] || "Other", desc: p[3] || "", section: p[4] || "screen", dflt: (p[5] !== undefined && p[5] !== "" && !isNaN(Number(p[5]))) ? Number(p[5]) : 100 })
         })
-        var first = root.allEntries.length === 0
+        var first = root.allEntries.length !== out.length
         root.allEntries = out
         if (first && root.popupOpen) { screenSec.sync(); colorSec.sync(); mouseSec.sync() }
       }
@@ -806,6 +806,7 @@ BarWidget {
   }
   onPopupOpenChanged: {
     if (popupOpen) {
+      lister.running = true
       screenOrigin = current
       colorOrigin = colorCurrent
       mouseOrigin = mouseCurrent
