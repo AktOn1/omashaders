@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.akton1.omashader",
-  "name": "OmaShader",
-  "version": "0.8.0",
+  "id": "io.github.akton1.omashaders",
+  "name": "OmaShaders",
+  "version": "0.8.1",
   "author": "AktOn1",
   "license": "MIT",
   "description": "A bar icon with a picker list of full-screen GLSL effects (CRT, vignette, warm tint, mono, sepia, VHS, glitch and more) over every monitor. Runs inside Hyprland on the GPU: no extra window, no CPU use.",
@@ -13,7 +13,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "OmaShader",
+    "displayName": "OmaShaders",
     "description": "Click to pick a full-screen effect from a list, right-click to turn off, scroll to step",
     "category": "System",
     "allowMultiple": false,

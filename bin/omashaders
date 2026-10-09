@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# omashader: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
-# usage: omashader list [-a] | listall (name, static|animated, category, description; tab separated) | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
+# omashaders: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
+# usage: omashaders list [-a] | listall (name, static|animated, category, description; tab separated) | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
 # The cycle is: each shader, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/shaders"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashader"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
 STATE="$STATE_DIR/current"
 names() {
   for f in "$DIR"/*.frag; do
