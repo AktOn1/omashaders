@@ -43,7 +43,7 @@ BarWidget {
         var out = []
         String(text).split("\n").forEach(function(line) {
           var p = line.trim().split(" ")
-          if (p[0]) out.push({ name: p[0], animated: p[1] === "animated" })
+          if (p[0] && (root.includeAnimated || p[1] !== "animated")) out.push({ name: p[0], animated: p[1] === "animated" })
         })
         root.entries = out
       }

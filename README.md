@@ -1,7 +1,7 @@
 # screen-shaders
 
 Bar icon (monitor glyph) for full-screen GLSL effects over all monitors.
-**Left click** opens a list to pick from (off + every shader, animated ones marked "heavy") · **right click** off · **scroll** step back/forward through the cycle.
+**Left click** opens a list to pick from (off + every static shader; animated ones only with `includeAnimated`, marked "heavy") · **right click** off · **scroll** step back/forward through the cycle.
 Command line: `omarchy-shell io.github.akton1.screen-shaders toggle|open|close|set NAME` (bind `toggle` to a key if wanted).
 Hyprland forgets the shader on a config reload; the icon re-applies it. The icon highlights while a shader is on.
 Setting `includeAnimated` (default off) adds the animated shaders to the cycle (heavy GPU, see below).
