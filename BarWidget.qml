@@ -10,7 +10,7 @@ import qs.Ui
 //   Color     a colour grade on top of the screen effect (merged into one shader by bin/compose-shader)
 //   Wallpaper animated GPU effects drawn over the wallpaper (WallpaperFx.qml) plus wallpaper picking
 //   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml)
-// hjkl / arrows move, hovering or moving onto an effect previews it, a mouse click or Space keeps it and stays open, Enter keeps it and closes,
+// hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (keys preview as you move), a mouse click or Space keeps it and stays open, Enter keeps it and closes,
 // Esc undoes previews.
 BarWidget {
   id: root
@@ -1143,7 +1143,7 @@ BarWidget {
               sec.focusRequested()
               sec.col = 1
               sec.itemIdx = itemRow.index
-              sec.pointed(itemRow.modelData)
+              if (m.modifiers & Qt.ShiftModifier) sec.pointed(itemRow.modelData)
             }
             onClicked: {
               sec.focusRequested()
