@@ -9,12 +9,15 @@
 # `off` turns both layers off; `set NAME` sets the effect (a colour name sets the colour layer instead).
 # Each layer has a strength 0-100 (remembered per effect; start value from a `// strength: N` line in the shader).
 # `power off` pauses every screen shader without forgetting the choice (bar icon and wallpaper/cursor overlays follow).
+# Cursor effects are overlays (mouse-effects/) or, in the Bend category, shaders that bend the real screen
+# around the pointer (cursor-shaders/, fed the pointer position by bin/cursor-bend while the shell runs it).
 # The cycle is: each effect, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 DIR="$ROOT/shaders"
 CDIR="$ROOT/colors"
 MDIR="$ROOT/mouse-effects"
+BDIR="$ROOT/cursor-shaders"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
 STATE="$STATE_DIR/current"
 names() {
@@ -50,6 +53,11 @@ hypr_apply() {
   [ -n "$1" ] && is_animated "$1" && dt=0
   hyprctl eval "hl.config({debug={damage_tracking=$dt}, decoration={screen_shader='$1'}})" >/dev/null
 }
+# a running bin/cursor-bend owns the screen shader (it re-reads the state files itself within 0.2 s)
+bend_running() {
+  local pid; pid=$(cat "$STATE_DIR/bend.pid" 2>/dev/null)
+  [ -n "$pid" ] && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q cursor-bend
+}
 # strength (percent) of a layer: remembered per effect/colour, else the shader's `// strength: N` line, else 100
 SDIR="$STATE_DIR/strengths"
 default_strength() { local v; v=$(sed -n 's|^// strength: *||p' "$1" | head -1); echo "${v:-100}"; }
@@ -79,6 +87,7 @@ apply() {
     find "$STATE_DIR/built" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
     file="$out"
   fi
+  bend_running && return 0
   hypr_apply "$file"
 }
 # serialise state writes + apply, so a combo that sets effect and colour at once ends in the right state
@@ -161,6 +170,12 @@ case "${1:-}" in
       n=$(basename "$f" .frag); kind=static; [ "$(sed -n 's|^// motion: *||p' "$f" | head -1)" = yes ] && kind=motion
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc"
+    done
+    for f in "$BDIR"/*.frag; do # cursor-bend shaders: they bend the real screen (bin/cursor-bend)
+      [ -e "$f" ] || continue
+      n=$(basename "$f" .frag); kind=static; [ -n "$(sed -n 's|^// tail: *||p' "$f" | head -1)" ] && kind=motion
+      cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
+      printf '%s\t%s\t%s\t%s\tmouse\tbend\n' "$n" "$kind" "${cat:-Bend}" "$desc"
     done ;;
   effect)
     case "${2:-status}" in
@@ -182,9 +197,9 @@ case "${1:-}" in
     MSTATE="$STATE_DIR/mouse"
     case "${2:-status}" in
       status) cat "$MSTATE" 2>/dev/null | grep . || echo off ;;
-      list) for f in "$MDIR"/*.frag; do basename "$f" .frag; done ;;
+      list) for f in "$MDIR"/*.frag "$BDIR"/*.frag; do [ -e "$f" ] && basename "$f" .frag; done ;;
       off) mkdir -p "$STATE_DIR"; : > "$MSTATE" ;;
-      set) [ -f "$MDIR/$3.frag.qsb" ] || { echo "unknown mouse effect: $3" >&2; exit 1; }
+      set) [ -f "$MDIR/$3.frag.qsb" ] || [ -f "$BDIR/$3.frag" ] || { echo "unknown mouse effect: $3" >&2; exit 1; }
            mkdir -p "$STATE_DIR"; echo "$3" > "$MSTATE"
            if is_disabled; then lock; : > "$DISABLED"; apply; fi ;;
       *) echo "usage: omashaders mouse [status|list|set NAME|off]" >&2; exit 1 ;;
@@ -214,5 +229,6 @@ case "${1:-}" in
   next) step 1 "$2" ;;
   prev) step -1 "$2" ;;
   reapply) [ -n "$(current)$(current_color)" ] && apply ;;
+  reapply-force) lock; apply ;;
   *) sed -n 2,5p "$0" | sed 's/^# \?//' >&2; exit 1 ;;
 esac

@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 41 animated wallpaper effects and 12 cursor effects. Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 41 animated wallpaper effects and 18 cursor effects (12 overlays, 6 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -100,6 +100,7 @@ State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current ef
 - **Subprocesses:** `bin/omashaders` (sets the shader), `bin/compose-shader` (python, merges effect and colour into one file), `bin/cursor-watch` (python; reads the pointer position from the Hyprland socket about 40 times a second, only while a pointer-following effect is running, and exits with the shell), `bin/gpu-usage` (`nvidia-smi` or sysfs, only while the menu is open), `bin/wallpaper-step`, and `notify-send` for the pause key.
 - **Wallpaper picker and next/previous:** these change your wallpaper with Omarchy's `omarchy-theme-bg-set`, on your click only. Picking makes a temporary folder of symlinks to your background images under `$XDG_RUNTIME_DIR` and removes it afterwards.
 - **Files written:** only the state directory above and the temporary folder just mentioned. Existing config of yours is never overwritten.
+- **Bend cursor effects:** a screen shader cannot see the pointer, so while one is selected `bin/cursor-bend` (python; polls the pointer from the Hyprland socket 60 times a second, writes a new shader file at most 30 times a second and only while the pointer moves, plus a short tail for the ripple-like ones) hands Hyprland a fresh composed shader through `hyprctl eval`. Screen and Color effects stay active, merged into the same shader. It starts and stops with the effect, exits with the shell, and then puts your normal shader back. With several monitors a 3x2 pixel marker (magenta, green, magenta) is drawn in the top-left corner of the pointer's monitor so only that monitor is bent; the shader hides it again.
 - **Windows:** wallpaper and cursor effects are drawn in click-through layer-shell windows, one per monitor, that do not take keyboard focus. The menu takes keyboard focus while it is open.
 - **Bundled binaries:** the `.frag.qsb` files are compiled Qt shader packages (data, not programs), built from the `.frag` sources next to them with `bin/build-*-effects`.
 
@@ -124,6 +125,8 @@ Also remove the key bindings you added.
 - **Red Hyprland warning about `time` and damage tracking:** an animated effect was applied by something other than this plugin. Pick a static effect or `off`, then run `hyprctl reload`.
 - **An effect makes text unreadable:** lower its strength (`[`), or press `d` for its start value. Pixel effects start low on purpose.
 - **Icon missing or the menu looks old after an update:** `omarchy-restart-shell`.
+- **Bend effects cost more than overlays:** the pointer position reaches the shader as a new file about 30 times a second, so Hyprland recompiles it each time (roughly 35% of a CPU core on the author's machine while the pointer moves, none while it rests). Use an overlay effect if that matters.
+- **Bend effect only shows on one monitor:** intended, it follows the pointer.
 - **Cursor effects never show:** you turned on "only while Shift is held" without the Shift binding above.
 - **GPU line empty:** neither `nvidia-smi` nor an AMD sysfs reading is available.
 

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""cursor-bend: runs the cursor-bend shader chosen with `omashaders mouse set NAME` (cursor-shaders/NAME.frag).
+
+Hyprland gives a screen shader no pointer position, so this helper writes the position into the shader as
+constants and hands Hyprland a new file, at most ~30 times a second and only while the pointer moves (plus the
+effect's `// tail: N` seconds). The effect and colour layers are merged in. Exits with its parent (the shell) or
+when the mouse state is no longer a bend effect, and then puts the normal screen shader back.
+"""
+import glob, importlib.machinery, importlib.util, json, os, re, signal, socket, subprocess, sys, time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy", "io.github.akton1.omashaders")
+BUILT = os.path.join(STATE, "built")
+PIDFILE = os.path.join(STATE, "bend.pid")
+MAX_RATE = 30.0
+POLL = 1 / 60.0
+
+_l = importlib.machinery.SourceFileLoader("compose_shader", os.path.join(ROOT, "bin", "compose-shader"))
+_s = importlib.util.spec_from_loader("compose_shader", _l)
+cs = importlib.util.module_from_spec(_s)
+_l.exec_module(cs)
+
+rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+SOCK = "%s/hypr/%s/.socket.sock" % (rt, sig)
+if not sig or not os.path.exists(SOCK):
+    socks = sorted(glob.glob("%s/hypr/*/.socket.sock" % rt), key=os.path.getmtime)
+    if not socks:
+        sys.exit(1)
+    SOCK = socks[-1]
+
+
+def hypr(cmd):
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(1.0)
+    s.connect(SOCK)
+    s.sendall(cmd.encode())
+    data = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            break
+        data += b
+    s.close()
+    return data.decode()
+
+
+def read(name):
+    try:
+        return open(os.path.join(STATE, name)).read().strip()
+    except OSError:
+        return ""
+
+
+def header(path, key, default=""):
+    m = re.search(r'^//\s*%s:\s*(.*)$' % key, open(path).read(), re.M)
+    return m.group(1).strip() if m else default
+
+
+def is_animated(path):
+    return re.search(r'uniform\s+float\s+time\b', open(path).read()) is not None
+
+
+def hypr_apply(path, animated):
+    lua = "hl.config({debug={damage_tracking=%d}, decoration={screen_shader='%s'}})" % (0 if animated else 2, path)
+    hypr("/eval " + lua)
+
+
+def monitors():
+    out = []
+    for m in json.loads(hypr("j/monitors")):
+        sc = m.get("scale", 1) or 1
+        out.append((m["x"], m["y"], m["width"] / sc, m["height"] / sc, sc))
+    return out
+
+
+class Template:
+    """The composed shader for the current effect + colour + bend layers, with a cursor-constants slot."""
+
+    def __init__(self):
+        self.key = None
+        self.pre = self.post = ""
+        self.animated = False
+        self.tail = 0.0
+
+    def refresh(self):
+        name = read("mouse")
+        cur = os.path.join(ROOT, "cursor-shaders", name + ".frag")
+        if not name or not os.path.isfile(cur):
+            return False
+        fx, col = read("current"), read("color")
+        fxp = os.path.join(ROOT, "shaders", fx + ".frag")
+        colp = os.path.join(ROOT, "colors", col + ".frag")
+        if not os.path.isfile(fxp):
+            fx = ""
+        if not os.path.isfile(colp):
+            col = ""
+        paused = bool(read("disabled"))
+        key = (name, fx, col, read("strength-effect"), read("strength-color"), paused)
+        if key == self.key:
+            return True
+        self.key = key
+        fxl = (fxp, read("strength-effect") or "100") if fx and not paused else None
+        coll = (colp, read("strength-color") or "100") if col and not paused else None
+        text = cs.compose(fxl, coll, (cur, 100))
+        self.pre, _, self.post = text.partition(cs.CUR_MARK + "\n" + cs.CUR_DEFAULTS)
+        self.animated = bool(fxl) and is_animated(fxp)
+        try:
+            self.tail = float(header(cur, "tail", "0"))
+        except ValueError:
+            self.tail = 0.0
+        return True
+
+    def render(self, x, y, vx, vy, t, marked):
+        consts = "const vec2 CUR = vec2(%.1f, %.1f);\nconst vec2 CVEL = vec2(%.1f, %.1f);\nconst float CT = %.3f;\nconst bool CMARK = %s;" % (
+            x, y, vx, vy, t, "true" if marked else "false")
+        return self.pre + consts + self.post
+
+
+def main():
+    for sg in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sg, lambda *_: sys.exit(0))
+    os.makedirs(BUILT, exist_ok=True)
+    open(PIDFILE, "w").write(str(os.getpid()))
+    parent = os.getppid()
+    tpl = Template()
+    seq = int(time.time()) % 100000 * 100
+    written = []
+    last_pos = None
+    last_move = 0.0
+    last_write = 0.0
+    vx = vy = 0.0
+    last_t = time.time()
+    last_state_check = 0.0
+    state_dirty = True
+    settled = False
+    mons = monitors()
+    last_mon_refresh = time.time()
+    shown_key = None
+
+    def write(x, y, ct, marked):
+        nonlocal seq
+        seq += 1
+        path = os.path.join(BUILT, "bend-%d.frag" % seq)
+        with open(path, "w") as f:
+            f.write(tpl.render(x, y, vx, vy, ct, marked))
+        hypr_apply(path, tpl.animated)
+        written.append(path)
+        while len(written) > 6:
+            try:
+                os.remove(written.pop(0))
+            except OSError:
+                pass
+
+    try:
+        while os.getppid() == parent:
+            now = time.time()
+            if now - last_state_check > 0.2:
+                last_state_check = now
+                before = tpl.key
+                if not tpl.refresh():
+                    break
+                if tpl.key != before:
+                    state_dirty = True
+            if now - last_mon_refresh > 5:
+                last_mon_refresh = now
+                try:
+                    mons = monitors()
+                except (OSError, ValueError):
+                    pass
+            try:
+                p = json.loads(hypr("j/cursorpos"))
+                pos = (p["x"], p["y"])
+            except (OSError, ValueError, KeyError):
+                time.sleep(POLL)
+                continue
+            dt = max(now - last_t, 1e-3)
+            last_t = now
+            moved = last_pos is not None and pos != last_pos
+            if moved:
+                nx = (pos[0] - last_pos[0]) / dt
+                ny = (pos[1] - last_pos[1]) / dt
+                vx, vy = 0.5 * vx + 0.5 * nx, 0.5 * vy + 0.5 * ny
+                last_move = now
+                settled = False
+            elif now - last_move > 0.08:
+                vx, vy = 0.6 * vx, 0.6 * vy
+            last_pos = pos
+            ct = min(now - last_move, 99.0) if last_move else 99.0
+            active = moved or (ct < tpl.tail) or state_dirty or not settled
+            mon = None
+            for m in mons:
+                if m[0] <= pos[0] < m[0] + m[2] and m[1] <= pos[1] < m[1] + m[3]:
+                    mon = m
+            if active and mon and now - last_write >= 1 / MAX_RATE:
+                lx, ly = (pos[0] - mon[0]) * mon[4], (pos[1] - mon[1]) * mon[4]
+                if ct >= tpl.tail and not moved:
+                    ct, settled = 99.0, True
+                    vx = vy = 0.0
+                write(lx, ly, ct, len(mons) > 1)
+                last_write = now
+                state_dirty = False
+            time.sleep(POLL)
+    finally:
+        try:
+            os.remove(PIDFILE)
+        except OSError:
+            pass
+        subprocess.run([os.path.join(ROOT, "bin", "omashaders"), "reapply-force"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for path in written:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    main()

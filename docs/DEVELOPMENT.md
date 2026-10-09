@@ -27,7 +27,7 @@ Strength: add `// strength: N` for the start value (default 100). By default the
 Check everything with `bin/shader-check` (composes every effect and colour at 50 % and validates it with glslangValidator; standalone validation of a native shader fails on `STRENGTH`). Preview without touching the desktop: `bin/shader-preview IN.png SHADER.frag OUT.png [TIME]` (CPU rendering with Mesa; build the shader first with `bin/compose-shader`).
 
 ## Reacting to what moves on screen
-Not possible inside a Hyprland screen shader: it gets only the current frame (no previous frame, no custom inputs), so it cannot compare frames. Possible variants: a cursor-reactive shader (a helper rewrites a constant and re-applies; recompiles each time, so only a few updates per second) or a Quickshell overlay with a screencopy feedback loop (heavy). Not built.
+Not possible inside a Hyprland screen shader: it gets only the current frame (no previous frame, no custom inputs), so it cannot compare frames. Possible variants: a cursor-reactive shader (a helper rewrites a constant and re-applies; recompiles each time, so only a few updates per second) or a Quickshell overlay with a screencopy feedback loop (heavy). Built since as the Bend cursor effects (below), though not as a frame-comparing shader.
 
 ## Wallpaper and cursor effects
 `wallpaper-effects/NAME.frag` and `mouse-effects/NAME.frag` are Qt shaders; the compiled `.frag.qsb` next to each is committed so users need no build tools.
@@ -35,3 +35,7 @@ They are drawn by `WallpaperFx.qml` and `MouseFx.qml` in layer-shell windows (on
 Recompile after editing with `bin/build-wallpaper-effects` / `bin/build-mouse-effects` (needs qt6-shadertools).
 `bin/wallpaper-step next|prev|status|pick` steps or picks the wallpaper image; `bin/gpu-usage` prints `OVERALL SHELL HYPRLAND USED_MB TOTAL_MB`.
 `bin/cursor-watch` prints the pointer position from the Hyprland socket (about 40 times a second) and exits when its parent exits.
+
+## Bend cursor effects
+
+`cursor-shaders/NAME.frag` defines `vec4 bend(vec2 uv)` and may use `CUR` (pointer, pixels, monitor-local), `CVEL` (pixels per second), `CT` (seconds since the pointer last moved), `RES` and `texture(tex, ...)`. Header lines: `// category: Bend`, `// desc: ...`, and `// tail: N` if the effect keeps changing for N seconds after the pointer stops. `bin/compose-shader --cur FILE` merges it with the Screen and Color layers (the Screen layer's `texture(tex, ...)` calls are redirected through the bend). `bin/cursor-bend` rewrites the `CUR`/`CVEL`/`CT`/`CMARK` constants and applies the file, at most 30 times a second; the multi-monitor marker is described in the README. `bin/shader-check` validates every bend shader.

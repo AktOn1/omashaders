@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # shader-check [FILE.frag ...]: compose each shader (and colours) the way the plugin does and run glslangValidator on it
 R=$(cd "$(dirname "$0")/.." && pwd); T=$(mktemp -d); rc=0
-[ $# -gt 0 ] || set -- "$R"/shaders/*.frag "$R"/colors/*.frag
+[ $# -gt 0 ] || set -- "$R"/shaders/*.frag "$R"/colors/*.frag "$R"/cursor-shaders/*.frag
 for f in "$@"; do
-  case "$f" in */colors/*) k=--col;; *) k=--fx;; esac
-  python3 "$R/bin/compose-shader" "$T/c.frag" $k "$f" 50 && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL $f"; echo "$out" | head -8; rc=1; continue; }
+  case "$f" in */colors/*) k=--col;; */cursor-shaders/*) k=--cur;; *) k=--fx;; esac
+  if [ $k = --cur ]; then a=(--cur "$f"); else a=($k "$f" 50); fi
+  python3 "$R/bin/compose-shader" "$T/c.frag" "${a[@]}" && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL $f"; echo "$out" | head -8; rc=1; continue; }
   grep -q '^ERROR' <<<"$out" && { echo "FAIL $f"; echo "$out" | head -8; rc=1; }
   grep -q '^\s*// \(category\|desc\):' "$f" || { echo "FAIL $f: missing category/desc header"; rc=1; }
 done
+# every screen effect through the bend layer too (its texture() calls are rewritten)
+if [ $# -ge 3 ] && [ -z "$BEND_SKIP" ]; then
+  for f in "$R"/shaders/*.frag; do
+    python3 "$R/bin/compose-shader" "$T/c.frag" --fx "$f" 50 --col "$R/colors/vivid.frag" 50 --cur "$R/cursor-shaders/swirl.frag" && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL bend+$f"; echo "$out" | head -8; rc=1; continue; }
+    grep -q '^ERROR' <<<"$out" && { echo "FAIL bend+$f"; echo "$out" | head -8; rc=1; }
+  done
+fi
 rm -rf "$T"; [ $rc = 0 ] && echo "all shaders ok"; exit $rc

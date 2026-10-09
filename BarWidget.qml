@@ -9,7 +9,8 @@ import qs.Ui
 //   Screen    full-screen GLSL effects applied by Hyprland (bin/omashaders)
 //   Color     a colour grade on top of the screen effect (merged into one shader by bin/compose-shader)
 //   Wallpaper animated GPU effects drawn over the wallpaper (WallpaperFx.qml) plus wallpaper picking
-//   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml)
+//   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml), and Bend shaders that
+//             distort the real screen around it (bin/cursor-bend + BendMarker.qml)
 // hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (keys preview as you move), a mouse click or Space keeps it and stays open, Enter keeps it and closes,
 // Esc undoes previews.
 BarWidget {
@@ -20,6 +21,7 @@ BarWidget {
   readonly property string script: path("bin/omashaders")
   readonly property string stepScript: path("bin/wallpaper-step")
   readonly property string cursorScript: path("bin/cursor-watch")
+  readonly property string bendScript: path("bin/cursor-bend")
   readonly property string gpuScript: path("bin/gpu-usage")
   readonly property string omarchyDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy"
   readonly property string stateDir: omarchyDir + "/io.github.akton1.omashaders"
@@ -269,7 +271,7 @@ BarWidget {
         var out = []
         String(text).split("\n").forEach(function(line) {
           var p = line.split("\t")
-          if (p[0]) out.push({ name: p[0], animated: p[1] === "animated", motion: p[1] === "motion", cat: p[2] || "Other", desc: p[3] || "", section: p[4] || "screen", dflt: (p[5] !== undefined && p[5] !== "" && !isNaN(Number(p[5]))) ? Number(p[5]) : 100 })
+          if (p[0]) out.push({ name: p[0], animated: p[1] === "animated", motion: p[1] === "motion", bend: p[5] === "bend", cat: p[2] || "Other", desc: p[3] || "", section: p[4] || "screen", dflt: (p[5] !== undefined && p[5] !== "" && !isNaN(Number(p[5]))) ? Number(p[5]) : 100 })
         })
         var first = root.allEntries.length === 0
         root.allEntries = out
@@ -373,16 +375,20 @@ BarWidget {
   readonly property bool mouseOn: mouseCurrent !== ""
 
   readonly property var mouseEntries: allEntries.filter(function(e) { return e.section === "mouse" })
-  function mouseItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: e.motion ? "animated" : "" } }
+  function mouseItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: e.bend ? "bends screen" : (e.motion ? "animated" : "") } }
   readonly property var mouseItems: mouseEntries.map(mouseItem)
   readonly property var mouseCats: {
     var out = [{ id: "fav", label: "Favorites", items: favList(mouseItems, mouseFavs), note: favNote }]
-    catList(mouseEntries, ["Focus", "Glow", "Trail"]).forEach(function(c) {
+    catList(mouseEntries, ["Focus", "Glow", "Trail", "Bend"]).forEach(function(c) {
       out.push({ id: c, label: c, items: mouseEntries.filter(function(e) { return e.cat === c }).map(mouseItem), note: "" })
     })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
+  }
+  readonly property bool mouseBend: {
+    for (var i = 0; i < mouseEntries.length; i++) if (mouseEntries[i].name === mouseCurrent) return mouseEntries[i].bend
+    return false
   }
   readonly property bool mouseMotion: {
     for (var i = 0; i < mouseEntries.length; i++) if (mouseEntries[i].name === mouseCurrent) return mouseEntries[i].motion
@@ -659,10 +665,22 @@ BarWidget {
   onShiftOnlyChanged: if (!shiftOnly) shiftDown = false
 
   MouseFx {
-    effect: root.fxHost && !root.paused && root.mouseOn && root.cursorLive ? root.mouseCurrent : ""
+    effect: root.fxHost && !root.paused && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : ""
     motion: root.mouseMotion
     mouse: root.cursor
     fps: root.fps
+  }
+
+  // Bend effects: bin/cursor-bend feeds the pointer position into the Hyprland screen shader; with several
+  // monitors the cursor's monitor is marked by a 3x2 pixel block in its corner (BendMarker) so only it is bent
+  readonly property bool bendRunning: root.fxHost && !root.paused && root.mouseOn && root.mouseBend && root.cursorLive
+  Process {
+    running: root.bendRunning
+    command: [root.bendScript]
+  }
+  BendMarker {
+    active: root.bendRunning && Quickshell.screens.length > 1
+    mouse: root.cursor
   }
 
   // cursor position, polled from Hyprland only while an effect that follows it is running
