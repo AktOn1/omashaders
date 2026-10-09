@@ -5,16 +5,16 @@ import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
-// Bar icon for the screen-shader script. Click (or `omarchy-shell io.github.akton1.screen-shaders toggle`)
+// Bar icon for the omashader script. Click (or `omarchy-shell io.github.akton1.omashader toggle`)
 // opens a keyboard menu: categories on the left, effects on the right, hjkl to move, live preview.
 // Right click = off, scroll = previous / next. Hyprland forgets the shader on a config reload, so it is re-applied.
 BarWidget {
   id: root
-  moduleName: "io.github.akton1.screen-shaders"
+  moduleName: "io.github.akton1.omashader"
 
-  readonly property string script: Qt.resolvedUrl("bin/screen-shader").toString().replace(/^file:\/\//, "")
+  readonly property string script: Qt.resolvedUrl("bin/omashader").toString().replace(/^file:\/\//, "")
   readonly property string stateFile: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
-                                      + "/omarchy/io.github.akton1.screen-shaders/current"
+                                      + "/omarchy/io.github.akton1.omashader/current"
   readonly property string animatedFile: stateFile.replace(/current$/, "animated")
   // the menu switch (state file) wins; the plugin setting is the default until it is first used
   property string animatedFlag: ""
@@ -155,7 +155,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "io.github.akton1.screen-shaders"
+    target: "io.github.akton1.omashader"
     function toggle(): void { if (root.popupOpen) root.close(); else root.open() }
     function open(): void { if (!root.popupOpen) root.open() }
     function close(): void { root.close() }
@@ -248,7 +248,7 @@ BarWidget {
     bar: root.bar
     text: "󰍹"
     active: root.shaderOn
-    tooltipText: (root.shaderOn ? "Screen shader: " + root.current : "Screen shader: off")
+    tooltipText: (root.shaderOn ? "OmaShader: " + root.current : "OmaShader: off")
                  + "\nclick: open menu (hjkl) · right-click: off · scroll: step"
     onPressed: function(b) {
       if (b === Qt.RightButton) root.run("off")
