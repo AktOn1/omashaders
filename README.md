@@ -82,6 +82,10 @@ hl.bind("Shift_L", hl.dsp.global("omashaders:shift"), { non_consuming = true, do
 
 Shift still reaches your apps normally. Without this binding the effects never show while the option is on.
 
+### Follow effects
+
+Cursor > Bend > Follow: seven gentle effects that bend or re-draw the real screen along the pointer's recent path and settle after you stop: `smudge` (pixels smear forward like dragged wet paint), `melt` (a soft drip behind the pointer), `wake` (a narrow boat-wake ribbon), `drift` (a faint lens that lags behind and catches up), `streak` (motion blur near the pointer) `echo` (a faint afterimage) and `decode` (screen cells near the moving pointer scramble into green Matrix-style glyphs and decode back to the real pixels as you move on). They are small (45-150 px) and fade out within half a second, so text stays readable. `bin/cursor-bend` passes the last 8 pointer positions (35 ms apart) to the shader as `CTR`.
+
 ## Configuration
 
 Plugin settings (Omarchy settings UI):
@@ -128,8 +132,6 @@ Also remove the key bindings you added.
 - **Red Hyprland warning about `time` and damage tracking:** an animated effect was applied by something other than this plugin. Pick a static effect or `off`, then run `hyprctl reload`.
 - **An effect makes text unreadable:** lower its strength (`[`), or press `d` for its start value. Pixel effects start low on purpose.
 - **Icon missing or the menu looks old after an update:** `omarchy-restart-shell`.
-- **Follow effects (Bend menu, category Follow):** seven gentle effects that bend or re-draw the real screen along the pointer's recent path and settle after you stop: `smudge` (pixels smear forward like dragged wet paint), `melt` (a soft drip behind the pointer), `wake` (a narrow boat-wake ribbon), `drift` (a faint lens that lags behind and catches up), `streak` (motion blur near the pointer) `echo` (a faint afterimage) and `decode` (screen cells near the moving pointer scramble into green Matrix-style glyphs and decode back to the real pixels as you move on). They are small (45-150 px) and fade out within half a second, so text stays readable. `bin/cursor-bend` passes the last 8 pointer positions (35 ms apart) to the shader as `CTR`.
-
 - **Bend effects cost more than overlays:** the pointer position reaches the shader as a new file about 30 times a second, so Hyprland recompiles it each time (roughly 35% of a CPU core on the author's machine while the pointer moves, none while it rests). Use an overlay effect if that matters.
 - **Bend effect only shows on one monitor:** intended, it follows the pointer.
 - **Cursor effects never show:** you turned on "only while Shift is held" without the Shift binding above.
