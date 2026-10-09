@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# screen-shader: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
+# usage: screen-shader list [-a] | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply
+# The cycle is: each shader, then off. Shaders that declare `uniform float time` (animated)
+# are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
+DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/shaders"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.screen-shaders"
+STATE="$STATE_DIR/current"
+names() {
+  for f in "$DIR"/*.frag; do
+    [ -e "$f" ] || continue
+    [ "$1" = "-a" ] || ! grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$f" || continue
+    basename "$f" .frag
+  done
+}
+current() { cat "$STATE" 2>/dev/null; }
+apply() { hyprctl eval "hl.config({decoration={screen_shader='$1'}})" >/dev/null; }
+set_shader() {
+  [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
+  apply "$DIR/$1.frag"; mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"
+}
+turn_off() { apply ""; rm -f "$STATE"; }
+step() { # step DIRECTION(1|-1) [-a]
+  local list=() n cur i idx=-1
+  while read -r n; do [ -n "$n" ] && list+=("$n"); done < <(names "$2")
+  cur=$(current)
+  [ ${#list[@]} -gt 0 ] || { turn_off; return; }
+  for i in "${!list[@]}"; do [ "${list[$i]}" = "$cur" ] && idx=$i; done
+  # positions 0..N-1 are shaders, N is "off"; an unknown/off current sits at N
+  local total=$(( ${#list[@]} + 1 )) pos=$(( idx < 0 ? ${#list[@]} : idx ))
+  pos=$(( (pos + $1 + total) % total ))
+  if [ "$pos" -eq ${#list[@]} ]; then turn_off; else set_shader "${list[$pos]}"; fi
+}
+case "${1:-}" in
+  list) names "$2" ;;
+  status) current | grep . || echo off ;;
+  off) turn_off ;;
+  on|set) set_shader "$2" ;;
+  toggle) if [ -n "$(current)" ]; then turn_off; else set_shader "${2:-vignette}"; fi ;;
+  next) step 1 "$2" ;;
+  prev) step -1 "$2" ;;
+  reapply) cur=$(current); [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && apply "$DIR/$cur.frag" ;;
+  *) sed -n 2,5p "$0" | sed 's/^# \?//' >&2; exit 1 ;;
+esac
