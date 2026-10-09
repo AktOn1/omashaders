@@ -1,4 +1,6 @@
 #version 300 es
+// category: Mood
+// desc: Dark corners, focus on the middle
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

@@ -1,4 +1,6 @@
 #version 300 es
+// category: Color
+// desc: Inverted colours
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

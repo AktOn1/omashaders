@@ -1,4 +1,6 @@
 #version 300 es
+// category: Color
+// desc: Plain black and white
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

@@ -1,4 +1,6 @@
 #version 300 es
+// category: Retro
+// desc: Green terminal monochrome
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;
