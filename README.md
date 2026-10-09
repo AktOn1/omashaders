@@ -47,6 +47,7 @@ Bar icon: **left click** menu, **right click** all effects off, **middle click**
 | `p` | pause or resume every effect; they come back exactly as they were |
 | `f` | favourite (each menu has its own list) |
 | `F` | save the current Screen + Color + Wallpaper + Cursor combination as a combo (`m` shows the Combos menu) |
+
 | `r` / `R` | Surprise me in the focused menu / in every ticked menu |
 | `o` / `O` | off in the focused menu / in every ticked menu |
 | `s` `C` `w` `c` `m` | tick Screen / Color / Wallpaper / Cursor / Combos |
@@ -90,6 +91,8 @@ Plugin settings (Omarchy settings UI):
 | `includeAnimated` | off | start value of the "animated screen effects" switch (the switch itself is remembered) |
 | `fps` | 30 | frame rate of wallpaper and cursor effects |
 | `cursorNeedsShift` | off | start value of "cursor effects only while Shift is held" |
+
+**Starter combos:** on first run the Combos menu starts with four ready-made combinations (file `starter-combos`: `lens` + `phosphor`, `noir` + `warp`, `gameboy-lcd` + `nebula`, `lcd-grid` + `parallax`). They are copied into your own list, so you can remove any with `f`. If you already had a combos file, nothing is added.
 
 State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current effects, strengths, favourites, combos, pause flag, built shader files). Hyprland forgets a runtime screen shader on a config reload; the icon re-applies it.
 

@@ -936,8 +936,9 @@ BarWidget {
     resolver.running = true
     wallStep("status")
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
-    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; shift 2; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile,
+    // first run only: the combos file starts as a copy of starter-combos, so the user can delete any of them
+    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; [ -e "$3" ] || cp "$4" "$3" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
