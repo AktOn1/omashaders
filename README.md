@@ -92,7 +92,7 @@ Plugin settings (Omarchy settings UI):
 | `fps` | 30 | frame rate of wallpaper and cursor effects |
 | `cursorNeedsShift` | off | start value of "cursor effects only while Shift is held" |
 
-**Starter combos:** on first run the Combos menu starts with four ready-made combinations (file `starter-combos`: `lens` + `phosphor`, `noir` + `warp`, `gameboy-lcd` + `nebula`, `lcd-grid` + `parallax`). They are copied into your own list, so you can remove any with `f`. If you already had a combos file, nothing is added.
+**Starter combos:** the Combos menu comes with ready-made combinations (file `starter-combos`, kept in step with the author's own list). Each release adds the new ones to your list, once: a combo you removed with `f` does not come back, and your own combos are never changed. To ship your own set from a checkout, create an empty file `dev-export` in the state folder; then every save or remove also rewrites `starter-combos`.
 
 State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current effects, strengths, favourites, combos, pause flag, built shader files). Hyprland forgets a runtime screen shader on a config reload; the icon re-applies it.
 

@@ -719,19 +719,24 @@ BarWidget {
   function flash(msg) { comboFlash = msg; comboFlashTimer.restart() }
   Timer { id: comboFlashTimer; interval: 3000; onTriggered: root.comboFlash = "" }
 
+  // the developer's own copy ships what they save: with a "dev-export" file in the state folder, every save or remove also rewrites starter-combos
+  function writeCombos() {
+    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1" && printf %s "$2" > "$3" && [ -e "$1/dev-export" ] && printf %s "$2" > "$4"; true', "bash",
+                             stateDir, combos.join("\n"), comboFile, path("starter-combos")])
+  }
   function saveCombo() {
     var key = comboNow
     if (key === "|||") { flash("Nothing to save: every effect is off"); return }
     var label = comboItem(key).label
     if (combos.indexOf(key) >= 0) { flash("Already saved: " + label); return }
     combos = combos.concat([key])
-    writeFile(comboFile, combos.join("\n"))
+    writeCombos()
     flash("Saved combo: " + label)
   }
   function deleteCombo(id) {
     if (combos.indexOf(id) < 0) return
     combos = combos.filter(function(c) { return c !== id })
-    writeFile(comboFile, combos.join("\n"))
+    writeCombos()
     var s = comboSec
     if (s.curItems.length === 0) s.col = 0
     else s.itemIdx = clamp(s.itemIdx, 0, s.curItems.length - 1)
@@ -937,8 +942,9 @@ BarWidget {
     resolver.running = true
     wallStep("status")
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
-    // first run only: the combos file starts as a copy of starter-combos, so the user can delete any of them
-    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; [ -e "$3" ] || cp "$4" "$3" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
+    // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
+    // and a combo the user removed does not come back
+    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
                              root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
