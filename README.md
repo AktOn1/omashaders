@@ -8,7 +8,6 @@ Setting `includeAnimated` (default off) adds the animated shaders to the cycle (
 Install: link or clone into `~/.config/omarchy/plugins/io.github.akton1.screen-shaders`, then
 `omarchy plugin enable io.github.akton1.screen-shaders`. Removal: `omarchy plugin remove io.github.akton1.screen-shaders`,
 then `rm -rf ~/.local/state/omarchy/io.github.akton1.screen-shaders` and `hyprctl reload`.
-Keybind example: `bind = SUPER SHIFT, S, exec, ~/.config/omarchy/plugins/io.github.akton1.screen-shaders/bin/screen-shader next`
 
 
 Full-screen GLSL effects over all monitors via Hyprland `decoration:screen_shader`.
