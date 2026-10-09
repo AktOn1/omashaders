@@ -1,5 +1,5 @@
 #version 300 es
-// category: Mood
+// category: Lens
 // desc: Crisper text and edges
 precision highp float;
 in vec2 v_texcoord;

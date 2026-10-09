@@ -1,29 +1,73 @@
 #!/usr/bin/env python3
-"""compose-shader EFFECT.frag COLOR.frag OUT.frag: run the effect, then the colour shader on its result."""
+"""compose-shader OUT.frag [--fx FILE.frag PERCENT] [--col FILE.frag PERCENT]
+
+Build the one shader Hyprland runs: the effect first, then the colour grade on the effect's result.
+Each layer has a strength (0-100). A shader that declares `// strength-mode: native` reads the constant
+STRENGTH (0.0-1.0) itself; every other shader is blended with its input: mix(input, result, strength).
+"""
 import re, sys
 
 HEADER = re.compile(r'^\s*(#version\b|precision\b|in\s+vec2\s+v_texcoord|uniform\s+sampler2D\s+tex\b|uniform\s+float\s+time\b|layout\s*\(location\s*=\s*0\)\s*out\s+vec4\s+fragColor)')
+TYPES = r'(?:const\s+)?(?:float|int|uint|bool|[iu]?vec[234]|mat[234]|void)'
 
-def body(path, main_name, prefix=None, sample=None):
+
+def layer(path, percent, prefix, sample=None):
     src = open(path).read()
-    lines = [l for l in src.splitlines() if not HEADER.match(l)]
-    text = "\n".join(lines)
-    if prefix:
-        for name in set(re.findall(r'^(?:const\s+)?(?:float|int|vec[234]|mat[234]|void)\s+(\w+)\s*[(\[=]', text, re.M)):
-            if name != "main":
-                text = re.sub(r'\b%s\b' % re.escape(name), prefix + name, text)
-    text = re.sub(r'\bvoid\s+main\s*\(\s*\)', 'void %s()' % main_name, text, count=1)
+    native = re.search(r'^//\s*strength-mode:\s*native\b', src, re.M) is not None
+    text = "\n".join(l for l in src.splitlines() if not HEADER.match(l))
+    for name in set(re.findall(r'^%s\s+(\w+)\s*[(\[=;]' % TYPES, text, re.M)):
+        if name != "main":
+            text = re.sub(r'\b%s\b' % re.escape(name), prefix + name, text)
+    text = re.sub(r'\bvoid\s+main\s*\(\s*\)', 'void %smain()' % prefix, text, count=1)
     if sample:
+        rest = text.replace('texture(tex, v_texcoord)', '')
+        if re.search(r'v_texcoord|gl_FragCoord|\btex\b|\btime\b', rest):
+            sys.exit("%s: a colour grade may only read texture(tex, v_texcoord)" % path)
         text = text.replace('texture(tex, v_texcoord)', sample)
-    return src, text
+    s = max(0.0, min(100.0, float(percent))) / 100.0
+    text = re.sub(r'\bSTRENGTH\b', prefix + 'S', text)
+    return src, "const float %sS = %.4f;\n%s" % (prefix, s, text), native
 
-fx_src, fx = body(sys.argv[1], "fx_main")
-_, col = body(sys.argv[2], "col_main", prefix="c_", sample="fx_in")
-animated = re.search(r'uniform\s+float\s+time\b', fx_src) is not None
-out = ["#version 300 es", "// composed: effect %s + colour %s" % (sys.argv[1], sys.argv[2]),
+
+args = sys.argv[1:]
+if not args:
+    sys.exit(__doc__)
+out_path = args.pop(0)
+fx = col = None
+while args:
+    flag = args.pop(0)
+    if flag == "--fx":
+        fx = (args.pop(0), args.pop(0))
+    elif flag == "--col":
+        col = (args.pop(0), args.pop(0))
+    else:
+        sys.exit(__doc__)
+if not fx and not col:
+    sys.exit(__doc__)
+
+out = ["#version 300 es", "// composed: effect %s + colour %s" % (fx[0] if fx else "-", col[0] if col else "-"),
        "precision highp float;", "in vec2 v_texcoord;", "uniform sampler2D tex;"]
-if animated:
+fx_src = fx_text = ""
+fx_native = False
+if fx:
+    fx_src, fx_text, fx_native = layer(fx[0], fx[1], "fx_")
+if re.search(r'^\s*uniform\s+float\s+time\b', fx_src, re.M):
     out.append("uniform float time;")
-out += ["layout(location = 0) out vec4 fragColor;", fx, "vec4 fx_in;", col,
-        "void main() { fx_main(); fx_in = fragColor; col_main(); }", ""]
-open(sys.argv[3], "w").write("\n".join(out))
+out.append("layout(location = 0) out vec4 fragColor;")
+body = ["void main() {", "    vec4 src0 = texture(tex, v_texcoord);", "    fragColor = src0;"]
+if fx:
+    out.append(fx_text)
+    body.append("    fx_main();")
+    if not fx_native:
+        body.append("    fragColor = vec4(mix(src0.rgb, fragColor.rgb, fx_S), fragColor.a);")
+out.append("vec4 fx_in;")
+if col:
+    _, col_text, col_native = layer(col[0], col[1], "c_", sample="fx_in")
+    out.append(col_text)
+    body.append("    fx_in = fragColor;")
+    body.append("    c_main();")
+    if not col_native:
+        body.append("    fragColor = vec4(mix(fx_in.rgb, fragColor.rgb, c_S), fragColor.a);")
+body.append("}")
+out += body
+open(out_path, "w").write("\n".join(out) + "\n")

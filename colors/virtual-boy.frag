@@ -1,6 +1,7 @@
 #version 300 es
 // category: Devices
 // desc: Virtual Boy: red on black
+// strength: 80
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

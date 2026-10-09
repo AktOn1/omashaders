@@ -1,6 +1,7 @@
 #version 300 es
 // category: Motion
 // desc: Colour fringe, wobble, rolling bar
+// strength: 60
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

@@ -1,5 +1,5 @@
 #version 300 es
-// category: Motion
+// category: Ambient
 // desc: Slowly drifting colour wash
 precision highp float;
 in vec2 v_texcoord;

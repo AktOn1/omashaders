@@ -36,6 +36,9 @@ BarWidget {
   readonly property string comboFile: stateDir + "/combos"
   readonly property string sectionsFile: stateDir + "/sections"
   readonly property string shiftOnlyFile: stateDir + "/shift-only"
+  readonly property string disabledFile: stateDir + "/disabled"
+  readonly property string fxStrengthFile: stateDir + "/strength-effect"
+  readonly property string colStrengthFile: stateDir + "/strength-color"
   readonly property int fps: Number(setting("fps", 30)) || 30
 
   readonly property color fg: root.bar.barForeground
@@ -133,8 +136,80 @@ BarWidget {
   }
   readonly property string favNote: "No favorites yet. Select an effect and press f."
 
+  // ---------------------------------------------------------------- strength and pause
+  // Screen and Color each have a strength (0-100); bin/omashaders remembers it per effect and starts every effect
+  // at the value its shader file asks for (// strength: N). "paused" switches every effect off without forgetting them.
+  property int fxStrength: 100
+  property int colStrength: 100
+  property string disabledFlag: ""
+  readonly property bool paused: disabledFlag !== ""
+  function defaultStrengthOf(section, name) {
+    for (var i = 0; i < allEntries.length; i++) if (allEntries[i].section === section && allEntries[i].name === name) return allEntries[i].dflt
+    return 100
+  }
+  component StrengthSender: Process {
+    property string kind: "effect"
+    property int pending: -1
+    readonly property bool busy: running || pending >= 0
+    function send(v) { pending = v; if (!running) kick() }
+    function kick() {
+      if (pending < 0) return
+      var v = pending
+      pending = -1
+      command = [root.script, "strength", kind, String(v)]
+      running = true
+    }
+    onRunningChanged: if (!running && pending >= 0) kick()
+  }
+  StrengthSender { id: fxSender; kind: "effect" }
+  StrengthSender { id: colSender; kind: "color" }
+  function setStrength(kind, v) {
+    v = clamp(Math.round(v), 0, 100)
+    if (kind === "color") { colStrength = v; colSender.send(v) }
+    else { fxStrength = v; fxSender.send(v) }
+  }
+  function strengthKind(k) { return k === "color" ? "color" : "effect" }
+  function nudgeStrength(delta) {
+    if (focusKind !== "screen" && focusKind !== "color") return
+    var kind = strengthKind(focusKind)
+    if (kind === "color" ? !colorOn : !shaderOn) return
+    setStrength(kind, (kind === "color" ? colStrength : fxStrength) + delta)
+  }
+  function resetStrength() {
+    if (focusKind !== "screen" && focusKind !== "color") return
+    var kind = strengthKind(focusKind)
+    if (kind === "color" ? !colorOn : !shaderOn) return
+    Quickshell.execDetached([root.script, "strength", kind, "reset"])
+  }
+  function setPower(mode) { Quickshell.execDetached([root.script, "power", mode]) }
+  function togglePause() { setPower(paused ? "on" : "off") }
+  FileView {
+    path: root.fxStrengthFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (!fxSender.busy) root.fxStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.fxStrength = 100
+  }
+  FileView {
+    path: root.colStrengthFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (!colSender.busy) root.colStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.colStrength = 100
+  }
+  FileView {
+    path: root.disabledFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.disabledFlag = String(text() || "").trim()
+    onLoadFailed: root.disabledFlag = ""
+  }
+
   // ---------------------------------------------------------------- screen shaders (Hyprland)
-  property var allEntries: []          // { name, animated, motion, cat, desc, section }
+  property var allEntries: []          // { name, animated, motion, cat, desc, section, dflt = start strength in percent }
   property string current: ""
   property string animatedFlag: ""
   readonly property bool includeAnimated: animatedFlag !== "" ? animatedFlag === "1" : setting("includeAnimated", false) === true
@@ -149,10 +224,10 @@ BarWidget {
   readonly property var screenItems: screenEntries.filter(function(e) { return includeAnimated || !e.animated }).map(screenItem)
   readonly property var screenCats: {
     var out = [{ id: "fav", label: "Favorites", items: favList(screenItems, screenFavs), note: favNote }]
-    catList(screenEntries, ["Retro", "Devices", "Mood", "Motion"]).forEach(function(c) {
+    catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
       out.push({ id: c, label: c,
                  items: screenEntries.filter(function(e) { return e.cat === c && (includeAnimated || !e.animated) }).map(screenItem),
-                 note: (c === "Motion" && !includeAnimated) ? "Heavy GPU use. Press a to turn animated screen effects on." : "" })
+                 note: (!includeAnimated && screenEntries.some(function(e) { return e.cat === c && e.animated })) ? "Heavy GPU use. Press a to turn animated screen effects on." : "" })
     })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
@@ -194,7 +269,7 @@ BarWidget {
         var out = []
         String(text).split("\n").forEach(function(line) {
           var p = line.split("\t")
-          if (p[0]) out.push({ name: p[0], animated: p[1] === "animated", motion: p[1] === "motion", cat: p[2] || "Other", desc: p[3] || "", section: p[4] || "screen" })
+          if (p[0]) out.push({ name: p[0], animated: p[1] === "animated", motion: p[1] === "motion", cat: p[2] || "Other", desc: p[3] || "", section: p[4] || "screen", dflt: (p[5] !== undefined && p[5] !== "" && !isNaN(Number(p[5]))) ? Number(p[5]) : 100 })
         })
         var first = root.allEntries.length === 0
         root.allEntries = out
@@ -455,6 +530,7 @@ BarWidget {
     writeFile(wallPreviewFile, "")
   }
   function setWall(id, keep) {
+    if (id !== "" && paused) setPower("on")
     wallSaved = id
     clearWallPreview()
     writeFile(wallEffectFile, id)
@@ -546,7 +622,7 @@ BarWidget {
   function pal(key, fallback) { return root.palette[key] || fallback }
 
   WallpaperFx {
-    effect: root.fxHost ? root.wallShown : ""
+    effect: root.fxHost && !root.paused ? root.wallShown : ""
     wallpaper: root.wallpaperPath
     mouse: root.cursorLive ? root.cursor : Qt.point(-10000, -10000)
     fps: root.fps
@@ -583,7 +659,7 @@ BarWidget {
   onShiftOnlyChanged: if (!shiftOnly) shiftDown = false
 
   MouseFx {
-    effect: root.fxHost && root.mouseOn && root.cursorLive ? root.mouseCurrent : ""
+    effect: root.fxHost && !root.paused && root.mouseOn && root.cursorLive ? root.mouseCurrent : ""
     motion: root.mouseMotion
     mouse: root.cursor
     fps: root.fps
@@ -592,7 +668,7 @@ BarWidget {
   // cursor position, polled from Hyprland only while an effect that follows it is running
   property point cursor: Qt.point(-10000, -10000)
   Process {
-    running: (root.wallOn || (root.mouseOn && root.cursorLive)) && root.fxHost
+    running: !root.paused && (root.wallOn || (root.mouseOn && root.cursorLive)) && root.fxHost
     command: [root.cursorScript]
     stdout: SplitParser {
       onRead: function(line) {
@@ -812,6 +888,12 @@ BarWidget {
     else if (t === "w") toggleSection("wall")
     else if (t === "c") toggleSection("mouse")
     else if (t === "x") setShiftOnly(!shiftOnly)
+    else if (t === "p") togglePause()
+    else if (t === "]" || t === "=" || t === "+") nudgeStrength(5)
+    else if (t === "[" || t === "-") nudgeStrength(-5)
+    else if (t === "}") nudgeStrength(1)
+    else if (t === "{") nudgeStrength(-1)
+    else if (t === "d") resetStrength()
     else if (t >= "1" && t <= "9") s.gotoCat(parseInt(t) - 1)
   }
 
@@ -826,6 +908,8 @@ BarWidget {
     function wallpaper(name: string): void { root.setWall(name === "off" ? "" : name, true) }
     function sections(mode: string): void { root.setSections(mode) }
     function combo(which: string): void { if (which === "save") root.saveCombo(); else root.applyCombo(root.comboAt(which), true) }
+    function power(mode: string): void { root.setPower(mode === "" ? "toggle" : mode) }
+    function strength(kind: string, value: string): void { Quickshell.execDetached([root.script, "strength", kind, value]) }
     function shiftOnly(mode: string): void { root.setShiftOnly(mode === "toggle" ? !root.shiftOnly : (mode === "on" || mode === "1")) }
   }
 
@@ -835,7 +919,7 @@ BarWidget {
     wallStep("status")
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; shift 2; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile,
+                             root.stateDir, root.wallPreviewFile, root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -848,9 +932,9 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.barGlyph
-    active: root.shaderOn || root.colorOn || root.wallOn || root.mouseOn
-    tooltipText: "OmaShaders\nScreen: " + (root.shaderOn ? root.current : "off")
-                 + "\nColor: " + (root.colorOn ? root.colorCurrent : "off")
+    active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn)
+    tooltipText: "OmaShaders" + (root.paused ? " (paused)" : "") + "\nScreen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off")
+                 + "\nColor: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus : "")
@@ -913,6 +997,11 @@ BarWidget {
     property var favs: []
     property bool focused: false
     property int defaultCat: 0
+    property bool hasStrength: false
+    property bool strengthLive: false
+    property int strength: 100
+    property int strengthDefault: 100
+    signal strengthPicked(int value)
     property int col: 0
     property int catIdx: 0
     property int itemIdx: 0
@@ -928,7 +1017,7 @@ BarWidget {
     signal acted(string id)
     signal focusRequested()
 
-    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap)
+    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0)
 
     function indexOfSaved(ci) {
       if (saved === "" || ci < 0 || ci >= cats.length) return -1
@@ -1156,6 +1245,108 @@ BarWidget {
       }
     }
 
+    // strength slider: drag, wheel, or [ ] (5) { } (1) d (default) while this menu has focus; right-click = default
+    Item {
+      id: strengthRow
+      visible: sec.hasStrength
+      y: titleText.height + sec.visibleRows * (sec.rowH + sec.rowGap) + Style.space(6)
+      width: sec.width
+      height: sec.rowH
+      property bool dragging: false
+      property int dragValue: 0
+      readonly property int shown: (dragging || holdTimer.running) ? dragValue : sec.strength
+      opacity: sec.strengthLive ? 1 : 0.4
+      Timer { id: holdTimer; interval: 700 }
+
+      Rectangle { anchors.fill: parent; radius: Style.space(6); color: root.fgA(sec.focused ? 0.1 : 0.05) }
+      Text {
+        id: strengthLabel
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: "Strength"
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: strengthValue
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(42)
+        horizontalAlignment: Text.AlignRight
+        textFormat: Text.PlainText
+        text: sec.strengthLive ? strengthRow.shown + "%" : "–"
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Item {
+        id: track
+        anchors.left: strengthLabel.right
+        anchors.leftMargin: Style.space(14)
+        anchors.right: strengthValue.left
+        anchors.rightMargin: Style.space(10)
+        height: parent.height
+
+        Rectangle {
+          id: rail
+          width: parent.width
+          height: Style.space(4)
+          radius: height / 2
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fgA(0.2)
+        }
+        Rectangle {
+          width: rail.width * strengthRow.shown / 100
+          height: rail.height
+          radius: rail.radius
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fgA(0.85)
+        }
+        Rectangle {
+          x: rail.width * sec.strengthDefault / 100 - width / 2
+          width: Style.space(2)
+          height: Style.space(12)
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fgA(0.55)
+          visible: sec.strengthLive
+        }
+        Rectangle {
+          x: rail.width * strengthRow.shown / 100 - width / 2
+          width: Style.space(12)
+          height: width
+          radius: width / 2
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fg
+        }
+      }
+      MouseArea {
+        anchors.fill: parent
+        enabled: sec.strengthLive
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: Qt.PointingHandCursor
+        function pctAt(mx) { return Math.round(root.clamp(mapToItem(track, mx, 0).x / track.width, 0, 1) * 100) }
+        function pick(v) { strengthRow.dragValue = v; holdTimer.restart(); sec.strengthPicked(v) }
+        onPressed: function(m) {
+          sec.focusRequested()
+          if (m.button === Qt.RightButton) { pick(sec.strengthDefault); return }
+          strengthRow.dragging = true
+          pick(pctAt(m.x))
+        }
+        onPositionChanged: function(m) {
+          if (!strengthRow.dragging) return
+          var v = pctAt(m.x)
+          if (v !== strengthRow.dragValue) pick(v)
+        }
+        onReleased: strengthRow.dragging = false
+        onCanceled: strengthRow.dragging = false
+        onWheel: function(w) { pick(root.clamp(strengthRow.shown + (w.angleDelta.y > 0 ? 5 : -5), 0, 100)) }
+      }
+    }
+
     Text {
       visible: sec.curItems.length === 0 && sec.curCat !== null && !sec.curCat.action
       x: catCol.width + panes.spacing + Style.space(10)
@@ -1205,8 +1396,13 @@ BarWidget {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 6) / 7
+          readonly property real cell: (width - spacing * 7) / 8
 
+          MenuRow {
+            width: header.cell
+            label: (root.paused ? root.boxOff : root.boxOn) + "  Enabled  (p)"
+            onClicked: root.togglePause()
+          }
           MenuRow {
             width: header.cell
             label: (root.showScreen ? root.boxOn : root.boxOff) + "  Screen  (s)"
@@ -1263,6 +1459,11 @@ BarWidget {
             favs: root.screenFavs
             focused: root.focusKind === "screen"
             defaultCat: 1
+            hasStrength: true
+            strengthLive: root.shaderOn
+            strength: root.fxStrength
+            strengthDefault: root.defaultStrengthOf("screen", root.current)
+            onStrengthPicked: function(v) { root.setStrength("effect", v) }
             onPointed: function(item) { root.previewScreen(item) }
             onChosen: function(item, keep) { root.chooseScreen(item, keep) }
             onActed: function(id) { root.runAction("screen", id) }
@@ -1286,6 +1487,11 @@ BarWidget {
             favs: root.colorFavs
             focused: root.focusKind === "color"
             defaultCat: 1
+            hasStrength: true
+            strengthLive: root.colorOn
+            strength: root.colStrength
+            strengthDefault: root.defaultStrengthOf("color", root.colorCurrent)
+            onStrengthPicked: function(v) { root.setStrength("color", v) }
             onPointed: function(item) { root.previewColor(item) }
             onChosen: function(item, keep) { root.chooseColor(item, keep) }
             onActed: function(id) { root.runAction("color", id) }
@@ -1375,7 +1581,7 @@ BarWidget {
             if (root.comboFlash !== "") return root.comboFlash
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
-            return "Screen: " + (root.shaderOn ? root.current : "off") + " · Color: " + (root.colorOn ? root.colorCurrent : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off")
+            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off")
           }
           color: root.fg
           font.family: root.bar.fontFamily
@@ -1388,7 +1594,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "hjkl move · ⏎ apply · space try · tab menu · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc undo"
+          text: "hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc undo"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

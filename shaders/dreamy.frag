@@ -1,6 +1,7 @@
 #version 300 es
 // category: Mood
 // desc: Wide haze, lifted blacks, warm tint
+// strength: 55
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

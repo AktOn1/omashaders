@@ -1,6 +1,7 @@
 #version 300 es
 // category: Color
 // desc: Few flat colour levels
+// strength: 80
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

@@ -1,6 +1,7 @@
 #version 300 es
 // category: Devices
 // desc: Night vision: green amplified image
+// strength: 90
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

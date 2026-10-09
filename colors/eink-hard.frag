@@ -1,6 +1,7 @@
 #version 300 es
 // category: Devices
 // desc: E-ink, high contrast: near black and white, text stays crisp
+// strength: 80
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;

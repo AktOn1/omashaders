@@ -2,15 +2,19 @@
 
 One bar icon (monitor glyph), four effect menus. Tick **Screen**, **Color**, **Wallpaper** and/or **Cursor** at the top of the menu; ticked menus sit side by side (your choice is remembered).
 
-- **Screen**: full-screen GLSL effects over all monitors (Retro, Devices, Mood, Motion), applied by Hyprland on the GPU. These change the look (CRT, bloom, grain, glitch ...).
-- **Color**: a colour grade on top of the screen effect (Comfort, Color, Retro, Devices: warm, sepia, e-ink, Game Boy, phosphor ...). It always wins over the colours an effect brings, so any effect + any colour works. Pick only an effect, only a colour, or both.
+- **Screen**: full-screen GLSL effects over all monitors (38 of them in Lens, Retro, Devices, Art, Mood, Ambient, Motion), applied by Hyprland on the GPU. These change the look (CRT, pixelate, halation, godrays, oil paint, matrix rain, glitch ...).
+- **Color**: a colour grade on top of the screen effect (44 grades in Comfort, Color, Retro, Devices: warm, sepia, e-ink, vaporwave, teal-orange, kodachrome, Game Boy, phosphor ...). It always wins over the colours an effect brings, so any effect + any colour works. Pick only an effect, only a colour, or both.
 - **Wallpaper**: 41 animated effects drawn over your wallpaper in the theme colours (follows the mouse, weather and nature, scenes, looks) and a wallpaper picker (pick an image, next, previous).
 - **Cursor**: small overlays around the mouse pointer (Focus, Glow, Trail).
+
+**Strength.** Screen and Color each have a strength slider (0-100 %) under their list. Every effect starts at a value where text stays readable (pixelate 20 %, Game Boy LCD 25 %, C64 25 %, ...; the small tick on the slider marks it) and the value you pick is remembered per effect. Drag the slider, scroll over it, or use `[` `]` (5 %), `{` `}` (1 %), `d` back to the effect's start value; right-click the slider also resets it. Keys act on the focused menu (Screen or Color).
+
+**Enable / disable.** `p` (or the **Enabled** box at the top of the menu) pauses every effect (screen, colour, wallpaper, cursor) and brings them back exactly as they were. A global key binding, `Super+Alt+S`, does the same from anywhere (`bin/omashaders power toggle --notify`, see `~/.config/hypr/bindings.lua`). Picking a new effect also un-pauses.
 
 Keys: `h j k l` or arrows move, `Tab` jumps between menus (`l` on the last effect of a menu goes to the next menu), moving onto an effect with the keys previews it live; hovering with the mouse only highlights it, and previews only while `Shift` is held (a click always keeps it), `Enter` keeps it and closes, `Space` keeps it and stays open, `Esc`/`q` puts the old effects back. `f` favorite (own list per menu), `r` Surprise me in the focused menu, `R` in every ticked menu, `o` off in the focused menu, `O` in every ticked menu, `s` `C` `w` `c` tick Screen / Color / Wallpaper / Cursor, `a` animated screen shaders, `g`/`G` top/bottom, `1`-`9` jump to a category. The last line shows GPU use: this shell (draws wallpaper and cursor effects), Hyprland (the screen shader) and all apps, plus VRAM.
 
 Bar icon: **left click** menu · **right click** all ticked effects off · **middle click** next wallpaper · **scroll** steps the screen shader (wallpapers when Screen is unticked).
-Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|sections screen|color|wall|mouse|both|all`.
+Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power on|off|toggle|strength effect|color N|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|sections screen|color|wall|mouse|both|all`.
 ## Combos
 A combo is Screen effect + Color + Wallpaper + Cursor effect saved together. Tick **Combos** (`m`) for another menu: `Enter` applies a combo, moving over one previews it, `Esc` undoes. `F` (anywhere in the menu) saves the current combination; `f` on a combo removes it. They live in `~/.local/state/omarchy/io.github.akton1.omashaders/combos`, one `screen|wall|mouse|color` line each (older 3-part lines still load, without a colour). From a key binding: `omarchy-shell io.github.akton1.omashaders combo N` applies the Nth combo, `combo save` saves the current one.
 
@@ -35,24 +39,26 @@ Runs inside the compositor on the GPU: no extra window, no CPU use, same cost on
 
     bin/omashaders list | status | set NAME | off | toggle [NAME] | next | prev   (add -a to include animated) | animated [on|off|toggle] | gpu
     bin/omashaders effect [status|list|set NAME|off] | color [status|list|set NAME|off]
+    bin/omashaders strength [effect|color [N|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 
 Effects live in `shaders/*.frag`, colour grades in `colors/*.frag` (GLSL ES 3.00, uniforms `tex`, `time`, input `v_texcoord`).
 Validate with `glslangValidator -S frag shaders/NAME.frag`. Hyprland runs only one screen shader, so with an effect and a colour set,
-`bin/compose-shader` merges them into `<state dir>/composed/EFFECT+COLOR.frag` (effect first, the colour then reads the effect's result);
+`bin/compose-shader` merges them into `<state dir>/built/EFFECT@S+COLOR@S.frag` (effect first, the colour then reads the effect's result, each with its strength baked in as a constant because Hyprland has no custom uniforms);
 `off` clears both, `effect off` / `color off` one layer. `set NAME` with a colour name sets the colour layer (old behaviour).
 Hyprland 0.56 uses the Lua parser: set via `hyprctl eval`, `hyprctl keyword` does not work.
 
 ## Cost warning (AKT-568)
 Any shader that declares `uniform float time;` makes Hyprland show a red warning and need
 `debug:damage_tracking = off`, which redraws the whole screen every frame (big GPU cost).
-Static shaders must NOT declare `time`. Animated ones (grain, scan-sweep, vhs, heat-haze, glitch, breathe, aurora, tunnel; all in category Motion)
+Static shaders must NOT declare `time`. Animated ones (Motion, plus hologram, matrix, fireflies, underwater, snowfall in Ambient)
 are costly: `omashaders` sets `debug:damage_tracking=0` itself when an animated shader is applied
 (no Hyprland warning) and back to 2 for static ones/off. A warning left over from before is cleared with `hyprctl reload`.
 
 ## Adding a shader
-Effect: drop `shaders/NAME.frag` with two comment lines right after `#version 300 es`: `// category: Retro|Devices|Mood|Motion` and `// desc: one line shown in the menu`.
+Effect: drop `shaders/NAME.frag` with two comment lines right after `#version 300 es`: `// category: Lens|Retro|Devices|Art|Mood|Ambient|Motion` and `// desc: one line shown in the menu`.
 Colour: `colors/NAME.frag`, category `Comfort|Color|Retro|Devices`; it must be a per-pixel function of `texture(tex, v_texcoord)` only (one such call, no other `v_texcoord`, no `gl_FragCoord`, no `time`), because the composer swaps that call for the effect's output and prefixes the colour's helper functions with `c_`.
-Check with `glslangValidator -S frag`; to check every effect + colour pair, run `bin/compose-shader` on each pair and validate the output.
+Strength: add `// strength: N` for the start value (default 100). By default the result is blended with the untouched screen (`mix(input, result, S)`), which is right for tints and overlays. Shaders whose look changes shape (pixel blocks, blur radius, curvature) add `// strength-mode: native` and read `STRENGTH` (0.0-1.0) themselves, so 0 % really is the original screen and the start value is readable.
+Check everything with `bin/shader-check` (composes every effect and colour at 50 % and validates it with glslangValidator; standalone validation of a native shader fails on `STRENGTH`). Preview without touching the desktop: `bin/shader-preview IN.png SHADER.frag OUT.png [TIME]` (CPU rendering, build the shader first with `bin/compose-shader`).
 
 ## Reacting to what moves on screen
 Not possible inside a Hyprland screen shader: it gets only the current frame (no previous frame, no custom inputs), so it cannot compare frames. Possible variants: a cursor-reactive shader (a helper rewrites a constant and re-applies; recompiles each time, so only a few updates per second) or a Quickshell overlay with a screencopy feedback loop (heavy). Not built.

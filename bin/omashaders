@@ -3,9 +3,12 @@
 # usage: omashaders list [-a] | listall (name, static|animated|motion, category, description, screen|color|mouse; tab separated)
 #        | effect [status|list|set NAME|off] | color [status|list|set NAME|off] | mouse [status|list|set NAME|off]
 #        | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
+#        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
 # `off` turns both layers off; `set NAME` sets the effect (a colour name sets the colour layer instead).
+# Each layer has a strength 0-100 (remembered per effect; start value from a `// strength: N` line in the shader).
+# `power off` pauses every screen shader without forgetting the choice (bar icon and wallpaper/cursor overlays follow).
 # The cycle is: each effect, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
@@ -47,21 +50,34 @@ hypr_apply() {
   [ -n "$1" ] && is_animated "$1" && dt=0
   hyprctl eval "hl.config({debug={damage_tracking=$dt}, decoration={screen_shader='$1'}})" >/dev/null
 }
-# apply the current effect and colour layers: none, one file, or a merged file
+# strength (percent) of a layer: remembered per effect/colour, else the shader's `// strength: N` line, else 100
+SDIR="$STATE_DIR/strengths"
+default_strength() { local v; v=$(sed -n 's|^// strength: *||p' "$1" | head -1); echo "${v:-100}"; }
+remembered_strength() { # KIND(fx|col) NAME FILE
+  local f="$SDIR/$1-$2"
+  if [ -s "$f" ]; then cat "$f"; else default_strength "$3"; fi
+}
+cur_strength() { local v; v=$(cat "$STATE_DIR/strength-$1" 2>/dev/null); echo "${v:-100}"; }
+DISABLED="$STATE_DIR/disabled"
+is_disabled() { [ -s "$DISABLED" ]; }
+# apply the current effect and colour layers: none, or one built shader file (bin/compose-shader)
 apply() {
-  local fx col file="" out
+  local fx col file="" out args=()
   fx=$(current); col=$(current_color)
   [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
   [ -n "$col" ] && [ ! -f "$CDIR/$col.frag" ] && col=""
-  if [ -n "$fx" ] && [ -n "$col" ]; then
-    out="$STATE_DIR/composed/$fx+$col.frag"
-    if [ ! -s "$out" ] || [ "$out" -ot "$DIR/$fx.frag" ] || [ "$out" -ot "$CDIR/$col.frag" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
-      mkdir -p "$STATE_DIR/composed"
-      python3 "$ROOT/bin/compose-shader" "$DIR/$fx.frag" "$CDIR/$col.frag" "$out.tmp" && mv "$out.tmp" "$out" || { echo "could not combine $fx + $col" >&2; exit 1; }
+  if ! is_disabled && { [ -n "$fx" ] || [ -n "$col" ]; }; then
+    local sf sc
+    sf=$(cur_strength effect); sc=$(cur_strength color)
+    out="$STATE_DIR/built/${fx:--}@${sf}+${col:--}@${sc}.frag"
+    [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
+    [ -n "$col" ] && args+=(--col "$CDIR/$col.frag" "$sc")
+    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$DIR/$fx.frag" ] || [ -n "$col" -a "$out" -ot "$CDIR/$col.frag" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
+      mkdir -p "$STATE_DIR/built"
+      python3 "$ROOT/bin/compose-shader" "$out.tmp" "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build $fx + $col" >&2; exit 1; }
     fi
+    find "$STATE_DIR/built" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
     file="$out"
-  elif [ -n "$fx" ]; then file="$DIR/$fx.frag"
-  elif [ -n "$col" ]; then file="$CDIR/$col.frag"
   fi
   hypr_apply "$file"
 }
@@ -71,12 +87,46 @@ set_shader() {
   lock
   if [ ! -f "$DIR/$1.frag" ] && [ -f "$CDIR/$1.frag" ]; then set_color "$1"; return; fi
   [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
-  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; apply
+  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; echo "$(remembered_strength fx "$1" "$DIR/$1.frag")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
 }
 set_color() {
   lock
   [ -f "$CDIR/$1.frag" ] || { echo "unknown colour: $1" >&2; exit 1; }
-  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; apply
+  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; echo "$(remembered_strength col "$1" "$CDIR/$1.frag")" > "$STATE_DIR/strength-color"; : > "$DISABLED"; apply
+}
+# strength KIND(effect|color) VALUE: VALUE is a percent, +N, -N or reset; remembered for that effect/colour
+set_strength() {
+  lock
+  local kind="$1" val="$2" name file k cur
+  if [ "$kind" = effect ]; then name=$(current); file="$DIR/$name.frag"; k=fx; else name=$(current_color); file="$CDIR/$name.frag"; k=col; fi
+  [ -n "$name" ] && [ -f "$file" ] || { echo "no $kind set" >&2; exit 1; }
+  cur=$(cur_strength "$kind")
+  case "$val" in
+    reset) val=$(default_strength "$file") ;;
+    +*|-*) val=$(( cur + val )) ;;
+    ''|*[!0-9]*) echo "usage: omashaders strength effect|color PERCENT|+N|-N|reset" >&2; exit 1 ;;
+  esac
+  [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
+  mkdir -p "$SDIR"; echo "$val" > "$STATE_DIR/strength-$kind"; echo "$val" > "$SDIR/$k-$name"
+  apply
+}
+power() { # [status|on|off|toggle] ; "on" = shaders enabled
+  lock
+  local want="${1:-status}" now=on
+  is_disabled && now=off
+  [ "$want" = toggle ] && { [ "$now" = on ] && want=off || want=on; }
+  case "$want" in
+    on) : > "$DISABLED"; apply ;;
+    off) mkdir -p "$STATE_DIR"; echo 1 > "$DISABLED"; apply ;;
+    *) echo "$now"; return ;;
+  esac
+  if [ "$2" = --notify ] && command -v notify-send >/dev/null 2>&1; then
+    local fx col msg="paused"
+    fx=$(current); col=$(current_color)
+    [ "$want" = on ] && msg="on: ${fx:-no effect}${col:+ + $col}"
+    notify-send -a OmaShaders -t 1500 -h string:x-canonical-private-synchronous:omashaders "OmaShaders" "$msg" >/dev/null 2>&1
+  fi
+  echo "$want"
 }
 effect_off() { lock; : > "$STATE"; apply; }
 color_off() { lock; : > "$COLOR_STATE"; apply; }
@@ -98,13 +148,13 @@ case "${1:-}" in
     for f in "$DIR"/*.frag; do
       n=$(basename "$f" .frag); kind=static; is_animated "$f" && kind=animated
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\tscreen\n' "$n" "$kind" "${cat:-Other}" "$desc"
+      printf '%s\t%s\t%s\t%s\tscreen\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc" "$(default_strength "$f")"
     done
     for f in "$CDIR"/*.frag; do
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\tstatic\t%s\t%s\tcolor\n' "$n" "${cat:-Other}" "$desc"
+      printf '%s\tstatic\t%s\t%s\tcolor\t%s\n' "$n" "${cat:-Other}" "$desc" "$(default_strength "$f")"
     done
     for f in "$MDIR"/*.frag; do
       [ -e "$f" ] || continue
@@ -135,7 +185,8 @@ case "${1:-}" in
       list) for f in "$MDIR"/*.frag; do basename "$f" .frag; done ;;
       off) mkdir -p "$STATE_DIR"; : > "$MSTATE" ;;
       set) [ -f "$MDIR/$3.frag.qsb" ] || { echo "unknown mouse effect: $3" >&2; exit 1; }
-           mkdir -p "$STATE_DIR"; echo "$3" > "$MSTATE" ;;
+           mkdir -p "$STATE_DIR"; echo "$3" > "$MSTATE"
+           if is_disabled; then lock; : > "$DISABLED"; apply; fi ;;
       *) echo "usage: omashaders mouse [status|list|set NAME|off]" >&2; exit 1 ;;
     esac ;;
   animated)
@@ -149,6 +200,13 @@ case "${1:-}" in
     cur=$(current)
     if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && is_animated "$DIR/$cur.frag"; then effect_off; fi ;;
   gpu) gpu ;;
+  strength)
+    case "${2:-}" in
+      '') echo "effect $(cur_strength effect) color $(cur_strength color)" ;;
+      effect|color) if [ -z "$3" ]; then cur_strength "$2"; else set_strength "$2" "$3"; fi ;;
+      *) echo "usage: omashaders strength [effect|color [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
+    esac ;;
+  power) power "$2" "$3" ;;
   status) current | grep . || echo off ;;
   off) turn_off ;;
   on|set) set_shader "$2" ;;
