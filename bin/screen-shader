@@ -14,7 +14,12 @@ names() {
   done
 }
 current() { cat "$STATE" 2>/dev/null; }
-apply() { hyprctl eval "hl.config({decoration={screen_shader='$1'}})" >/dev/null; }
+# Animated shaders need damage tracking off (Hyprland warns otherwise); static ones and off restore it.
+apply() {
+  local dt=2
+  [ -n "$1" ] && grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$1" && dt=0
+  hyprctl eval "hl.config({debug={damage_tracking=$dt}, decoration={screen_shader='$1'}})" >/dev/null
+}
 set_shader() {
   [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
   apply "$DIR/$1.frag"; mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"
