@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 41 animated wallpaper effects and 18 cursor effects (12 overlays, 6 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 41 animated wallpaper effects and 24 cursor effects (12 overlays, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -125,6 +125,8 @@ Also remove the key bindings you added.
 - **Red Hyprland warning about `time` and damage tracking:** an animated effect was applied by something other than this plugin. Pick a static effect or `off`, then run `hyprctl reload`.
 - **An effect makes text unreadable:** lower its strength (`[`), or press `d` for its start value. Pixel effects start low on purpose.
 - **Icon missing or the menu looks old after an update:** `omarchy-restart-shell`.
+- **Follow effects (Bend menu, category Follow):** six gentle effects that bend the real screen along the pointer's recent path and settle after you stop: `smudge` (pixels smear forward like dragged wet paint), `melt` (a soft drip behind the pointer), `wake` (a narrow boat-wake ribbon), `drift` (a faint lens that lags behind and catches up), `streak` (motion blur near the pointer) and `echo` (a faint afterimage). They are small (45-150 px) and fade out within half a second, so text stays readable. `bin/cursor-bend` passes the last 8 pointer positions (35 ms apart) to the shader as `CTR`.
+
 - **Bend effects cost more than overlays:** the pointer position reaches the shader as a new file about 30 times a second, so Hyprland recompiles it each time (roughly 35% of a CPU core on the author's machine while the pointer moves, none while it rests). Use an overlay effect if that matters.
 - **Bend effect only shows on one monitor:** intended, it follows the pointer.
 - **Cursor effects never show:** you turned on "only while Shift is held" without the Shift binding above.

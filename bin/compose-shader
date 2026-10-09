@@ -31,7 +31,8 @@ def layer(path, percent, prefix, sample=None):
     return src, "const float %sS = %.4f;\n%s" % (prefix, s, text), native
 
 CUR_MARK = "//@CURSOR-CONSTS@"
-CUR_DEFAULTS = "const vec2 CUR = vec2(960.0, 540.0);\nconst vec2 CVEL = vec2(0.0, 0.0);\nconst float CT = 99.0;\nconst bool CMARK = false;"
+CUR_DEFAULTS = ("const vec2 CUR = vec2(960.0, 540.0);\nconst vec2 CVEL = vec2(0.0, 0.0);\nconst float CT = 99.0;\nconst bool CMARK = false;\n"
+                "const vec2 CTR[8] = vec2[8](" + ", ".join(["vec2(960.0, 540.0)"] * 8) + ");")
 
 CUR_PRELUDE = """\
 %s
@@ -39,6 +40,21 @@ CUR_PRELUDE = """\
 #define RES vec2(textureSize(tex, 0))
 bool cur_here = true;
 vec4 cur_tex(vec2 uv);
+// The pointer trail: cur_pt(0) is the pointer, cur_pt(8) the oldest of 8 earlier positions (about 35 ms apart).
+vec2 cur_pt(int i) { return i == 0 ? CUR : CTR[i - 1]; }
+// Distance from p to trail segment i (between cur_pt(i), newer, and cur_pt(i + 1), older). dir = unit vector of travel,
+// len = segment length, h = 0 at the older end .. 1 at the newer end. A segment with no length gives a huge distance.
+float cur_seg(vec2 p, int i, out vec2 dir, out float len, out float h) {
+    vec2 a = cur_pt(i), b = cur_pt(i + 1);
+    vec2 ab = a - b;
+    float l2 = dot(ab, ab);
+    dir = vec2(0.0); len = 0.0; h = 0.0;
+    if (l2 < 1.0) return 1.0e5;
+    len = sqrt(l2);
+    dir = ab / len;
+    h = clamp(dot(p - b, ab) / l2, 0.0, 1.0);
+    return distance(p, b + ab * h);
+}
 """
 
 CUR_TAIL = """\

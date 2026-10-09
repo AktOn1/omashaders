@@ -13,6 +13,8 @@ STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.
 BUILT = os.path.join(STATE, "built")
 PIDFILE = os.path.join(STATE, "bend.pid")
 MAX_RATE = 30.0
+TRAIL_N = 8
+TRAIL_STEP = 0.035
 POLL = 1 / 60.0
 
 _l = importlib.machinery.SourceFileLoader("compose_shader", os.path.join(ROOT, "bin", "compose-shader"))
@@ -111,9 +113,9 @@ class Template:
             self.tail = 0.0
         return True
 
-    def render(self, x, y, vx, vy, t, marked):
-        consts = "const vec2 CUR = vec2(%.1f, %.1f);\nconst vec2 CVEL = vec2(%.1f, %.1f);\nconst float CT = %.3f;\nconst bool CMARK = %s;" % (
-            x, y, vx, vy, t, "true" if marked else "false")
+    def render(self, x, y, vx, vy, t, marked, trail):
+        consts = "const vec2 CUR = vec2(%.1f, %.1f);\nconst vec2 CVEL = vec2(%.1f, %.1f);\nconst float CT = %.3f;\nconst bool CMARK = %s;\nconst vec2 CTR[8] = vec2[8](%s);" % (
+            x, y, vx, vy, t, "true" if marked else "false", ", ".join("vec2(%.1f, %.1f)" % q for q in trail))
         return self.pre + consts + self.post
 
 
@@ -137,13 +139,15 @@ def main():
     mons = monitors()
     last_mon_refresh = time.time()
     shown_key = None
+    hist = []
+    last_hist = 0.0
 
-    def write(x, y, ct, marked):
+    def write(x, y, ct, marked, trail):
         nonlocal seq
         seq += 1
         path = os.path.join(BUILT, "bend-%d.frag" % seq)
         with open(path, "w") as f:
-            f.write(tpl.render(x, y, vx, vy, ct, marked))
+            f.write(tpl.render(x, y, vx, vy, ct, marked, trail))
         hypr_apply(path, tpl.animated)
         written.append(path)
         while len(written) > 6:
@@ -186,6 +190,11 @@ def main():
             elif now - last_move > 0.08:
                 vx, vy = 0.6 * vx, 0.6 * vy
             last_pos = pos
+            if not hist:
+                hist = [pos] * TRAIL_N
+            elif now - last_hist >= TRAIL_STEP:
+                last_hist = now
+                hist = [pos] + hist[:TRAIL_N - 1]
             ct = min(now - last_move, 99.0) if last_move else 99.0
             active = moved or (ct < tpl.tail) or state_dirty or not settled
             mon = None
@@ -194,10 +203,12 @@ def main():
                     mon = m
             if active and mon and now - last_write >= 1 / MAX_RATE:
                 lx, ly = (pos[0] - mon[0]) * mon[4], (pos[1] - mon[1]) * mon[4]
+                trail = [((q[0] - mon[0]) * mon[4], (q[1] - mon[1]) * mon[4]) for q in hist]
                 if ct >= tpl.tail and not moved:
                     ct, settled = 99.0, True
                     vx = vy = 0.0
-                write(lx, ly, ct, len(mons) > 1)
+                    trail = [(lx, ly)] * TRAIL_N
+                write(lx, ly, ct, len(mons) > 1, trail)
                 last_write = now
                 state_dirty = False
             time.sleep(POLL)
