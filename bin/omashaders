@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # omashaders: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
-# usage: omashaders list [-a] | listall (name, static|animated, category, description; tab separated) | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
+# usage: omashaders list [-a] | listall (name, static|animated|motion, category, description, screen|mouse; tab separated) | mouse [status|list|set NAME|off] | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
 # The cycle is: each shader, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/shaders"
+MDIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/mouse-effects"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
 STATE="$STATE_DIR/current"
 names() {
@@ -40,7 +41,7 @@ set_shader() {
   [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
   apply "$DIR/$1.frag"; mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"
 }
-turn_off() { apply ""; rm -f "$STATE"; }
+turn_off() { apply ""; mkdir -p "$STATE_DIR"; : > "$STATE"; }
 step() { # step DIRECTION(1|-1) [-a]
   local list=() n cur i idx=-1
   while read -r n; do [ -n "$n" ] && list+=("$n"); done < <(names "$2")
@@ -58,8 +59,24 @@ case "${1:-}" in
     for f in "$DIR"/*.frag; do
       n=$(basename "$f" .frag); kind=static; is_animated "$f" && kind=animated
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc"
+      printf '%s\t%s\t%s\t%s\tscreen\n' "$n" "$kind" "${cat:-Other}" "$desc"
+    done
+    for f in "$MDIR"/*.frag; do
+      [ -e "$f" ] || continue
+      n=$(basename "$f" .frag); kind=static; [ "$(sed -n 's|^// motion: *||p' "$f" | head -1)" = yes ] && kind=motion
+      cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
+      printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc"
     done ;;
+  mouse) # an overlay drawn by the bar icon around the cursor; independent of the screen shader
+    MSTATE="$STATE_DIR/mouse"
+    case "${2:-status}" in
+      status) cat "$MSTATE" 2>/dev/null | grep . || echo off ;;
+      list) for f in "$MDIR"/*.frag; do basename "$f" .frag; done ;;
+      off) mkdir -p "$STATE_DIR"; : > "$MSTATE" ;;
+      set) [ -f "$MDIR/$3.frag.qsb" ] || { echo "unknown mouse effect: $3" >&2; exit 1; }
+           mkdir -p "$STATE_DIR"; echo "$3" > "$MSTATE" ;;
+      *) echo "usage: omashaders mouse [status|list|set NAME|off]" >&2; exit 1 ;;
+    esac ;;
   animated)
     case "${2:-}" in
       on) val=1 ;;

@@ -1,0 +1,55 @@
+#version 440
+layout(location = 0) in vec2 qt_TexCoord0;
+layout(location = 0) out vec4 fragColor;
+layout(std140, binding = 0) uniform buf {
+  mat4 qt_Matrix;
+  float qt_Opacity;
+  float time;
+  vec2 mouse;
+  vec2 res;
+  vec2 imgSize;
+  vec4 cBg;
+  vec4 cBlue;
+  vec4 cMagenta;
+  vec4 cPink;
+  vec4 cCream;
+};
+layout(binding = 1) uniform sampler2D src;
+
+vec2 coverUV(vec2 uv) {
+  float ra = res.x / res.y;
+  float ia = imgSize.x / imgSize.y;
+  vec2 s = ra > ia ? vec2(1.0, ia / ra) : vec2(ra / ia, 1.0);
+  return (uv - 0.5) * s + 0.5;
+}
+vec3 wall(vec2 uv) { return texture(src, coverUV(clamp(uv, 0.0, 1.0))).rgb; }
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + 17.0; a *= 0.5; }
+  return v;
+}
+
+
+void main() {
+  vec2 uv = qt_TexCoord0;
+  float asp = res.x / res.y;
+  vec2 m = mouse / res;
+  vec2 d = (uv - m) * vec2(asp, 1.0);
+  float r = length(d);
+  vec2 dir = d / max(r, 0.0001);
+  vec2 sd = d * (1.0 + 0.06 / (r * r + 0.015));
+  vec3 col = wall(m + sd / vec2(asp, 1.0));
+  col *= smoothstep(0.05, 0.085, r);
+  float ang = atan(d.y, d.x);
+  float rx = (r - 0.115) / 0.022;
+  float ring = exp(-rx * rx) * (0.55 + 0.45 * sin(ang * 3.0 - time * 2.2 + r * 40.0));
+  col += mix(cPink.rgb, cCream.rgb, 0.5 + 0.5 * sin(ang - time)) * ring * 0.8;
+  col += cMagenta.rgb * 0.18 * exp(-r * 7.0);
+  fragColor = vec4(col, 1.0) * qt_Opacity;
+}

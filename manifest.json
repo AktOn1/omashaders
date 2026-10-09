@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.omashaders",
   "name": "OmaShaders",
-  "version": "0.8.1",
+  "version": "1.0.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "A bar icon with a picker list of full-screen GLSL effects (CRT, vignette, warm tint, mono, sepia, VHS, glitch and more) over every monitor. Runs inside Hyprland on the GPU: no extra window, no CPU use.",
+  "description": "One bar icon, three effect menus you can tick side by side: Screen (full-screen GLSL shaders on the GPU), Wallpaper (41 animated wallpaper effects, wallpaper picker) and Cursor (overlays around the mouse). Hover preview, favorites, Surprise me, GPU use.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,15 +14,34 @@
   },
   "barWidget": {
     "displayName": "OmaShaders",
-    "description": "Click to pick a full-screen effect from a list, right-click to turn off, scroll to step",
+    "description": "Click to open the menu: tick Screen, Wallpaper and Cursor, hover to preview, Enter to keep. Right-click turns effects off, scroll steps the screen shader.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "includeAnimated": false
+      "includeAnimated": false,
+      "fps": 30,
+      "cursorNeedsShift": false
     },
     "schema": [
-      { "key": "includeAnimated", "type": "boolean", "label": "Include animated shaders (heavy GPU use)", "defaultValue": false }
+      {
+        "key": "includeAnimated",
+        "type": "boolean",
+        "label": "Include animated screen shaders (heavy GPU use)",
+        "defaultValue": false
+      },
+      {
+        "key": "fps",
+        "type": "integer",
+        "label": "Frame rate of wallpaper and cursor effects",
+        "defaultValue": 30
+      },
+      {
+        "key": "cursorNeedsShift",
+        "type": "boolean",
+        "label": "Cursor effects and wallpaper mouse reactions only while Shift is held (needs a Hyprland Shift_L binding, see README)",
+        "defaultValue": false
+      }
     ]
   }
 }

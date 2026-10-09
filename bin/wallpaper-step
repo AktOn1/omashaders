@@ -1,0 +1,70 @@
+#!/bin/bash
+# wallpaper-step next|prev|status|list|pick
+# Cycles the Omarchy wallpaper through the theme's backgrounds plus extra folders
+# (default ~/Pictures/Wallpapers; override with WALLPAPER_SWITCHER_DIRS, ':' separated).
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current"
+THEME_NAME=$(cat "$STATE/theme.name" 2>/dev/null)
+DIRS=("$STATE/theme/backgrounds" "$HOME/.config/omarchy/backgrounds/$THEME_NAME")
+IFS=':' read -ra EXTRA <<<"${WALLPAPER_SWITCHER_DIRS:-$HOME/Pictures/Wallpapers}"
+DIRS+=("${EXTRA[@]}")
+
+declare -A seen
+LIST=()
+while IFS= read -r -d '' f; do
+  real=$(readlink -f "$f")
+  sum=$(md5sum <"$real" | cut -d' ' -f1)
+  [[ -n ${seen[$sum]} ]] && continue
+  seen[$sum]=1
+  LIST+=("$real")
+done < <(find -L "${DIRS[@]}" -maxdepth 1 -type f \
+  \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.gif' -o -iname '*.bmp' -o -iname '*.webp' \) \
+  -print0 2>/dev/null | sort -z)
+
+TOTAL=${#LIST[@]}
+CURRENT=$(readlink -f "$STATE/background" 2>/dev/null)
+INDEX=-1
+for i in "${!LIST[@]}"; do
+  [[ ${LIST[$i]} == "$CURRENT" ]] && INDEX=$i && break
+done
+if (( INDEX < 0 )) && [[ -f $CURRENT ]]; then
+  cur_sum=$(md5sum <"$CURRENT" | cut -d' ' -f1)
+  for i in "${!LIST[@]}"; do
+    [[ $(md5sum <"${LIST[$i]}" | cut -d' ' -f1) == "$cur_sum" ]] && INDEX=$i && break
+  done
+fi
+
+step() {
+  (( TOTAL == 0 )) && { echo "No wallpapers found" >&2; exit 1; }
+  local to
+  if (( INDEX < 0 )); then to=0
+  else to=$(( (INDEX + $1 + TOTAL) % TOTAL )); fi
+  omarchy-theme-bg-set "${LIST[$to]}"
+  CURRENT=${LIST[$to]}; INDEX=$to
+  status
+}
+
+status() {
+  if (( INDEX < 0 )); then echo "?/$TOTAL ${CURRENT##*/}"
+  else echo "$((INDEX + 1))/$TOTAL ${CURRENT##*/}"; fi
+}
+
+case "$1" in
+  next) step 1 ;;
+  prev) step -1 ;;
+  status) status ;;
+  list) printf '%s\n' "${LIST[@]}" ;;
+  pick)
+    PICKDIR="${XDG_RUNTIME_DIR:-/tmp}/omashaders-wallpaper-pick"
+    rm -rf "$PICKDIR"; mkdir -p "$PICKDIR"
+    n=0
+    for f in "${LIST[@]}"; do
+      n=$((n + 1))
+      ln -s "$f" "$PICKDIR/$(printf '%02d' "$n")-$(basename "$(dirname "$f")")-${f##*/}"
+    done
+    picked=$(omarchy-menu-images --filterable --selected "$CURRENT" "$PICKDIR")
+    [[ -n $picked ]] && omarchy-theme-bg-set "$(readlink -f "$picked")"
+    rm -rf "$PICKDIR"
+    ;;
+  *) echo "Usage: wallpaper-step next|prev|status|list|pick" >&2; exit 1 ;;
+esac

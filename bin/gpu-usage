@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Prints "OVERALL SHELL HYPRLAND USED_MB TOTAL_MB": whole-GPU busy percent, the percent used by the
+# Omarchy shell process (bar + wallpaper effects) and by Hyprland (screen shaders), then VRAM.
+# Any value is "na" when it cannot be measured.
+overall=na; shell=na; hypr=na; used=na; total=na
+if command -v nvidia-smi >/dev/null 2>&1; then
+  read -r overall used total < <(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ',' )
+  spid=$(pgrep -f 'quickshell.* /usr/share/omarchy/shell' | head -1)
+  hpid=$(pgrep -x Hyprland | head -1)
+  read -r shell hypr < <(nvidia-smi pmon -c 2 -s u 2>/dev/null | awk -v s="${spid:-0}" -v h="${hpid:-0}" \
+    '$1 !~ /^#/ { v = ($4 == "-") ? 0 : $4; if ($2 == s) a += v; if ($2 == h) b += v } END { printf "%d %d\n", a / 2 + 0.5, b / 2 + 0.5 }')
+else
+  for d in /sys/class/drm/card*/device; do
+    [ -r "$d/gpu_busy_percent" ] || continue
+    overall=$(cat "$d/gpu_busy_percent")
+    used=$(( $(cat "$d/mem_info_vram_used" 2>/dev/null || echo 0) / 1048576 ))
+    total=$(( $(cat "$d/mem_info_vram_total" 2>/dev/null || echo 0) / 1048576 ))
+    break
+  done
+fi
+echo "${overall:-na} ${shell:-na} ${hypr:-na} ${used:-na} ${total:-na}"
