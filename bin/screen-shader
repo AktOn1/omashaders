@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # screen-shader: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
-# usage: screen-shader list [-a] | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply
+# usage: screen-shader list [-a] | listall | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply
 # The cycle is: each shader, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/shaders"
@@ -33,6 +33,7 @@ step() { # step DIRECTION(1|-1) [-a]
 }
 case "${1:-}" in
   list) names "$2" ;;
+  listall) for f in "$DIR"/*.frag; do n=$(basename "$f" .frag); if grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$f"; then echo "$n animated"; else echo "$n static"; fi; done ;;
   status) current | grep . || echo off ;;
   off) turn_off ;;
   on|set) set_shader "$2" ;;

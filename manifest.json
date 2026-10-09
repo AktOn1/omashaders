@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.screen-shaders",
   "name": "Screen Shaders",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "A bar icon that cycles full-screen GLSL effects (CRT, vignette, warm tint) over every monitor. Runs inside Hyprland on the GPU: no extra window, no CPU use.",
+  "description": "A bar icon with a picker list of full-screen GLSL effects (CRT, vignette, warm tint) over every monitor. Runs inside Hyprland on the GPU: no extra window, no CPU use.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Screen Shaders",
-    "description": "Click to cycle full-screen effects, right-click to turn off, scroll to step",
+    "description": "Click to pick a full-screen effect from a list, right-click to turn off, scroll to step",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
