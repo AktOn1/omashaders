@@ -14,7 +14,11 @@ BarWidget {
   readonly property string script: Qt.resolvedUrl("bin/screen-shader").toString().replace(/^file:\/\//, "")
   readonly property string stateFile: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
                                       + "/omarchy/io.github.akton1.screen-shaders/current"
-  readonly property bool includeAnimated: setting("includeAnimated", false) === true
+  readonly property string animatedFile: stateFile.replace(/current$/, "animated")
+  // the menu switch (state file) wins; the plugin setting is the default until it is first used
+  property string animatedFlag: ""
+  readonly property bool includeAnimated: animatedFlag !== "" ? animatedFlag === "1" : setting("includeAnimated", false) === true
+  property string gpuText: ""
   property string current: ""
   readonly property bool shaderOn: current !== ""
 
@@ -49,12 +53,42 @@ BarWidget {
       }
     }
   }
-  onPopupOpenChanged: if (popupOpen) lister.running = true
+  onPopupOpenChanged: if (popupOpen) { lister.running = true; gpu.running = true }
+
+  Process {
+    id: gpu
+    command: [root.script, "gpu"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var p = String(text).trim().split(/\s+/)
+        root.gpuText = p.length === 3 ? "GPU " + p[0] + "% · VRAM " + (p[1] / 1024).toFixed(1) + "/" + (p[2] / 1024).toFixed(1) + " GB" : "GPU usage unavailable"
+      }
+    }
+  }
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.popupOpen
+    onTriggered: if (!gpu.running) gpu.running = true
+  }
+
+  function setAnimated() {
+    Quickshell.execDetached([root.script, "animated", root.includeAnimated ? "off" : "on"])
+  }
 
   function run(verb) {
     var cmd = [root.script, verb]
     if (root.includeAnimated && (verb === "next" || verb === "prev")) cmd.push("-a")
     Quickshell.execDetached(cmd)
+  }
+
+  FileView {
+    path: root.animatedFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { root.animatedFlag = String(text() || "").trim(); lister.running = true }
+    onLoadFailed: root.animatedFlag = ""
   }
 
   FileView {
@@ -102,13 +136,60 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(220))
+    contentWidth: popup.fittedContentWidth(Style.space(270))
     contentHeight: popup.fittedContentHeight(list.implicitHeight)
 
     Column {
       id: list
       width: parent.width
       spacing: Style.space(2)
+
+      Rectangle {
+        width: list.width
+        height: Style.space(30)
+        radius: Style.space(6)
+        color: animMouse.containsMouse ? Qt.rgba(root.bar.barForeground.r, root.bar.barForeground.g, root.bar.barForeground.b, 0.14) : "transparent"
+
+        Text {
+          anchors.left: parent.left
+          anchors.leftMargin: Style.space(10)
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Animated effects"
+          color: root.bar.barForeground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+        }
+        Rectangle {
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(10)
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(34)
+          height: Style.space(18)
+          radius: height / 2
+          color: root.includeAnimated ? root.bar.barForeground : Qt.rgba(root.bar.barForeground.r, root.bar.barForeground.g, root.bar.barForeground.b, 0.25)
+          Rectangle {
+            width: parent.height - Style.space(4)
+            height: width
+            radius: width / 2
+            y: Style.space(2)
+            x: root.includeAnimated ? parent.width - width - Style.space(2) : Style.space(2)
+            color: root.includeAnimated ? Qt.rgba(0, 0, 0, 0.75) : root.bar.barForeground
+          }
+        }
+        MouseArea {
+          id: animMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.setAnimated()
+        }
+      }
+
+      Rectangle {
+        width: list.width
+        height: 1
+        color: Qt.rgba(root.bar.barForeground.r, root.bar.barForeground.g, root.bar.barForeground.b, 0.2)
+      }
 
       Repeater {
         model: [{ name: "", animated: false }].concat(root.entries)
@@ -150,6 +231,24 @@ BarWidget {
             onClicked: root.pick(modelData.name)
           }
         }
+      }
+
+      Rectangle {
+        width: list.width
+        height: 1
+        color: Qt.rgba(root.bar.barForeground.r, root.bar.barForeground.g, root.bar.barForeground.b, 0.2)
+      }
+      Text {
+        width: list.width
+        height: Style.space(26)
+        verticalAlignment: Text.AlignVCenter
+        leftPadding: Style.space(10)
+        textFormat: Text.PlainText
+        text: root.gpuText
+        color: root.bar.barForeground
+        opacity: 0.8
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
       }
     }
   }

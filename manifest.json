@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.screen-shaders",
   "name": "Screen Shaders",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "AktOn1",
   "license": "MIT",
   "description": "A bar icon with a picker list of full-screen GLSL effects (CRT, vignette, warm tint) over every monitor. Runs inside Hyprland on the GPU: no extra window, no CPU use.",

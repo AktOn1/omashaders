@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # screen-shader: switch Hyprland full-screen GLSL shaders (all monitors, GPU-side)
-# usage: screen-shader list [-a] | listall | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply
+# usage: screen-shader list [-a] | listall | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
 # The cycle is: each shader, then off. Shaders that declare `uniform float time` (animated)
 # are skipped unless -a is given: they force Hyprland to redraw the whole screen every frame.
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/shaders"
@@ -14,10 +14,26 @@ names() {
   done
 }
 current() { cat "$STATE" 2>/dev/null; }
+is_animated() { grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$1"; }
+# "animated" is a persisted on/off switch for the picker and the cycle; prints 1 or 0 (empty = never set)
+animated_flag() { cat "$STATE_DIR/animated" 2>/dev/null; }
+# gpu: "PERCENT USED_MB TOTAL_MB" (NVIDIA via nvidia-smi, AMD via sysfs), or "na"
+gpu() {
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ',' && return
+  fi
+  local d
+  for d in /sys/class/drm/card?/device; do
+    [ -r "$d/gpu_busy_percent" ] || continue
+    echo "$(cat "$d/gpu_busy_percent") $(( $(cat "$d/mem_info_vram_used" 2>/dev/null || echo 0) / 1048576 )) $(( $(cat "$d/mem_info_vram_total" 2>/dev/null || echo 0) / 1048576 ))"
+    return
+  done
+  echo na
+}
 # Animated shaders need damage tracking off (Hyprland warns otherwise); static ones and off restore it.
 apply() {
   local dt=2
-  [ -n "$1" ] && grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$1" && dt=0
+  [ -n "$1" ] && is_animated "$1" && dt=0
   hyprctl eval "hl.config({debug={damage_tracking=$dt}, decoration={screen_shader='$1'}})" >/dev/null
 }
 set_shader() {
@@ -39,6 +55,17 @@ step() { # step DIRECTION(1|-1) [-a]
 case "${1:-}" in
   list) names "$2" ;;
   listall) for f in "$DIR"/*.frag; do n=$(basename "$f" .frag); if grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$f"; then echo "$n animated"; else echo "$n static"; fi; done ;;
+  animated)
+    case "${2:-}" in
+      on) val=1 ;;
+      off) val=0 ;;
+      toggle) if [ "$(animated_flag)" = 1 ]; then val=0; else val=1; fi ;;
+      *) animated_flag | grep . || echo 0; exit 0 ;;
+    esac
+    mkdir -p "$STATE_DIR"; echo "$val" > "$STATE_DIR/animated"
+    cur=$(current)
+    if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && is_animated "$DIR/$cur.frag"; then turn_off; fi ;;
+  gpu) gpu ;;
   status) current | grep . || echo off ;;
   off) turn_off ;;
   on|set) set_shader "$2" ;;
