@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+# Prints "x,y" (Hyprland layout coordinates) each time the cursor moves, at most ~40 times a second.
+import glob, os, socket, sys, time
+
+rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+path = "%s/hypr/%s/.socket.sock" % (rt, sig)
+if not sig or not os.path.exists(path):
+    socks = sorted(glob.glob("%s/hypr/*/.socket.sock" % rt), key=os.path.getmtime)
+    if not socks:
+        sys.exit(1)
+    path = socks[-1]
+
+parent = os.getppid()
+last = None
+while os.getppid() == parent:
+    try:
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(path)
+        s.sendall(b"/cursorpos")
+        data = s.recv(64).decode().strip().replace(" ", "")
+        s.close()
+        if data != last and "," in data:
+            last = data
+            print(data, flush=True)
+    except OSError:
+        pass
+    except BrokenPipeError:
+        break
+    time.sleep(0.025)
