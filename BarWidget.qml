@@ -458,7 +458,8 @@ BarWidget {
       { id: "embers",    label: "Embers",          hint: "sparks flee mouse" },
       { id: "meteors",   label: "Meteor shower",   hint: "shooting stars" },
       { id: "rays",      label: "Light rays",      hint: "sun shafts, dust" },
-      { id: "bubbles",   label: "Bubbles",         hint: "rising, refracting" }
+      { id: "bubbles",   label: "Bubbles",         hint: "rising, refracting" },
+      { id: "smoke",     label: "Rising smoke",    hint: "mouse drags it along" }
     ] },
     { id: "scenes", label: "New scenes", items: [
       { id: "aurora",    label: "Night aurora",    hint: "moon and stars" },

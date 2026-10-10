@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 41 animated wallpaper effects and 24 cursor effects (12 overlays, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 42 animated wallpaper effects and 24 cursor effects (12 overlays, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -81,6 +81,10 @@ hl.bind("Shift_L", hl.dsp.global("omashaders:shift"), { non_consuming = true, do
 ```
 
 Shift still reaches your apps normally. Without this binding the effects never show while the option is on.
+
+### Rising smoke wallpaper
+
+Wallpaper > Weather and nature > Rising smoke: smoke drifts upward across the wallpaper, thicker at the bottom, light on dark wallpapers and dark on bright ones. Moving the mouse drags it along the pointer's path (about the last 0.7 s) and stirs up a little more smoke there; it drifts back when you stop. `WallpaperFx.qml` keeps the pointer path and passes it to the shader as `tr0`..`tr3` (only while `smoke` is selected).
 
 ### Follow effects
 
