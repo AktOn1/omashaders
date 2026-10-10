@@ -82,6 +82,7 @@ BarWidget {
   property string activeKind: "screen"
   function isShown(k) { return k === "screen" ? showScreen : (k === "color" ? showColor : (k === "wall" ? showWall : (k === "mouse" ? showMouse : (k === "win" ? showWin : showCombo)))) }
   function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : (k === "win" ? winSec : comboSec)))) }
+  function kindIcon(k) { return k === "screen" ? "󰍹" : (k === "color" ? "󰏘" : (k === "wall" ? "󰋩" : (k === "mouse" ? "󰍽" : (k === "win" ? "󰖲" : "󰽗")))) }
   function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : (k === "win" ? "Windows" : "Combos")))) }
   readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "win", "combo"].filter(function(k) { return isShown(k) })
   readonly property int nVis: visibleKinds.length
@@ -1876,6 +1877,7 @@ BarWidget {
   component SectionMenu: Item {
     id: sec
     property string title: ""
+    property string icon: ""
     property var rawCats: []
     readonly property bool filtering: root.query.trim() !== ""
     readonly property var cats: {
@@ -2050,7 +2052,7 @@ BarWidget {
       verticalAlignment: Text.AlignVCenter
       leftPadding: Style.space(10)
       textFormat: Text.PlainText
-      text: sec.title.toUpperCase()
+      text: (sec.icon !== "" ? sec.icon + "  " : "") + sec.title.toUpperCase()
       opacity: sec.focused ? 0.95 : 0.45
       color: root.fg
       font.family: root.bar.fontFamily
@@ -2710,43 +2712,43 @@ BarWidget {
 
           MenuRow {
             width: header.cell
-            label: (root.paused ? root.boxOff : root.boxOn) + "  Enabled  (p)"
+            label: (root.paused ? root.boxOff : root.boxOn) + " 󰐥 Enabled (p)"
             onClicked: root.togglePause()
           }
           MenuRow {
             width: header.cell
-            label: (root.showScreen ? root.boxOn : root.boxOff) + "  Screen  (s)"
+            label: (root.showScreen ? root.boxOn : root.boxOff) + " " + root.kindIcon("screen") + " Screen (s)"
             onClicked: root.toggleSection("screen")
           }
           MenuRow {
             width: header.cell
-            label: (root.showColor ? root.boxOn : root.boxOff) + "  Color  (C)"
+            label: (root.showColor ? root.boxOn : root.boxOff) + " " + root.kindIcon("color") + " Color (C)"
             onClicked: root.toggleSection("color")
           }
           MenuRow {
             width: header.cell
-            label: (root.showWall ? root.boxOn : root.boxOff) + "  Wallpaper  (w)"
+            label: (root.showWall ? root.boxOn : root.boxOff) + " " + root.kindIcon("wall") + " Wallpaper (w)"
             onClicked: root.toggleSection("wall")
           }
           MenuRow {
             width: header.cell
-            label: (root.showMouse ? root.boxOn : root.boxOff) + "  Cursor  (c)"
+            label: (root.showMouse ? root.boxOn : root.boxOff) + " " + root.kindIcon("mouse") + " Cursor (c)"
             onClicked: root.toggleSection("mouse")
           }
           MenuRow {
             width: header.cell
-            label: (root.showWin ? root.boxOn : root.boxOff) + "  Windows  (W)"
+            label: (root.showWin ? root.boxOn : root.boxOff) + " " + root.kindIcon("win") + " Windows (W)"
             onClicked: root.toggleSection("win")
           }
           MenuRow {
             width: header.cell
-            label: (root.showCombo ? root.boxOn : root.boxOff) + "  Combos  (m)"
+            label: (root.showCombo ? root.boxOn : root.boxOff) + " " + root.kindIcon("combo") + " Combos (m)"
             onClicked: root.toggleSection("combo")
           }
           MenuRow {
             width: header.cell
             dim: !root.showScreen
-            label: (root.includeAnimated ? root.boxOn : root.boxOff) + "  Animated  (a)"
+            label: (root.includeAnimated ? root.boxOn : root.boxOff) + " 󰙴 Animated (a)"
             onClicked: root.setAnimated()
           }
           MenuRow {
@@ -2814,6 +2816,7 @@ BarWidget {
             visible: root.showScreen
             width: secRow.secWidth
             title: "Screen"
+            icon: root.kindIcon("screen")
             rawCats: root.screenCats
             saved: root.current
             favs: root.screenFavs
@@ -2853,6 +2856,7 @@ BarWidget {
             visible: root.showColor
             width: Math.floor(secRow.secWidth * root.colorWeight)
             title: "Color"
+            icon: root.kindIcon("color")
             rawCats: root.colorCats
             saved: root.colorCurrent
             favs: root.colorFavs
@@ -2902,6 +2906,7 @@ BarWidget {
             visible: root.showWall
             width: secRow.secWidth
             title: "Wallpaper"
+            icon: root.kindIcon("wall")
             rawCats: root.wallCats
             saved: root.wallShown
             favs: root.wallFavs
@@ -2940,6 +2945,7 @@ BarWidget {
             visible: root.showMouse
             width: secRow.secWidth
             title: "Cursor"
+            icon: root.kindIcon("mouse")
             rawCats: root.mouseCats
             saved: root.mouseCurrent
             favs: root.mouseFavs
@@ -2968,6 +2974,7 @@ BarWidget {
             visible: root.showWin
             width: secRow.secWidth
             title: root.winScope === "*" ? "Windows" : "Windows · " + root.winScopeLabel
+            icon: root.kindIcon("win")
             rawCats: root.winCats
             saved: root.savedOf("win")
             alsoSaved: root.winMarks
@@ -2998,6 +3005,7 @@ BarWidget {
             visible: root.showCombo
             width: Math.floor(secRow.secWidth * root.comboWeight)
             title: "Combos"
+            icon: root.kindIcon("combo")
             rawCats: root.comboCats
             saved: root.comboNow
             favs: []
