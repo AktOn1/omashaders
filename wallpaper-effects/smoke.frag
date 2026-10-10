@@ -16,6 +16,7 @@ layout(std140, binding = 0) uniform buf {
   vec4 cTarget;
   float react;
   float range;
+  float zoom;
   vec4 tr0;
   vec4 tr1;
   vec4 tr2;

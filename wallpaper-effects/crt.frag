@@ -13,6 +13,10 @@ layout(std140, binding = 0) uniform buf {
   vec4 cMagenta;
   vec4 cPink;
   vec4 cCream;
+  vec4 cTarget;
+  float react;
+  float range;
+  float zoom;
 };
 layout(binding = 1) uniform sampler2D src;
 

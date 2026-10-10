@@ -7,7 +7,7 @@
 #        | window [-a CLASS] [status|effect|color|strength|target|classes|apps|apply|load|off|inherit] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
 #        | window frame [status|list|set NAME|off|reload] (shadow, glow and border presets for all windows: Hyprland's own options, no plugin needed)
 #        | perf [status|on|off|report [--days N] [--notify]|bench [--kinds screen,color,wall] [--only A,B]|crashes [--hours N]] (what each effect costs; bin/perf-log)
-#        | wallopt react|range [PERCENT|+N|-N|reset] | wallopt target [RRGGBB] (wallpaper effects: mouse reaction 0-200, Colour reactor range and picked colour)
+#        | wallopt react|speed|zoom|range [PERCENT|+N|-N|reset] | wallopt target [RRGGBB] (wallpaper effects: mouse reaction 0-200, speed 0-300, zoom 25-300, Colour reactor range and picked colour)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
@@ -597,12 +597,14 @@ case "${1:-}" in
       *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
   wallopt) # wallpaper effect options: react 0-200 (mouse reaction, 100 = as designed) | range 0-100 and target RRGGBB (Colour reactor)
-    f=""; max=100; def=100
+    f=""; max=100; min=0; def=100
     case "$2" in
       react) f="$STATE_DIR/react-wall"; max=200 ;;
+      speed) f="$STATE_DIR/wall-speed"; max=300 ;;
+      zoom) f="$STATE_DIR/wall-zoom"; max=300; min=25 ;;
       range) f="$STATE_DIR/wall-range"; def=50 ;;
       target) f="$STATE_DIR/wall-target" ;;
-      *) echo "usage: omashaders wallopt react|range [PERCENT|+N|-N|reset] | target [RRGGBB]" >&2; exit 1 ;;
+      *) echo "usage: omashaders wallopt react|speed|zoom|range [PERCENT|+N|-N|reset] | target [RRGGBB]" >&2; exit 1 ;;
     esac
     if [ "$2" = target ]; then
       if [ -z "$3" ]; then cat "$f" 2>/dev/null | grep . || echo e8a33d; exit 0; fi
@@ -617,7 +619,7 @@ case "${1:-}" in
       +*|-*) val=$(( cur + val )) ;;
       *[!0-9]*) echo "usage: omashaders wallopt $2 PERCENT|+N|-N|reset" >&2; exit 1 ;;
     esac
-    [ "$val" -lt 0 ] && val=0; [ "$val" -gt "$max" ] && val=$max
+    [ "$val" -lt "$min" ] && val=$min; [ "$val" -gt "$max" ] && val=$max
     mkdir -p "$STATE_DIR"; echo "$val" > "$f" ;;
   mix) case "$2" in effect|color) mix_cmd "$2" "$3" "$4" ;; *) echo "usage: omashaders mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount N]" >&2; exit 1 ;; esac ;;
   window) shift; window_cmd "$@" ;;

@@ -48,6 +48,8 @@ BarWidget {
   readonly property string mouseStrengthFile: stateDir + "/strength-mouse"
   readonly property string wallReactFile: stateDir + "/react-wall"
   readonly property string wallRangeFile: stateDir + "/wall-range"
+  readonly property string wallSpeedFile: stateDir + "/wall-speed"
+  readonly property string wallZoomFile: stateDir + "/wall-zoom"
   readonly property string wallTargetFile: stateDir + "/wall-target"
   readonly property string effect2File: stateDir + "/effect2"
   readonly property string color2File: stateDir + "/color2"
@@ -276,6 +278,15 @@ BarWidget {
   property int wallRange: 50
   property string wallTarget: "e8a33d"
   property int pendingWallReact: -1
+  // Wallpaper effect speed (0-300 %, 100 = as designed) and zoom (25-300 %, 100 = as designed)
+  property int wallSpeed: 100
+  property int wallZoom: 100
+  property int pendingWallSpeed: -1
+  property int pendingWallZoom: -1
+  Timer { id: wallSpeedTimer; interval: 80; onTriggered: { root.writeFile(root.wallSpeedFile, String(root.wallSpeed)); root.pendingWallSpeed = -1 } }
+  Timer { id: wallZoomTimer; interval: 80; onTriggered: { root.writeFile(root.wallZoomFile, String(root.wallZoom)); root.pendingWallZoom = -1 } }
+  function setWallSpeed(v) { v = clamp(Math.round(v), 0, 300); wallSpeed = v; pendingWallSpeed = v; wallSpeedTimer.restart() }
+  function setWallZoom(v) { v = clamp(Math.round(v), 25, 300); wallZoom = v; pendingWallZoom = v; wallZoomTimer.restart() }
   property int pendingWallRange: -1
   Timer { id: wallReactTimer; interval: 80; onTriggered: { root.writeFile(root.wallReactFile, String(root.wallReact)); root.pendingWallReact = -1 } }
   Timer { id: wallRangeTimer; interval: 80; onTriggered: { root.writeFile(root.wallRangeFile, String(root.wallRange)); root.pendingWallRange = -1 } }
@@ -356,6 +367,22 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingMouseStrength < 0) root.mouseStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
     onLoadFailed: root.mouseStrength = 100
+  }
+  FileView {
+    path: root.wallSpeedFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingWallSpeed < 0) root.wallSpeed = isNaN(v) ? 100 : root.clamp(v, 0, 300) }
+    onLoadFailed: root.wallSpeed = 100
+  }
+  FileView {
+    path: root.wallZoomFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingWallZoom < 0) root.wallZoom = isNaN(v) ? 100 : root.clamp(v, 25, 300) }
+    onLoadFailed: root.wallZoom = 100
   }
   FileView {
     path: root.wallReactFile
@@ -1343,6 +1370,8 @@ BarWidget {
   WallpaperFx {
     strength: root.wallStrength / 100
     react: root.wallReact / 100
+    speed: root.wallSpeed / 100
+    zoom: root.wallZoom / 100
     range: root.wallRange / 100
     targetColor: "#" + root.wallTarget
     effect: root.fxHost && !root.paused ? root.wallShown : ""
@@ -1798,6 +1827,10 @@ BarWidget {
     else if (t === "d") resetStrength()
     else if (t === ")") { if (focusKind === "wall" && wallOn) setWallReact(wallReact + 10) }
     else if (t === "(") { if (focusKind === "wall" && wallOn) setWallReact(wallReact - 10) }
+    else if (t === "v") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed - 10) }
+    else if (t === "V") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed + 10) }
+    else if (t === "z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom - 10) }
+    else if (t === "Z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom + 10) }
     else if (t === ".") nudgeMix(5)
     else if (t === ",") nudgeMix(-5)
     else if (t === ">") nudgeMix(1)
@@ -1841,7 +1874,7 @@ BarWidget {
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallSpeedFile, root.wallZoomFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -1927,6 +1960,7 @@ BarWidget {
     property string label: ""
     property int value: 0
     property int maxValue: 100
+    property int minValue: 0
     property int defaultValue: 100
     property bool live: true
     property bool lit: false
@@ -1978,21 +2012,21 @@ BarWidget {
         color: root.fgA(0.2)
       }
       Rectangle {
-        width: prRail.width * pr.shown / pr.maxValue
+        width: prRail.width * (pr.shown - pr.minValue) / (pr.maxValue - pr.minValue)
         height: prRail.height
         radius: prRail.radius
         anchors.verticalCenter: parent.verticalCenter
         color: root.fgA(0.85)
       }
       Rectangle {
-        x: prRail.width * pr.defaultValue / pr.maxValue - width / 2
+        x: prRail.width * (pr.defaultValue - pr.minValue) / (pr.maxValue - pr.minValue) - width / 2
         width: Style.space(2)
         height: Style.space(12)
         anchors.verticalCenter: parent.verticalCenter
         color: root.fgA(0.55)
       }
       Rectangle {
-        x: prRail.width * pr.shown / pr.maxValue - width / 2
+        x: prRail.width * (pr.shown - pr.minValue) / (pr.maxValue - pr.minValue) - width / 2
         width: Style.space(12)
         height: width
         radius: width / 2
@@ -2005,7 +2039,7 @@ BarWidget {
       enabled: pr.live
       acceptedButtons: Qt.LeftButton | Qt.RightButton
       cursorShape: Qt.PointingHandCursor
-      function valAt(mx) { return Math.round(root.clamp(mapToItem(prTrack, mx, 0).x / prTrack.width, 0, 1) * pr.maxValue) }
+      function valAt(mx) { return Math.round(pr.minValue + root.clamp(mapToItem(prTrack, mx, 0).x / prTrack.width, 0, 1) * (pr.maxValue - pr.minValue)) }
       function pick(v) { pr.dragValue = v; prHold.restart(); pr.picked(v) }
       onPressed: function(m) {
         pr.touched()
@@ -2020,7 +2054,7 @@ BarWidget {
       }
       onReleased: pr.dragging = false
       onCanceled: pr.dragging = false
-      onWheel: function(w) { pick(root.clamp(pr.shown + (w.angleDelta.y > 0 ? 5 : -5), 0, pr.maxValue)) }
+      onWheel: function(w) { pick(root.clamp(pr.shown + (w.angleDelta.y > 0 ? 5 : -5), pr.minValue, pr.maxValue)) }
     }
   }
 
@@ -2096,6 +2130,10 @@ BarWidget {
     property bool hasWallOpts: false
     property int reactValue: 100
     property bool reactLive: false
+    property int speedValue: 100
+    property int zoomValue: 100
+    signal speedPicked(int value)
+    signal zoomPicked(int value)
     property int rangeValue: 50
     property string targetHex: "e8a33d"
     property bool targetLive: false
@@ -2121,7 +2159,7 @@ BarWidget {
     signal acted(string id)
     signal focusRequested()
 
-    readonly property int baseH: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 3 * (rowH + Style.space(4)) : 0)
+    readonly property int baseH: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 5 * (rowH + Style.space(4)) : 0)
     implicitHeight: baseH + Style.space(8) + chipFlow.implicitHeight
 
     Flow {
@@ -2767,9 +2805,40 @@ BarWidget {
 
     // wallpaper options: mouse reaction (0 = ignores the pointer, 100 = as designed, 200 = exaggerated), then the Colour reactor's range and target colour
     PctRow {
-      id: reactRow
+      id: speedRow
       visible: sec.hasWallOpts
       y: (sec.hasMix ? mixRow.y : strengthRow.y) + sec.rowH + Style.space(4)
+      width: sec.width
+      height: sec.rowH
+      label: "Speed"
+      value: sec.speedValue
+      maxValue: 300
+      defaultValue: 100
+      live: sec.reactLive
+      lit: sec.focused
+      onPicked: function(v) { sec.speedPicked(v) }
+      onTouched: sec.focusRequested()
+    }
+    PctRow {
+      id: zoomRow
+      visible: sec.hasWallOpts
+      y: speedRow.y + sec.rowH + Style.space(4)
+      width: sec.width
+      height: sec.rowH
+      label: "Zoom"
+      value: sec.zoomValue
+      minValue: 25
+      maxValue: 300
+      defaultValue: 100
+      live: sec.reactLive
+      lit: sec.focused
+      onPicked: function(v) { sec.zoomPicked(v) }
+      onTouched: sec.focusRequested()
+    }
+    PctRow {
+      id: reactRow
+      visible: sec.hasWallOpts
+      y: zoomRow.y + sec.rowH + Style.space(4)
       width: sec.width
       height: sec.rowH
       label: "Mouse reaction"
@@ -3286,6 +3355,10 @@ BarWidget {
             rangeValue: root.wallRange
             targetHex: root.wallTarget
             targetLive: root.wallReactorOn
+            speedValue: root.wallSpeed
+            zoomValue: root.wallZoom
+            onSpeedPicked: function(v) { root.setWallSpeed(v) }
+            onZoomPicked: function(v) { root.setWallZoom(v) }
             onReactPicked: function(v) { root.setWallReact(v) }
             onRangePicked: function(v) { root.setWallRange(v) }
             onTargetHexEntered: function(t) { root.setWallTarget(t) }
