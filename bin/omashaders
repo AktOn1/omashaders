@@ -538,11 +538,12 @@ case "${1:-}" in
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[cursor:$n]}"
     done
-    for f in "$ROOT"/wallpaper-effects/*.frag; do # wallpaper effects; the menu lists ones it does not know yet (// label: and // hint: header lines)
+    for f in "$ROOT"/wallpaper-effects/*.frag; do # wallpaper effects; the menu lists ones it does not know yet (// label:, // hint: and // category: header lines; the category is the 7th column)
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       lab=$(sed -n 's|^// label: *||p' "$f" | head -1); hint=$(sed -n 's|^// hint: *||p' "$f" | head -1)
-      printf '%s\tstatic\t%s\t%s\twall\n' "$n" "${lab:-$n}" "$hint${PN[wall:$n]}"
+      wcat=$(sed -n 's|^// category: *||p' "$f" | head -1)
+      printf '%s\tstatic\t%s\t%s\twall\t\t%s\n' "$n" "${lab:-$n}" "$hint${PN[wall:$n]}" "$wcat"
     done
     for f in "$BDIR"/*.frag; do # cursor-bend shaders: they bend the real screen (bin/cursor-bend)
       [ -e "$f" ] || continue

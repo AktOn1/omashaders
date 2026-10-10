@@ -200,7 +200,7 @@ Also remove the key bindings you added.
 
 - **Red Hyprland warning about `time` and damage tracking:** an animated effect was applied by something other than this plugin. Pick a static effect or `off`, then run `hyprctl reload`.
 - **An effect makes text unreadable:** lower its strength (`[`), or press `d` for its start value. Pixel effects start low on purpose.
-- **Icon missing or the menu looks old after an update:** `omarchy-restart-shell`.
+- **Icon missing or the menu looks old after an update:** `omarchy-restart-shell`. Updating from a version before 1.21 needs that one restart to load the new bar widget; after it, edits to the plugin's own QML files reload by themselves (developers: see `docs/DEVELOPMENT.md`).
 - **Bend effects cost more than overlays:** the pointer position reaches the shader as a new file about 30 times a second, so Hyprland recompiles it each time (roughly 35% of a CPU core on the author's machine while the pointer moves, none while it rests). Use an overlay effect if that matters.
 - **Bend effect only shows on one monitor:** intended, it follows the pointer.
 - **Cursor effects never show:** you turned on "only while Shift is held" without the Shift binding above.
