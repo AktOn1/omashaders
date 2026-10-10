@@ -607,10 +607,13 @@ BarWidget {
       { id: "rain",      label: "Rain on glass",   hint: "mouse wipes it dry" },
       { id: "snow",      label: "Snowfall",        hint: "swerves from mouse" },
       { id: "petals",    label: "Sakura petals",   hint: "falling petals" },
-      { id: "fireflies", label: "Fireflies",       hint: "flee the mouse" },
+      { id: "glowdust", label: "Glow dust",       hint: "soft lights flee mouse" },
+      { id: "fireflies", label: "Fireflies",      hint: "green, blinking, shy" },
       { id: "fog",       label: "Fog drift",       hint: "mouse clears it" },
       { id: "storm",     label: "Thunderstorm",    hint: "rain, lightning" },
       { id: "embers",    label: "Embers",          hint: "sparks flee mouse" },
+      { id: "sparks",    label: "Sparks",          hint: "bright streaks rise, fall" },
+      { id: "hearth",    label: "Cozy hearth",     hint: "fire, logs, warm light" },
       { id: "meteors",   label: "Meteor shower",   hint: "shooting stars" },
       { id: "rays",      label: "Light rays",      hint: "sun shafts, dust" },
       { id: "bubbles",   label: "Bubbles",         hint: "rising, refracting" },
@@ -623,10 +626,16 @@ BarWidget {
       { id: "nebula",    label: "Nebula",          hint: "space clouds" },
       { id: "ocean",     label: "Moonlit ocean",   hint: "waves, reflection" },
       { id: "plasma",    label: "Plasma",          hint: "theme colours" },
-      { id: "lava",      label: "Lava lamp",       hint: "blobs, mouse attracts" },
       { id: "synth",     label: "Synthwave",       hint: "sun and grid" },
       { id: "matrix",    label: "Digital rain",    hint: "mouse lights it" },
       { id: "crystals",  label: "Crystals",        hint: "glowing cells" }
+    ] },
+    { id: "blobs", label: "Merging blobs", items: [
+      { id: "lava",      label: "Lava lamp",       hint: "blobs, mouse attracts" },
+      { id: "mercury",   label: "Liquid mercury",  hint: "chrome, reflects wallpaper" },
+      { id: "droplets",  label: "Glass droplets",  hint: "slide down, merge" },
+      { id: "cells",     label: "Living cells",    hint: "membranes, nuclei" },
+      { id: "goo",       label: "Colour goo",      hint: "colours blend where they meet" }
     ] },
     { id: "looks", label: "Looks on your wallpaper", items: [
       { id: "liquid",    label: "Liquid shimmer",  hint: "slow warp" },

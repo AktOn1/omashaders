@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 45 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 44 colour grades plus your own custom colour, 42 animated wallpaper effects and 25 cursor effects (13 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 45 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 44 colour grades plus your own custom colour, 49 animated wallpaper effects and 25 cursor effects (13 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -83,6 +83,12 @@ hl.bind("Shift_L", hl.dsp.global("omashaders:shift"), { non_consuming = true, do
 ```
 
 Shift still reaches your apps normally. Without this binding the effects never show while the option is on.
+
+### More wallpaper effects (1.10)
+
+- **Merging blobs** (new category, same metaball idea as the lava lamp, the mouse is one more blob): Liquid mercury (chrome that reflects your wallpaper), Glass droplets (slide down, merge, refract), Living cells (outlined membranes with nuclei), Colour goo (three colours that blend where they meet).
+- **Fireflies** are now real ones: green, slowly wandering, blinking on and off, shy of the mouse. The old effect (soft drifting lights) is called **Glow dust**.
+- **Sparks** (bright streaks that rise and fall, the pointer blows them away) and **Cozy hearth** (flames, logs, glowing coals, warm flickering light on the wallpaper, flames lean towards the pointer).
 
 ### Rising smoke wallpaper
 

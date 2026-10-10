@@ -36,34 +36,47 @@ float fbm(vec2 p) {
 }
 
 
+vec3 flies(vec2 p, vec2 mp, float sc, float seed, float t, float asp) {
+  vec2 g = p * sc;
+  vec2 id = floor(g);
+  vec3 acc = vec3(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 cell = id + vec2(float(i), float(j));
+      float h = hash(cell + seed);
+      if (h < 0.55) continue;
+      float h2 = hash(cell + seed + 4.3), h3 = hash(cell + seed + 8.9), h4 = hash(cell + seed + 1.1);
+      vec2 c = cell + 0.5 + 0.42 * vec2(sin(t * (0.23 + h2 * 0.30) + h * 40.0) + 0.5 * sin(t * (0.61 + h3 * 0.4) + h2 * 30.0),
+                                        sin(t * (0.19 + h3 * 0.30) + h2 * 50.0) + 0.5 * sin(t * (0.53 + h4 * 0.4) + h3 * 20.0));
+      vec2 w = c / sc;
+      vec2 away = (w - mp) * vec2(asp, 1.0);
+      float dm = length(away);
+      c += normalize(away + 1e-4) * smoothstep(0.20, 0.0, dm) * 0.7 * sc * 0.1;
+      vec2 dd = g - c;
+      float d2 = dot(dd, dd);
+      float period = 2.4 + 2.2 * h4;
+      float ph = fract(t / period + h * 7.0);
+      float blink = smoothstep(0.0, 0.12, ph) * smoothstep(0.55, 0.20, ph);
+      blink = blink * blink * (0.55 + 0.45 * sin(t * 18.0 + h * 90.0) * smoothstep(0.3, 0.1, ph) + 0.45);
+      float core = exp(-d2 * 90.0 / (sc * 0.11));
+      float halo = exp(-d2 * 9.0 / (sc * 0.11));
+      vec3 tint = mix(vec3(0.55, 1.0, 0.22), vec3(0.78, 1.0, 0.35), h3);
+      acc += blink * (tint * halo * 0.55 + vec3(0.72, 1.0, 0.50) * core * 1.2);
+    }
+  }
+  return acc;
+}
+
 void main() {
   vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
   vec2 m = mouse / res;
-  vec3 col = wall(uv) * 0.82;
-  vec3 glow = vec3(0.0);
-  for (int layer = 0; layer < 3; layer++) {
-    float sc = 7.0 + float(layer) * 5.0;
-    vec2 g = vec2(uv.x * asp, uv.y) * sc;
-    g.y += time * (0.06 + 0.04 * float(layer)) * sc * 0.4;
-    vec2 id = floor(g);
-    vec2 f = fract(g) - 0.5;
-    float h = hash(id + float(layer) * 13.0);
-    if (h > 0.55) {
-      vec2 jit = vec2(hash(id + 1.7), hash(id + 9.1)) - 0.5;
-      vec2 c = jit * 0.6 + 0.12 * vec2(sin(time * 0.7 + h * 40.0), cos(time * 0.9 + h * 25.0));
-      vec2 wp = (id + 0.5 + c) / sc;
-      wp.x /= asp;
-      vec2 toM = (wp - m) * vec2(asp, 1.0);
-      float dm = length(toM);
-      c += normalize(toM + 1e-4) * smoothstep(0.22, 0.0, dm) * 0.9;
-      float d = length(f - c);
-      float tw = 0.5 + 0.5 * sin(time * (1.0 + h * 2.0) + h * 50.0);
-      float s = 0.035 / (d * d * sc * 3.0 + 0.012) * tw * 0.12;
-      vec3 tint = mix(cCream.rgb, cPink.rgb, hash(id + 3.3));
-      glow += tint * s;
-    }
-  }
-  col += glow;
+  vec2 p = vec2(uv.x * asp, uv.y);
+  vec3 col = wall(uv) * 0.62;
+  col = mix(col, col * vec3(0.75, 0.95, 0.9), 0.5);
+  vec3 glow = flies(p, vec2(m.x, m.y), 6.0, 0.0, time, asp)
+            + 0.8 * flies(p + 3.7, vec2(m.x, m.y), 10.0, 17.0, time * 1.15, asp);
+  col += glow * vec3(0.9, 1.0, 0.8);
+  col = mix(col, col * (1.0 - 0.45 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.0) * 1.2), 1.0);
   fragColor = vec4(col, 1.0) * qt_Opacity;
 }
