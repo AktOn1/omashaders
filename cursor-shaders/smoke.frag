@@ -1,8 +1,9 @@
 // category: Follow
-// desc: A soft wisp of smoke around the pointer that is pulled along behind it, curls a little and thins out upward after you stop; faint, text stays readable
+// desc: A drifting wisp of smoke around the pointer that is pulled along behind it, curls and thins out upward after you stop; light smoke on dark screens, dark smoke on bright ones
 // tail: 1.1
-const float R = 120.0;
-const vec3 SMOKE = vec3(0.80, 0.84, 0.90);
+const float R = 150.0;
+const vec3 SMOKE_LIGHT = vec3(0.88, 0.91, 0.96);
+const vec3 SMOKE_DARK = vec3(0.16, 0.19, 0.27);
 float sm_hash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
 float sm_noise(vec2 v) {
     vec2 i = floor(v), f = fract(v);
@@ -36,8 +37,9 @@ vec4 bend(vec2 uv) {
     vec2 q = (p - CTR[4] * 0.7) / 55.0 + vec2(0.0, CT * 0.9);
     vec2 warp = vec2(sm_fbm(q + vec2(3.1, CT * 0.35)), sm_fbm(q + vec2(8.7, -CT * 0.3))) - 0.5;
     float n = sm_fbm(q + warp * 2.2);
-    float a = smoothstep(0.38, 0.8, n) * w * 0.6;
-    vec3 seen = texture(tex, (p + warp * 14.0 * w) / RES).rgb;
-    vec3 tint = mix(SMOKE, seen, 0.35);
-    return vec4(mix(seen, tint, a), 1.0);
+    float a = smoothstep(0.30, 0.70, n) * w * 0.85;
+    vec3 seen = texture(tex, (p + warp * 26.0 * w) / RES).rgb;
+    float lum = dot(seen, vec3(0.299, 0.587, 0.114));
+    vec3 smoke = mix(SMOKE_LIGHT, SMOKE_DARK, smoothstep(0.35, 0.7, lum));
+    return vec4(mix(seen, mix(smoke, seen, 0.2), a), 1.0);
 }
