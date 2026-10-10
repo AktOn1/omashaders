@@ -48,20 +48,30 @@ float segd(vec2 p, vec2 a, vec2 b) {
   vec2 pa = p - a, ba = b - a;
   return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0));
 }
+// stroke i as (x0, y0, x1, y1) on the unit grid (no const arrays: Qt's GLSL targets reject them)
+vec4 strokeAt(int i) {
+  if (i == 0) return vec4(0.0, 1.0, 1.0, 1.0);
+  if (i == 1) return vec4(0.0, 0.5, 1.0, 0.5);
+  if (i == 2) return vec4(0.0, 0.0, 1.0, 0.0);
+  if (i == 3) return vec4(0.0, 0.0, 0.0, 1.0);
+  if (i == 4) return vec4(1.0, 0.0, 1.0, 1.0);
+  if (i == 5) return vec4(0.5, 0.0, 0.5, 1.0);
+  if (i == 6) return vec4(0.0, 1.0, 1.0, 0.0);
+  if (i == 7) return vec4(0.0, 0.0, 1.0, 1.0);
+  if (i == 8) return vec4(0.0, 0.5, 0.5, 1.0);
+  if (i == 9) return vec4(0.5, 0.5, 1.0, 0.0);
+  if (i == 10) return vec4(0.0, 0.0, 0.5, 0.5);
+  return vec4(0.5, 1.0, 1.0, 0.5);
+}
 // q: 0..1 inside the glyph box, ar: box width/height in px (keeps strokes even), returns distance to the nearest stroke in glyph units of height
 float glyphDist(vec2 q, float seed, float ar) {
   vec2 p = vec2(q.x * ar, q.y);
   float W = ar;
   float d = 9.0;
-  const vec4 S[12] = vec4[12](
-    vec4(0.0, 1.0, 1.0, 1.0), vec4(0.0, 0.5, 1.0, 0.5), vec4(0.0, 0.0, 1.0, 0.0),
-    vec4(0.0, 0.0, 0.0, 1.0), vec4(1.0, 0.0, 1.0, 1.0), vec4(0.5, 0.0, 0.5, 1.0),
-    vec4(0.0, 1.0, 1.0, 0.0), vec4(0.0, 0.0, 1.0, 1.0), vec4(0.0, 0.5, 0.5, 1.0),
-    vec4(0.5, 0.5, 1.0, 0.0), vec4(0.0, 0.0, 0.5, 0.5), vec4(0.5, 1.0, 1.0, 0.5));
   int n = 0;
   for (int i = 0; i < 12; i++) {
     if (hash(vec2(seed, float(i) * 3.17 + 0.5)) < 0.30) {
-      vec4 s = S[i];
+      vec4 s = strokeAt(i);
       d = min(d, segd(p, vec2(s.x * W, s.y), vec2(s.z * W, s.w)));
       n++;
     }

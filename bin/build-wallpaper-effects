@@ -6,3 +6,11 @@ for f in *.frag; do
   qsb --qt6 -o "$f.qsb" "$f" || exit 1
 done
 qsb --qt6 -o zoom.vert.qsb zoom.vert || exit 1
+# Qt compiles a GLSL 100 es variant; a const array there fails at runtime on the NVIDIA GL path and the effect never draws
+bad=0
+for q in *.frag.qsb ../mouse-effects/*.frag.qsb; do
+  if qsb -x glsl,100es -o /dev/stdout "$q" 2>/dev/null | grep -q -E "^(const )?[a-z0-9]+ _[0-9]+\[[0-9]+\] *="; then
+    echo "ERROR: $q contains an array (replace it with an if-chain function)" >&2; bad=1
+  fi
+done
+exit $bad
