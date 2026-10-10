@@ -53,7 +53,8 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 | `F` | save the current Screen + Color + Wallpaper + Cursor combination as a combo (`m` shows the Combos menu) |
 
 | `r` / `R` | Surprise me in the focused menu / in every ticked menu |
-| `o` / `O` | off in the focused menu / in every ticked menu |
+| `o` / `O` | off in the focused menu / in every ticked menu (the Clear all button in the header row does the same) |
+| `P` | cost report: what each effect costs, written to the state folder and shown as a notification |
 | `s` `C` `w` `c` `W` `m` | tick Screen / Color / Wallpaper / Cursor / Windows / Combos |
 | `a` | include the animated (heavy) screen effects |
 | `x` | cursor effects only while Shift is held |
@@ -84,6 +85,17 @@ Click the mode name (or press `t`) to flip between them. Both layers are merged 
 ### Animated effects
 
 Effects that move (grain, scan-sweep, vhs, heat-haze, glitch, hologram, matrix, fireflies, underwater, snowfall and a few more) need Hyprland's damage tracking switched off, which redraws the whole screen every frame and **raises GPU use a lot**. They are hidden until you press `a` (or turn on the setting below). While one is on, the plugin sets `debug:damage_tracking=0` itself so Hyprland shows no warning, and sets it back for static effects and for off. Static effects cost almost nothing.
+
+### What is on, and what it costs (1.14)
+
+Under the menus a line lists everything that is active right now (screen with its mix, colour, wallpaper, cursor, windows). While the plugin runs it also keeps a small log, `perf.jsonl` in the state folder: every 4 seconds while an effect is on (every 30 s otherwise) it records which layers are on and how much GPU `Hyprland` and the shell use (per process, from `nvidia-smi pmon`, so other apps do not count), their CPU use, VRAM, power and temperature. Nothing leaves the machine.
+
+    omashaders perf report [--days N] [--notify]   cost per effect against the idle baseline, heavy ones first, plus crashes
+    omashaders perf bench [--kinds screen,color,wall] [--only a,b]   try effects one by one (about 5 s each) and measure; your own effects are restored afterwards
+    omashaders perf crashes [--hours N] [--all]    Hyprland / quickshell / portal crashes and what was on just before
+    omashaders perf status | on | off              the sampler
+
+Rating (extra GPU share of Hyprland + shell, median while on): light under 4, moderate under 12, heavy under 25, rework from 25 (or spikes of 40 and up). Measured moderate and heavy effects show `[heavy +18%]` after their description in the menu and in the active line. The log is rotated at 8 MB. Without an NVIDIA card the whole-GPU number from sysfs is used instead. The bench changes your live desktop for a minute or two and runs on a still screen, so it shows the cost of redrawing, not of busy content; a single reading can be off by 10 points, so trust the numbers that come with many samples (or run the bench twice) and let the sampler collect real use over a few days.
 
 ### Window frames: shadows, glows and borders (1.13)
 
@@ -145,7 +157,7 @@ State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current ef
 
 - **No network access.** Nothing is downloaded, nothing is sent.
 - **Hyprland:** the screen effect is set at runtime with `hyprctl eval` (`decoration:screen_shader` and `debug:damage_tracking`). Nothing is written to your Hyprland config files; a `hyprctl reload` or `off` clears it.
-- **Subprocesses:** `bin/omashaders` (sets the shader), `bin/compose-shader` (python, merges effect and colour into one file), `bin/cursor-watch` (python; reads the pointer position from the Hyprland socket about 40 times a second, only while a pointer-following effect is running, and exits with the shell), `bin/gpu-usage` (`nvidia-smi` or sysfs, only while the menu is open), `bin/wallpaper-step`, and `notify-send` for the pause key.
+- **Subprocesses:** `bin/omashaders` (sets the shader), `bin/compose-shader` (python, merges effect and colour into one file), `bin/cursor-watch` (python; reads the pointer position from the Hyprland socket about 40 times a second, only while a pointer-following effect is running, and exits with the shell), `bin/gpu-usage` (`nvidia-smi` or sysfs, only while the menu is open), `bin/perf-log` (python; the cost log described above, started with the shell, one copy only; `omashaders perf off` stops it; it runs `nvidia-smi` and `pgrep` every few seconds, and `coredumpctl` only when you ask for a report), `bin/wallpaper-step`, and `notify-send` for the pause key.
 - **Wallpaper picker and next/previous:** these change your wallpaper with Omarchy's `omarchy-theme-bg-set`, on your click only. Picking makes a temporary folder of symlinks to your background images under `$XDG_RUNTIME_DIR` and removes it afterwards.
 - **Files written:** only the state directory above and the temporary folder just mentioned. Existing config of yours is never overwritten.
 - **Bend cursor effects:** a screen shader cannot see the pointer, so while one is selected `bin/cursor-bend` (python; polls the pointer from the Hyprland socket 60 times a second, writes a new shader file at most 30 times a second and only while the pointer moves, plus a short tail for the ripple-like ones) hands Hyprland a fresh composed shader through `hyprctl eval`. Screen and Color effects stay active, merged into the same shader. It starts and stops with the effect, exits with the shell, and then puts your normal shader back. With several monitors a 3x2 pixel marker (magenta, green, magenta) is drawn in the top-left corner of the pointer's monitor so only that monitor is bent; the shader hides it again.

@@ -6,6 +6,7 @@
 #        | mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset] (a second effect/colour mixed into the first)
 #        | window [status|effect|color|strength|target|classes|apply|load|off] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
 #        | window frame [status|list|set NAME|off|reload] (shadow, glow and border presets for all windows: Hyprland's own options, no plugin needed)
+#        | perf [status|on|off|report [--days N] [--notify]|bench [--kinds screen,color,wall] [--only A,B]|crashes [--hours N]] (what each effect costs; bin/perf-log)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
@@ -408,16 +409,18 @@ step() { # step DIRECTION(1|-1) [-a]
 case "${1:-}" in
   list) names "$2" ;;
   listall) # NAME<TAB>static|animated<TAB>Category<TAB>description
+    declare -A PN # measured cost (bin/perf-log report) appended to the description of effects that are not light
+    while IFS=$'\t' read -r pk pn pr pc _; do [ "$pr" = light ] || PN["$pk:$pn"]=" [measured: $pr, +$pc% GPU]"; done < "$STATE_DIR/perf-summary.tsv" 2>/dev/null
     for f in "$DIR"/*.frag; do
       n=$(basename "$f" .frag); kind=static; is_animated "$f" && kind=animated
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\tscreen\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc" "$(default_strength "$f")"
+      printf '%s\t%s\t%s\t%s\tscreen\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[screen:$n]}" "$(default_strength "$f")"
     done
     for f in "$CDIR"/*.frag; do
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\tstatic\t%s\t%s\tcolor\t%s\n' "$n" "${cat:-Other}" "$desc" "$(default_strength "$f")"
+      printf '%s\tstatic\t%s\t%s\tcolor\t%s\n' "$n" "${cat:-Other}" "$desc${PN[color:$n]}" "$(default_strength "$f")"
     done
     for f in "$FRDIR"/*.frame; do # window frames (shadow, glow, border)
       [ -e "$f" ] || continue
@@ -429,19 +432,19 @@ case "${1:-}" in
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; [ "$(sed -n 's|^// motion: *||p' "$f" | head -1)" = yes ] && kind=motion
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc"
+      printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[cursor:$n]}"
     done
     for f in "$ROOT"/wallpaper-effects/*.frag; do # wallpaper effects; the menu lists ones it does not know yet (// label: and // hint: header lines)
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       lab=$(sed -n 's|^// label: *||p' "$f" | head -1); hint=$(sed -n 's|^// hint: *||p' "$f" | head -1)
-      printf '%s\tstatic\t%s\t%s\twall\n' "$n" "${lab:-$n}" "$hint"
+      printf '%s\tstatic\t%s\t%s\twall\n' "$n" "${lab:-$n}" "$hint${PN[wall:$n]}"
     done
     for f in "$BDIR"/*.frag; do # cursor-bend shaders: they bend the real screen (bin/cursor-bend)
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; [ -n "$(sed -n 's|^// tail: *||p' "$f" | head -1)" ] && kind=motion
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\tmouse\tbend\n' "$n" "$kind" "${cat:-Bend}" "$desc"
+      printf '%s\t%s\t%s\t%s\tmouse\tbend\n' "$n" "$kind" "${cat:-Bend}" "$desc${PN[cursor:$n]}"
     done ;;
   effect)
     case "${2:-status}" in
@@ -481,6 +484,7 @@ case "${1:-}" in
     cur=$(current)
     if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && is_animated "$DIR/$cur.frag"; then effect_off; fi ;;
   gpu) gpu ;;
+  perf) shift; exec python3 "$ROOT/bin/perf-log" "$@" ;;
   strength)
     case "${2:-}" in
       '') echo "effect $(cur_strength effect) color $(cur_strength color)" ;;

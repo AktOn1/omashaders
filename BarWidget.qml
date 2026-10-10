@@ -1288,6 +1288,40 @@ BarWidget {
                                 .filter(function(l) { return l.split("|").length === 4 && l !== "|||" })
   }
 
+  // ---------------------------------------------------------------- measured cost (bin/perf-log) and the "Active now" list
+  property var perfCost: ({})
+  FileView {
+    path: root.stateDir + "/perf-summary.tsv"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var m = {}
+      String(text() || "").split("\n").forEach(function(l) {
+        var f = l.split("\t")
+        if (f.length >= 4) m[f[0] + ":" + f[1]] = { rating: f[2], cost: f[3] }
+      })
+      root.perfCost = m
+    }
+  }
+  function costTag(kind, name) {
+    var r = perfCost[kind + ":" + name]
+    return r && r.rating !== "light" ? (r.rating === "heavy" || r.rating === "rework" ? " ⚠" : " ") + "[" + r.rating + " +" + r.cost + "%]" : ""
+  }
+  function perfName(n) { return n.indexOf("custom-") === 0 ? "custom" : n }
+  readonly property var activeNow: {
+    var a = []
+    if (shaderOn) a.push("Screen " + current + " " + fxStrength + "%" + costTag("screen", current)
+                         + (mixSecondOf("screen") !== "" ? (mixEffectMode === "blend" ? " ~ " : " + ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2) : ""))
+    if (colorOn) a.push("Color " + colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent))
+                        + (mixSecondOf("color") !== "" ? (mixColorMode === "blend" ? " ~ " : " + ") + color2 + " " + mixColorAmt + "%" : ""))
+    if (wallOn) a.push("Wallpaper " + wallLabel(wallShown) + costTag("wall", wallShown))
+    if (mouseOn) a.push("Cursor " + mouseCurrent + costTag("cursor", mouseCurrent))
+    if (winAnyOn) a.push("Windows " + [winEffect !== "" ? winEffect + costTag("win", winEffect) : "", winColor !== "" ? winColor + costTag("wincolor", perfName(winColor)) : "", winFrame !== "" ? "frame " + winFrame : ""].filter(function(x) { return x !== "" }).join(" + "))
+    return a
+  }
+  function costReport() { Quickshell.execDetached(["bash", "-c", 'python3 "$1" report --notify >/dev/null 2>&1', "bash", root.path("bin/perf-log")]) }
+
   // ---------------------------------------------------------------- GPU use (only while the menu is open)
   property string gpuText: ""
   function pct(v) { return v === "na" ? "–" : v + "%" }
@@ -1457,6 +1491,7 @@ BarWidget {
     else if (t === "a") setAnimated()
     else if (t === "o" || t === "0") offIn(k)
     else if (t === "O") offAll()
+    else if (t === "P") costReport()
     else if (t === "r") randomIn(k)
     else if (t === "R") randomAll()
     else if (t === "g") s.jump(false)
@@ -1506,6 +1541,7 @@ BarWidget {
   }
 
   Component.onCompleted: {
+    Quickshell.execDetached(["python3", root.path("bin/perf-log"), "run"])
     lister.running = true
     resolver.running = true
     wallStep("status")
@@ -2602,6 +2638,33 @@ BarWidget {
 
         Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
 
+        Row {
+          id: activeRow
+          width: body.width
+          spacing: Style.space(6)
+
+          Text {
+            width: activeRow.width - reportBtn.width - activeRow.spacing
+            height: Math.max(reportBtn.height, implicitHeight)
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: Style.space(10)
+            wrapMode: Text.WordWrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: (root.paused ? "PAUSED (p to resume) · " : "") + (root.activeNow.length > 0 ? "Active now (" + root.activeNow.length + "): " + root.activeNow.join("  ·  ") : "Active now: nothing")
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          MenuRow {
+            id: reportBtn
+            width: header.cell * 1.6
+            label: "Cost report  (P)"
+            onClicked: root.costReport()
+          }
+        }
+
         Text {
           width: body.width
           height: Style.space(24)
@@ -2613,7 +2676,7 @@ BarWidget {
             if (root.comboFlash !== "") return root.comboFlash
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
-            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" + (root.mixSecondOf("screen") !== "" ? " " + (root.mixEffectMode === "blend" ? "~" : "+") + " " + root.effect2 + " " + root.mixEffectAmt + "%" : "") : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" + (root.mixSecondOf("color") !== "" ? " " + (root.mixColorMode === "blend" ? "~" : "+") + " " + root.color2 + " " + root.mixColorAmt + "%" : "") : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.showWin ? " · Windows: " + (root.winAnyOn ? [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off") : "")
+            return "Move to an item for details"
           }
           color: root.fg
           font.family: root.bar.fontFamily
@@ -2626,7 +2689,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · s C w c W m menus · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · P cost report · s C w c W m menus · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

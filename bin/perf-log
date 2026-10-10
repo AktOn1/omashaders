@@ -1,0 +1,660 @@
+#!/usr/bin/env python3
+# perf-log: records what OmaShaders costs, so heavy or crashing effects can be found and reworked.
+#   perf-log run                      sampler (started by the bar widget; one copy only): logs which layers are on and how much
+#                                     GPU / CPU Hyprland and the shell use, every 4 s while an effect is on, every 30 s otherwise
+#   perf-log report [--days N] [--notify]   per-effect cost table (also written to perf-report.md), crashes and what was active
+#   perf-log bench [--kinds screen,color,wall] [--only A,B] [--seconds N]   try effects one by one on the live desktop and measure
+#   perf-log crashes [--hours N] [--all]   coredumps of the desktop (quickshell, Hyprland, portal ...) and the effects that were on just before
+#   perf-log on|off|status            switch the sampler
+# Log: STATE/perf.jsonl (JSON lines, rotated at 8 MB). Nothing leaves the machine; only effect names and numbers are stored.
+import fcntl, glob, json, os, re, shutil, signal, subprocess, sys, time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy", "io.github.akton1.omashaders")
+LOG = os.path.join(STATE, "perf.jsonl")
+OFF = os.path.join(STATE, "perf-off")
+SUMMARY = os.path.join(STATE, "perf-summary.tsv")
+REPORT = os.path.join(STATE, "perf-report.md")
+SELF = os.path.realpath(__file__)
+OMASHADERS = os.path.join(ROOT, "bin", "omashaders")
+ACTIVE_EVERY, IDLE_EVERY, SETTLE = 4, 30, 3.0
+TICKS = os.sysconf("SC_CLK_TCK")
+
+
+def rd(name):
+    try:
+        with open(os.path.join(STATE, name)) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def have(kind, name):
+    return bool(name) and "/" not in name and os.path.exists(os.path.join(ROOT, kind, name + ".frag"))
+
+
+_anim = {}
+
+
+def animated(path):
+    if path not in _anim:
+        try:
+            with open(path) as f:
+                _anim[path] = re.search(r"uniform\s+float\s+time", f.read()) is not None
+        except OSError:
+            _anim[path] = False
+    return _anim[path]
+
+
+def state():
+    """Layers that are on right now, e.g. ['screen:crt', 'color:sepia']; plus strengths and whether a shader forces full redraws."""
+    paused = rd("disabled") != ""
+    layers, strengths, anim = [], {}, False
+    if paused:
+        return {"layers": layers, "str": strengths, "anim": False, "paused": True}
+    fx, fx2 = rd("current"), rd("effect2")
+    if have("shaders", fx):
+        layers.append("screen:" + fx)
+        strengths["screen"] = rd("strength-effect")
+        anim = anim or animated(os.path.join(ROOT, "shaders", fx + ".frag"))
+        if fx2 and fx2 != fx and have("shaders", fx2):
+            layers.append("screen2:" + fx2)
+            anim = anim or animated(os.path.join(ROOT, "shaders", fx2 + ".frag"))
+    col, col2 = rd("color"), rd("color2")
+
+    def col_ok(c):
+        return have("colors", c) or re.fullmatch(r"custom-[0-9a-fA-F]{6}", c or "") is not None
+
+    if col_ok(col):
+        layers.append("color:" + ("custom" if col.startswith("custom-") else col))
+        strengths["color"] = rd("strength-color")
+        if col2 and col2 != col and col_ok(col2):
+            layers.append("color2:" + ("custom" if col2.startswith("custom-") else col2))
+    if rd("window-target"):
+        for k, f in (("win", "window-effect"), ("wincolor", "window-color")):
+            n = rd(f)
+            if n and (have("shaders", n) or have("colors", n) or n.startswith("custom-")):
+                layers.append(k + ":" + ("custom" if n.startswith("custom-") else n))
+    frame = rd("window-frame")
+    if frame:
+        layers.append("frame:" + frame)
+    wall = rd("wp-preview") or rd("wp-effect")
+    if wall:
+        layers.append("wall:" + wall)
+        strengths["wall"] = rd("strength-wall")
+    cur = rd("mouse")
+    if cur:
+        layers.append("cursor:" + cur)
+        strengths["cursor"] = rd("strength-mouse")
+    return {"layers": layers, "str": strengths, "anim": anim, "paused": False}
+
+
+def pgrep(args):
+    try:
+        out = subprocess.run(["pgrep"] + args, capture_output=True, text=True, timeout=3).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    for p in out:
+        try:
+            with open("/proc/%s/comm" % p) as f:
+                if f.read().strip() in ("Hyprland", "quickshell", "qs"):
+                    return int(p)
+        except OSError:
+            pass
+    return 0
+
+
+def proc_ticks(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            parts = f.read().rsplit(")", 1)[1].split()
+        return int(parts[11]) + int(parts[12])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def run(cmd, timeout=6):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+class Meter:
+    """Reads GPU use (whole GPU, Hyprland, the shell) and CPU use of Hyprland and the shell."""
+
+    def __init__(self):
+        self.hypr = self.shell = 0
+        self.checked = 0
+        self.ticks = {}
+        self.nvidia = shutil.which("nvidia-smi") is not None
+
+    def pids(self):
+        if time.time() - self.checked > 30 or not (self.hypr and os.path.exists("/proc/%d" % self.hypr)):
+            self.hypr = pgrep(["-x", "Hyprland"])
+            self.shell = pgrep(["-f", r"quickshell.* /usr/share/omarchy/shell"])
+            self.checked = time.time()
+
+    def sample(self):
+        self.pids()
+        t0 = time.time()
+        c0 = {p: proc_ticks(p) for p in (self.hypr, self.shell) if p}
+        rec = {"gpu": None, "hypr": None, "shell": None, "vram": None, "watt": None, "temp": None, "hcpu": None, "scpu": None}
+        if self.nvidia:
+            q = run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,power.draw,temperature.gpu", "--format=csv,noheader,nounits"]).strip().split("\n")[0]
+            v = [x.strip() for x in q.split(",")]
+            try:
+                rec["gpu"], rec["vram"] = int(float(v[0])), int(float(v[1]))
+                rec["watt"], rec["temp"] = round(float(v[2]), 1), int(float(v[3]))
+            except (ValueError, IndexError):
+                pass
+            sums, n = {}, 0
+            for line in run(["nvidia-smi", "pmon", "-c", "2", "-s", "u"], 8).splitlines():
+                f = line.split()
+                if not f or f[0].startswith("#") or len(f) < 4:
+                    continue
+                sums[int(f[1]) if f[1].isdigit() else 0] = sums.get(int(f[1]) if f[1].isdigit() else 0, 0) + (0 if f[3] == "-" else int(f[3]))
+            if sums or rec["gpu"] is not None:
+                rec["hypr"] = round(sums.get(self.hypr, 0) / 2)
+                rec["shell"] = round(sums.get(self.shell, 0) / 2)
+        else:
+            for d in glob.glob("/sys/class/drm/card*/device"):
+                try:
+                    with open(d + "/gpu_busy_percent") as f:
+                        rec["gpu"] = int(f.read())
+                    break
+                except (OSError, ValueError):
+                    pass
+        dt = max(time.time() - t0, 0.1)
+        for p, key in ((self.hypr, "hcpu"), (self.shell, "scpu")):
+            a, b = c0.get(p), proc_ticks(p) if p else None
+            if a is not None and b is not None:
+                rec[key] = round((b - a) / TICKS / dt * 100, 1)
+        return rec
+
+
+def write(rec):
+    os.makedirs(STATE, exist_ok=True)
+    try:
+        if os.path.getsize(LOG) > 8 * 1024 * 1024:
+            os.replace(LOG, LOG + ".1")
+    except OSError:
+        pass
+    with open(LOG, "a") as f:
+        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+
+
+def sig(st):
+    return "|".join(sorted(st["layers"]))
+
+
+def take(meter, bench=False):
+    st0 = state()
+    m = meter.sample()
+    st1 = state()
+    rec = {"t": round(time.time(), 1), "ev": "sample", "layers": st1["layers"], "str": st1["str"], "anim": st1["anim"], "paused": st1["paused"]}
+    rec.update({k: v for k, v in m.items() if v is not None})
+    if sig(st0) != sig(st1):
+        rec["settle"] = True
+    if bench:
+        rec["bench"] = True
+    return rec
+
+
+def bench_running():
+    try:
+        fd = os.open(os.path.join(STATE, "bench.lock"), os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False
+        except OSError:
+            return True
+        finally:
+            os.close(fd)
+    except OSError:
+        return False
+
+
+def cmd_run():
+    os.makedirs(STATE, exist_ok=True)
+    lockfd = os.open(os.path.join(STATE, "perf.lock"), os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 0
+    with open(os.path.join(STATE, "perf.pid"), "w") as f:
+        f.write(str(os.getpid()))
+    stopped = []
+
+    def bye(*_):
+        stopped.append(1)
+
+    signal.signal(signal.SIGTERM, bye)
+    signal.signal(signal.SIGINT, bye)
+    meter = Meter()
+    me = os.stat(SELF).st_mtime
+    st = state()
+    last_sig, changed, last_sample = sig(st), 0.0, 0.0
+    write({"t": round(time.time(), 1), "ev": "start", "layers": st["layers"], "str": st["str"], "anim": st["anim"], "paused": st["paused"], "gpu_tool": "nvidia-smi" if meter.nvidia else "sysfs"})
+    why = "stop"
+    while not stopped:
+        if os.path.exists(OFF):
+            why = "off"
+            break
+        meter.pids()
+        if not meter.hypr:
+            why = "session ended"
+            break
+        if os.stat(SELF).st_mtime != me:
+            why = "update"
+            break
+        st = state()
+        now = time.time()
+        if sig(st) != last_sig:
+            last_sig, changed = sig(st), now
+            write({"t": round(now, 1), "ev": "change", "layers": st["layers"], "str": st["str"], "anim": st["anim"], "paused": st["paused"]})
+        every = ACTIVE_EVERY if st["layers"] else IDLE_EVERY
+        if now - last_sample >= every and not bench_running():
+            rec = take(meter)
+            if now - changed < SETTLE:
+                rec["settle"] = True
+            write(rec)
+            last_sample = time.time()
+        time.sleep(1)
+    write({"t": round(time.time(), 1), "ev": "stop", "why": why})
+    if why == "update":
+        os.execv(sys.executable, [sys.executable, SELF, "run"])
+    return 0
+
+
+# ---------------------------------------------------------------- reading the log
+def read_log(days):
+    since = time.time() - days * 86400
+    out = []
+    for p in (LOG + ".1", LOG):
+        try:
+            with open(p) as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if r.get("t", 0) >= since:
+                        out.append(r)
+        except OSError:
+            pass
+    out.sort(key=lambda r: r.get("t", 0))
+    return out
+
+
+def load_of(r):
+    """What the effects cost: GPU share of Hyprland plus the shell; falls back to the whole GPU when per-process numbers are missing."""
+    if r.get("hypr") is not None:
+        return r["hypr"] + (r.get("shell") or 0)
+    return r.get("gpu")
+
+
+def pctl(v, p):
+    v = sorted(v)
+    if not v:
+        return 0
+    k = (len(v) - 1) * p / 100
+    lo = int(k)
+    hi = min(lo + 1, len(v) - 1)
+    return v[lo] + (v[hi] - v[lo]) * (k - lo)
+
+
+def med(v):
+    return pctl(v, 50)
+
+
+def mean(v):
+    v = [x for x in v if x is not None]
+    return sum(v) / len(v) if v else 0
+
+
+def rate(cost, p90):
+    if cost >= 25:
+        return "rework"
+    if cost >= 12 or p90 >= 40:
+        return "heavy"
+    if cost >= 4:
+        return "moderate"
+    return "light"
+
+
+AMBIENT = ("win:", "wincolor:", "frame:")
+
+
+def ambient(layers):
+    return tuple(sorted(l for l in layers if l.startswith(AMBIENT)))
+
+
+def analyse(recs):
+    """Baseline = samples where nothing but always-on window layers was active. Bench samples (quiet desktop) and live samples (real use)
+    are kept apart, each compared with its own baseline, because real use is busier than a bench."""
+    samples = [r for r in recs if r.get("ev") == "sample" and not r.get("settle") and load_of(r) is not None]
+    bases = {}
+    for r in samples:
+        lay = tuple(sorted(r["layers"]))
+        if not r.get("paused") and ambient(lay) == lay:
+            bases.setdefault((bool(r.get("bench")), lay), []).append(load_of(r))
+    bmed = {k: med(v) for k, v in bases.items()}
+    nidle = sum(len(v) for v in bases.values() if len(v))
+    allidle = [x for (b, l), v in bases.items() if l == () for x in v]
+    base = med(allidle) if allidle else (med(next(iter(bases.values()))) if bases else 0)
+    groups = {}
+    for r in samples:
+        if r["layers"]:
+            groups.setdefault((bool(r.get("bench")), "|".join(sorted(r["layers"]))), []).append(r)
+    rows = []
+    for (isb, key), rs in groups.items():
+        lay = tuple(key.split("|"))
+        b = bmed.get((isb, ambient(lay)), bmed.get((isb, ()), 0)) if ambient(lay) != lay else bmed.get((isb, ()), 0)
+        loads = [load_of(r) for r in rs]
+        cost, p90 = max(med(loads) - b, 0), max(pctl(loads, 90) - b, 0)
+        rows.append({"key": key, "layers": list(lay), "n": len(rs), "cost": cost, "p90": p90, "max": max(max(loads) - b, 0),
+                     "hcpu": mean([r.get("hcpu") for r in rs]), "scpu": mean([r.get("scpu") for r in rs]), "gpu": mean([r.get("gpu") for r in rs]),
+                     "temp": max([r.get("temp") or 0 for r in rs]), "anim": any(r.get("anim") for r in rs), "bench": isb,
+                     "rating": rate(cost, p90)})
+    return base, nidle, rows, samples
+
+
+def per_layer(rows):
+    """Cost per single layer: from samples where it was the only one on; falls back to the average of the groups it was part of."""
+    solo, mixed = {}, {}
+    for r in rows:
+        main = [l for l in r["layers"] if not l.startswith(AMBIENT)] or r["layers"]
+        if len(main) == 1:
+            if main[0] not in solo or (r["bench"] and not solo[main[0]]["bench"]) or (r["bench"] == solo[main[0]]["bench"] and r["n"] > solo[main[0]]["n"]):
+                solo[main[0]] = r
+        else:
+            for l in main:
+                mixed.setdefault(l, []).append(r)
+    out = {}
+    for l, r in solo.items():
+        out[l] = dict(r, mixed=False)
+    for l, rs in mixed.items():
+        if l not in out:
+            n = sum(x["n"] for x in rs)
+            cost = sum(x["cost"] * x["n"] for x in rs) / n
+            p90 = max(x["p90"] for x in rs)
+            out[l] = {"key": l, "layers": [l], "n": n, "cost": cost, "p90": p90, "max": max(x["max"] for x in rs),
+                      "hcpu": mean([x["hcpu"] for x in rs]), "scpu": mean([x["scpu"] for x in rs]), "gpu": mean([x["gpu"] for x in rs]),
+                      "temp": max(x["temp"] for x in rs), "anim": any(x["anim"] for x in rs), "bench": any(x["bench"] for x in rs),
+                      "rating": rate(cost, p90), "mixed": True}
+    return out
+
+
+KIND_DIRS = {"screen": ("shaders", ".frag"), "color": ("colors", ".frag"), "wall": ("wallpaper-effects", ".frag"), "cursor": ("mouse-effects", ".frag")}
+
+
+def known_names():
+    out = {}
+    for k, (d, ext) in KIND_DIRS.items():
+        names = {os.path.basename(p)[:-len(ext)] for p in glob.glob(os.path.join(ROOT, d, "*" + ext))}
+        if k == "cursor":
+            names |= {os.path.basename(p)[:-5] for p in glob.glob(os.path.join(ROOT, "cursor-shaders", "*.frag"))}
+        out[k] = names
+    return out
+
+
+RELEVANT = re.compile(r"hyprland|quickshell|^qs$|omarchy|xdg-desktop-portal|waybar|swayosd|mako|walker|elephant", re.I)
+
+
+def crashes(hours, everything=False):
+    out = []
+    j = run(["coredumpctl", "list", "--no-pager", "--json=short", "--since", "-%d hours" % hours], 10)
+    try:
+        items = json.loads(j) if j.strip() else []
+    except ValueError:
+        items = []
+    for it in items:
+        t = it.get("time")
+        if t is None:
+            continue
+        t = t / 1e6 if t > 1e12 else t
+        exe = os.path.basename(str(it.get("exe") or "?"))
+        if everything or RELEVANT.search(exe):
+            out.append({"t": t, "exe": exe, "sig": it.get("sig")})
+    return out
+
+
+def last_before(recs, t, within=900):
+    best = None
+    for r in recs:
+        if r.get("t", 0) <= t and r.get("ev") in ("sample", "change", "start"):
+            best = r
+        elif r.get("t", 0) > t:
+            break
+    if best and t - best["t"] <= within:
+        return best
+    return None
+
+
+def stamp(t):
+    return time.strftime("%a %d %b %H:%M:%S", time.localtime(t))
+
+
+def crash_lines(recs, hours, everything=False):
+    lines = []
+    for c in crashes(hours, everything):
+        r = last_before(recs, c["t"])
+        if r is None:
+            what = "no OmaShaders log near this time"
+        elif not r["layers"]:
+            what = "no effect was on (last log %ds earlier)" % (c["t"] - r["t"])
+        else:
+            what = "on: %s (last log %ds earlier)" % (", ".join(r["layers"]), c["t"] - r["t"])
+        lines.append("- %s  %s (signal %s): %s" % (stamp(c["t"]), c["exe"], c.get("sig"), what))
+    prev = None
+    for r in recs:
+        if r.get("ev") == "start" and prev is not None and prev.get("ev") != "stop":
+            lines.append("- %s  sampler ended without a stop note (shell killed or crashed?); last known layers: %s" % (stamp(prev["t"]), ", ".join(prev.get("layers") or []) or "none"))
+        prev = r
+    return lines
+
+
+def fmt_row(name, r):
+    return "| %s%s | %s | %+.0f | %.0f | %.0f | %.0f%% | %d |" % (name, " (animated: full redraw)" if r["anim"] else "", r["rating"], r["cost"], r["p90"], r["max"], r["hcpu"], r["n"])
+
+
+def cmd_report(args):
+    days = float(opt(args, "--days", 14))
+    recs = read_log(days)
+    base, nidle, rows, samples = analyse(recs)
+    layers = per_layer(rows)
+    names = known_names()
+    out = ["# OmaShaders cost report", "",
+           "Period: last %g days · %d usable samples · baseline %.0f%% GPU (Hyprland + shell with no effect on, %d samples; always-on window effects are part of the baseline)." % (days, len(samples), base, nidle), "",
+           "Cost = extra GPU share of Hyprland + the shell compared with the idle baseline (percentage points, median while the effect was on). p90 and max show the spikes. hcpu = Hyprland CPU. rating: light < 4, moderate < 12, heavy < 25, rework >= 25 (or p90 >= 40).", ""]
+    if nidle < 3:
+        out += ["**Not enough idle samples for a baseline yet** (needs a few minutes with every effect off while the sampler runs); costs are shown against 0.", ""]
+    bad = sorted([(l, r) for l, r in layers.items() if r["rating"] in ("heavy", "rework") and r["n"] >= 2], key=lambda x: -x[1]["cost"])
+    out += ["## Heavy or in need of rework", ""]
+    if bad:
+        out += ["| layer | rating | cost | p90 | max | hcpu | samples |", "|---|---|---|---|---|---|---|"] + [fmt_row(l, r) for l, r in bad] + [""]
+    else:
+        out += ["Nothing measured so far is heavy.", ""]
+    ok = sorted(layers.items(), key=lambda x: -x[1]["cost"])
+    out += ["## Every measured layer (heaviest first)", "", "| layer | rating | cost | p90 | max | hcpu | samples |", "|---|---|---|---|---|---|---|"]
+    out += [fmt_row(l + ("" if not r["mixed"] else " (mixed)"), r) for l, r in ok] + [""]
+    combos = sorted([r for r in rows if len([l for l in r["layers"] if not l.startswith(AMBIENT)]) > 1 and r["n"] >= 2], key=lambda r: -r["cost"])[:15]
+    if combos:
+        out += ["## Combinations (heaviest 15)", "", "| layers | rating | cost | p90 | max | hcpu | samples |", "|---|---|---|---|---|---|---|"]
+        out += [fmt_row(" + ".join(r["layers"]), r) for r in combos] + [""]
+    seen = {l.split(":", 1)[1] for l in layers if ":" in l}
+    miss = []
+    for k in ("screen", "color", "wall"):
+        todo = sorted(n for n in names[k] if (k + ":" + n) not in layers and not any(l == k + "2:" + n for l in layers))
+        if todo:
+            miss.append("- %s (%d of %d not measured yet): %s" % (k, len(todo), len(names[k]), ", ".join(todo)))
+    if miss:
+        out += ["## Not measured yet", "", "Run `omashaders perf bench` (about 5 s per effect) or just use them with the sampler running.", ""] + miss + [""]
+    cl = crash_lines(recs, int(days * 24))
+    out += ["## Crashes and unclean stops", ""] + (cl if cl else ["None recorded in this period."]) + [""]
+    text = "\n".join(out)
+    os.makedirs(STATE, exist_ok=True)
+    with open(REPORT, "w") as f:
+        f.write(text + "\n")
+    with open(SUMMARY, "w") as f:
+        for l, r in ok:
+            kind, name = l.split(":", 1)
+            if r["n"] >= 2:
+                f.write("%s\t%s\t%s\t%.0f\t%d\n" % ({"screen2": "screen", "color2": "color"}.get(kind, kind), name, r["rating"], r["cost"], r["n"]))
+    print(text)
+    print("\nWritten to " + REPORT)
+    if "--notify" in args:
+        top = ", ".join("%s %+.0f" % (l.split(":", 1)[1], r["cost"]) for l, r in bad[:4]) or "nothing heavy"
+        subprocess.run(["notify-send", "-a", "OmaShaders", "-t", "8000", "Effect cost report", "Heavy: %s\n%s" % (top, REPORT)], capture_output=True)
+    return 0
+
+
+def opt(args, name, default):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def cmd_crashes(args):
+    hours = int(opt(args, "--hours", 24))
+    lines = crash_lines(read_log(hours / 24 + 1), hours, "--all" in args)
+    print("\n".join(lines) if lines else "No crashes in the last %d hours." % hours)
+    return 0
+
+
+# ---------------------------------------------------------------- bench
+BENCH_STATE = ["current", "color", "effect2", "color2", "mix-effect", "mix-color", "strength-effect", "strength-color", "disabled", "wp-effect", "mouse"]
+
+
+def omashaders(*a):
+    subprocess.run([OMASHADERS] + list(a), capture_output=True, timeout=30)
+
+
+def put(name, val):
+    with open(os.path.join(STATE, name), "w") as f:
+        f.write(val)
+
+
+def cmd_bench(args):
+    os.makedirs(STATE, exist_ok=True)
+    lockfd = os.open(os.path.join(STATE, "bench.lock"), os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("a bench is already running", file=sys.stderr)
+        return 1
+    if rd("disabled"):
+        print("effects are paused (press p in the menu); resume first", file=sys.stderr)
+        return 1
+    kinds = [k for k in opt(args, "--kinds", "screen,color").split(",") if k in ("screen", "color", "wall")]
+    only = [x for x in opt(args, "--only", "").split(",") if x]
+    settle = float(opt(args, "--seconds", 2))
+    names = known_names()
+    meter = Meter()
+    saved = {n: (rd(n) if os.path.exists(os.path.join(STATE, n)) else None) for n in BENCH_STATE}
+
+    def restore(*_):
+        for n, v in saved.items():
+            if v is not None:
+                put(n, v)
+        omashaders("reapply-force")
+        print("restored your previous effects")
+
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    try:
+        omashaders("off")
+        put("wp-effect", "")
+        put("mouse", "")
+        time.sleep(settle + 1)
+        print("idle baseline ...", flush=True)
+        for _ in range(3):
+            write(take(meter, True))
+        base = [load_of(r) for r in read_log(1) if r.get("bench") and ambient(r["layers"]) == tuple(sorted(r["layers"])) and load_of(r) is not None][-3:]
+        b = med(base) if base else 0
+        for kind in kinds:
+            for n in sorted(names[kind]):
+                if only and n not in only:
+                    continue
+                if kind == "screen":
+                    omashaders("effect", "set", n)
+                elif kind == "color":
+                    omashaders("color", "set", n)
+                else:
+                    put("wp-effect", n)
+                time.sleep(settle + (1.5 if kind == "wall" else 0))
+                got = []
+                for _ in range(3):
+                    r = take(meter, True)
+                    write(r)
+                    got.append(load_of(r))
+                got = [g for g in got if g is not None]
+                print("%-7s %-18s %+4.0f  (Hyprland %s%%, shell %s%%)" % (kind, n, (med(got) - b) if got else 0, r.get("hypr", "?"), r.get("shell", "?")), flush=True)
+            if kind == "screen":
+                omashaders("effect", "off")
+            elif kind == "color":
+                omashaders("color", "off")
+            else:
+                put("wp-effect", "")
+    except KeyboardInterrupt:
+        print("stopped")
+    finally:
+        restore()
+    return 0
+
+
+def cmd_switch(what):
+    if what == "off":
+        os.makedirs(STATE, exist_ok=True)
+        open(OFF, "w").close()
+        try:
+            with open(os.path.join(STATE, "perf.pid")) as f:
+                os.kill(int(f.read()), signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+        print("performance log off")
+    elif what == "on":
+        try:
+            os.remove(OFF)
+        except OSError:
+            pass
+        subprocess.Popen([sys.executable, SELF, "run"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        print("performance log on")
+    else:
+        recs = read_log(1)
+        running = False
+        try:
+            with open(os.path.join(STATE, "perf.pid")) as f:
+                running = os.path.exists("/proc/%d" % int(f.read()))
+        except (OSError, ValueError):
+            pass
+        last = recs[-1] if recs else None
+        print("sampler: %s%s" % ("running" if running else "not running", " (switched off)" if os.path.exists(OFF) else ""))
+        print("log: %s (%d records in the last day)" % (LOG, len(recs)))
+        if last:
+            print("last: %s, layers: %s" % (stamp(last["t"]), ", ".join(last.get("layers") or []) or "none"))
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    rest = argv[2:]
+    if cmd == "run":
+        return cmd_run()
+    if cmd == "report":
+        return cmd_report(rest)
+    if cmd == "crashes":
+        return cmd_crashes(rest)
+    if cmd == "bench":
+        return cmd_bench(rest)
+    if cmd in ("on", "off", "status"):
+        return cmd_switch(cmd)
+    print("\n".join(l[2:] for l in open(SELF).read().split("\n")[1:8]), file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
