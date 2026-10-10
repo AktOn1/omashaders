@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 45 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 44 colour grades plus your own custom colour, 52 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick) and 25 cursor effects (13 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 47 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 45 colour grades plus your own custom colour, 53 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick) and 26 cursor effects (14 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -54,6 +54,7 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 | `p` | pause or resume every effect; they come back exactly as they were |
 | `f` | favourite (each menu has its own list) |
 | `F` | save the current Screen + Color + Wallpaper + Cursor combination as a combo (`m` shows the Combos menu) |
+| `n` | on the Combos menu: name (rename) the selected combo; `Enter` keeps the name, an empty name goes back to the automatic one, `Esc` cancels |
 
 | `r` / `R` | Surprise me in the focused menu / in every ticked column |
 | `o` / `O` | off in the focused menu / in every ticked column (the Clear all button in the header row does the same) |
@@ -75,7 +76,7 @@ hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd("omarchy-shell io.github.akton1.omash
 hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("omarchy-shell io.github.akton1.omashaders toggle"))
 ```
 
-Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power on|off|toggle|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|strength effect|color N|sections screen|color|wall|mouse|both|all|combo N|combo save|shiftOnly on|off|toggle`. The effect script can also be run directly: `bin/omashaders list|status|set NAME|off|effect ...|color ...|strength ...|power ...`.
+Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power on|off|toggle|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|strength effect|color N|sections screen|color|wall|mouse|both|all|combo N|combo save|comboRename N NAME|shiftOnly on|off|toggle`. The effect script can also be run directly: `bin/omashaders list|status|set NAME|off|effect ...|color ...|strength ...|power ...`.
 
 ### Mixing two effects (1.12)
 
@@ -138,6 +139,12 @@ Shift still reaches your apps normally. Without this binding the effects never s
 ### Digital rain HD and wallpaper-colour rain (1.19)
 
 Wallpaper > New scenes: **Digital rain HD** draws sharp, antialiased katakana-style glyphs (two depth layers, small far ones and larger near ones, 2 drops per column, bright white-green heads) on near black with a faint ghost of the wallpaper; the pointer lights the rain and makes nearby glyphs flip faster. **Digital rain, wallpaper colours** is the same rain, but each glyph takes the (vivid) colour of the wallpaper under it, with the picture dimmed underneath. Both follow the Mouse reaction, Strength, Speed and Zoom sliders. The glyphs are built from stroke segments in the shader, so no font or texture is needed.
+
+### Abyss combo, Broken screen, combo names (1.20)
+
+A themed set built as one picture, deep-sea bioluminescence, and saved as the combo **Abyss**: Screen **Deep sea** (slow light shafts from the surface, drifting marine snow, depth fog), Color **Abyss** (blue-black shadows, teal mid tones, cyan-white highlights), Wallpaper (Weather and nature) **Plankton** (glowing plankton that flares when the pointer stirs the water) and Cursor **Deep glow** (a bioluminescent wake behind the pointer). The combo is in the starter list, so it shows up after the update. Screen > Lens > **Broken screen** is a cracked-glass effect: radial cracks around an impact point, tilted shards with a rainbow split of the colours, light spectrum glowing along the cracks and an ink-bleed blotch.
+
+Combos can have a name: press `n` on a combo (or `omarchy-shell io.github.akton1.omashaders comboRename N NAME`, N is the position in the list). The name is the 5th, optional field of a line in the `combos` file (`screen|wall|mouse|color|name`), so older lines keep working.
 
 ### Rising smoke wallpaper
 

@@ -1173,6 +1173,7 @@ BarWidget {
       { id: "petals",    label: "Sakura petals",   hint: "falling petals" },
       { id: "glowdust", label: "Glow dust",       hint: "soft lights flee mouse" },
       { id: "fireflies", label: "Fireflies",      hint: "green, blinking, shy" },
+      { id: "plankton", label: "Plankton",        hint: "glows near the mouse" },
       { id: "fog",       label: "Fog drift",       hint: "mouse clears it" },
       { id: "storm",     label: "Thunderstorm",    hint: "rain, lightning" },
       { id: "embers",    label: "Embers",          hint: "sparks flee mouse" },
@@ -1484,19 +1485,26 @@ BarWidget {
 
   // ---------------------------------------------------------------- combination favorites
   // A combo is the Screen effect, Wallpaper effect, Cursor effect and Color together; one line per combo
-  // in the state file: "screen|wall|mouse|color" (an empty part means off; older 3-part lines have no colour).
+  // in the state file: "screen|wall|mouse|color" or "screen|wall|mouse|color|name" (an empty part means off; older 3-part lines have no colour; the name is optional, set with n).
   property var combos: []
   property string comboFlash: ""
   function comboKey(s, w, m, c) { return s + "|" + w + "|" + m + "|" + c }
+  function comboBase(line) { return line.split("|").slice(0, 4).join("|") }
   function comboItem(line) {
     var p = line.split("|")
-    var s = p[0] || "", w = p[1] || "", m = p[2] || "", c = p[3] || ""
+    var s = p[0] || "", w = p[1] || "", m = p[2] || "", c = p[3] || "", name = p[4] || ""
     var names = [s, c, w !== "" ? wallLabel(w) : "", m].filter(function(x) { return x !== "" })
-    return { id: line, screen: s, wall: w, mouse: m, color: c, label: names.join(" + "),
-             desc: "Screen " + (s || "off") + " · Color " + (c || "off") + " · Wallpaper " + (w !== "" ? wallLabel(w) : "off") + " · Cursor " + (m || "off") }
+    var parts = "Screen " + (s || "off") + " · Color " + (c || "off") + " · Wallpaper " + (w !== "" ? wallLabel(w) : "off") + " · Cursor " + (m || "off")
+    return { id: line, screen: s, wall: w, mouse: m, color: c, name: name, label: name !== "" ? name : names.join(" + "), desc: parts }
   }
   readonly property var comboItems: combos.map(comboItem)
   readonly property string comboNow: comboKey(current, wallShown, mouseCurrent, colorCurrent)
+  readonly property string comboNowId: {
+    for (var i = 0; i < combos.length; i++) if (comboBase(combos[i]) === comboNow) return combos[i]
+    return comboNow
+  }
+  property bool renaming: false
+  property string renameId: ""
   readonly property var comboCats: [
     { id: "combos", label: "Saved", items: comboItems,
       note: "No combos yet. Set up Screen, Color, Wallpaper and Cursor the way you like, then press F." },
@@ -1514,7 +1522,8 @@ BarWidget {
     var key = comboNow
     if (key === "|||") { flash("Nothing to save: every effect is off"); return }
     var label = comboItem(key).label
-    if (combos.indexOf(key) >= 0) { flash("Already saved: " + label); return }
+    var dup = combos.filter(function(c) { return comboBase(c) === key })
+    if (dup.length > 0) { flash("Already saved: " + comboItem(dup[0]).label); return }
     combos = combos.concat([key])
     writeCombos()
     flash("Saved combo: " + label)
@@ -1527,6 +1536,34 @@ BarWidget {
     if (s.curItems.length === 0) s.col = 0
     else s.itemIdx = clamp(s.itemIdx, 0, s.curItems.length - 1)
     flash("Removed combo: " + comboItem(id).label)
+  }
+  function startRename() {
+    if (focusKind !== "combo") return
+    var it = comboSec.selected
+    if (!it || it.id.charAt(0) === "@") return
+    renameId = it.id
+    renameField.text = it.name
+    renaming = true
+    renameField.forceActiveFocus()
+    renameField.selectAll()
+  }
+  function finishRename(save) {
+    var id = renameId
+    renaming = false
+    renameId = ""
+    leaveSearch()
+    if (save) renameCombo(id, renameField.text)
+  }
+  function renameCombo(id, name) {
+    var i = combos.indexOf(id)
+    if (i < 0) return
+    var n = String(name).replace(/[|\r\n]/g, " ").trim().slice(0, 40)
+    var line = comboBase(id) + (n !== "" ? "|" + n : "")
+    var next = combos.slice()
+    next[i] = line
+    combos = next
+    writeCombos()
+    flash(n !== "" ? "Renamed combo: " + n : "Name cleared: " + comboItem(line).label)
   }
   function previewCombo(it) {
     if (!it || it.id.charAt(0) === "@") return
@@ -1553,7 +1590,8 @@ BarWidget {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.combos = String(text() || "").split("\n").map(function(l) { return l.split("|").length === 3 ? l + "|" : l })
-                                .filter(function(l) { return l.split("|").length === 4 && l !== "|||" })
+                                .filter(function(l) { var n = l.split("|").length; return (n === 4 || n === 5) && root.comboBase(l) !== "|||" })
+                                .map(function(l) { return l.split("|").length === 5 && l.split("|")[4] === "" ? root.comboBase(l) : l })
   }
 
   // ---------------------------------------------------------------- measured cost (bin/perf-log) and the "Active now" list
@@ -1689,6 +1727,7 @@ BarWidget {
     Qt.callLater(function() { popoutSwitchClosing = false })
   }
   onPopupOpenChanged: {
+    if (!popupOpen) renaming = false
     if (popupOpen) {
       lister.running = true
       screenOrigin = current
@@ -1814,6 +1853,7 @@ BarWidget {
     else if (t === "G") s.jump(true)
     else if (t === "f") toggleFav(k)
     else if (t === "F") saveCombo()
+    else if (t === "n") startRename()
     else if (t === "m") activeKind = "combo"
     else if (t === "s") toggleSection("screen")
     else if (t === "C") toggleSection("color")
@@ -1860,6 +1900,7 @@ BarWidget {
     function sections(mode: string): void { root.setSections(mode) }
     function windows(args: string): void { root.winRun(args.split(" ").filter(function(a) { return a !== "" })) }
     function combo(which: string): void { if (which === "save") root.saveCombo(); else root.applyCombo(root.comboAt(which), true) }
+    function comboRename(which: string, name: string): void { var it = root.comboAt(which); if (it) root.renameCombo(it.id, name) }
     function power(mode: string): void { root.setPower(mode === "" ? "toggle" : mode) }
     function strength(kind: string, value: string): void { Quickshell.execDetached([root.script, "strength", kind, value]) }
     function shiftOnly(mode: string): void { root.setShiftOnly(mode === "toggle" ? !root.shiftOnly : (mode === "on" || mode === "1")) }
@@ -3193,7 +3234,24 @@ BarWidget {
           spacing: Style.space(10)
 
           TextField {
+            id: renameField
+            visible: root.renaming
+            width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
+            height: searchRow.height
+            verticalPadding: Style.space(2)
+            placeholderText: "name this combo, ⏎ keeps it, empty = automatic name, esc cancels"
+            foreground: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+            maximumLength: 40
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Escape) { root.finishRename(false); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.finishRename(true); event.accepted = true }
+            }
+          }
+          TextField {
             id: searchField
+            visible: !root.renaming
             width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
             height: searchRow.height
             verticalPadding: Style.space(2)
@@ -3470,7 +3528,7 @@ BarWidget {
             title: "Combos"
             icon: root.kindIcon("combo")
             rawCats: root.comboCats
-            saved: root.comboNow
+            saved: root.comboNowId
             favs: []
             focused: root.focusKind === "combo"
             defaultCat: 0
@@ -3537,7 +3595,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · P cost report · s C w c W m menus · A pick the app (Windows) · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · n name a combo · r/R surprise · o/O off · P cost report · s C w c W m menus · A pick the app (Windows) · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily
