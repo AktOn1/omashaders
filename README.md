@@ -103,7 +103,7 @@ The **Windows** column also has **Frame** categories (Shadow, Glow, Border, Spin
 
 ### Window shaders (optional, 1.11)
 
-The **Windows** column (`W`) draws the same effects and colour grades as Screen and Color, but only on the app windows you pick, so the desktop, bar and other apps stay untouched. Pick **Apps** first: *All windows* (new windows are included as they open) or one or more app classes, then choose an effect and/or a colour from the other categories. Strength has one slider per part (Effect strength while you are in an effect category, Color strength in a colour one). Windows follow the pause key (`p`). Combos do not include window shaders.
+The **Windows** column (`W`) draws the same effects and colour grades as Screen and Color, but only on the app windows you pick, so the desktop, bar and other apps stay untouched. Pick **Apps** first: *All windows* (new windows are included as they open) or one or more app classes, then choose an effect and/or a colour from the other categories. Strength has one slider per part (Effect strength while you are in an effect category, Color strength in a colour one). Shell surfaces are listed in the same Apps list tagged `panel` (the bar, the AktLabs Companion pill, plugin menus, overlays): they are layers, not windows, so *All windows* skips them and you tick the ones you want one by one. Windows follow the pause key (`p`). Combos do not include window shaders.
 
 Hyprland cannot do this by itself, so it needs the third-party plugin [HyprWindowShade](https://github.com/ManofJELLO/HyprWindowShade) (MIT, compiled against your Hyprland version, so it cannot ship with this plugin). If it is missing, the Windows column shows what to install (**Copy install commands** puts it on the clipboard):
 

@@ -675,7 +675,7 @@ BarWidget {
   // ---------------------------------------------------------------- window shaders (HyprWindowShade plugin)
   // The Screen effect and Color lists, drawn on windows only. Targets are app classes (or all windows);
   // bin/omashaders window does the work and only tells the plugin which class gets which shader.
-  // Item ids in this menu: "t:CLASS" / "t:*" target, "e:NAME" effect, "c:NAME" colour.
+  // Item ids in this menu: "t:CLASS" / "t:layer:NAMESPACE" / "t:*" target, "e:NAME" effect, "c:NAME" colour.
   property string winEffect: ""
   property string winColor: ""
   property var winTargets: []
@@ -708,7 +708,10 @@ BarWidget {
     var out = [{ id: "t:*", label: "All windows", desc: "Every open window, and windows that open later", hint: "" }]
     var seen = {}
     winClasses.concat(winTargets.filter(function(t) { return t !== "*" })).forEach(function(c) {
-      if (c && !seen[c]) { seen[c] = true; out.push({ id: "t:" + c, label: c, desc: "Every window of this app", hint: "" }) }
+      if (!c || seen[c]) return
+      seen[c] = true
+      if (c.indexOf("layer:") === 0) out.push({ id: "t:" + c, label: c.slice(6), desc: "Shell panel or overlay (bar, Companion pill, plugin menus), not a normal window", hint: "panel" })
+      else out.push({ id: "t:" + c, label: c, desc: "Every window of this app", hint: "" })
     })
     return out
   }

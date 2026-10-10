@@ -258,6 +258,16 @@ for c in json.load(sys.stdin):
     k=c.get("class") or ""
     if k and k not in seen: seen.append(k)
 print("\n".join(seen))'; }
+# shell surfaces (bars, panels, overlays like the Companion pill) are layers, not windows; the plugin shades them by namespace
+open_layers() { hyprctl layers -j 2>/dev/null | python3 -c 'import json,sys
+skip={"omarchy-background","wallpaper-fx","omashaders-mouse"}
+seen=[]
+for m in json.load(sys.stdin).values():
+    for lv in m.get("levels",{}).values():
+        for l in lv:
+            k=l.get("namespace") or ""
+            if k and k not in skip and k not in seen: seen.append(k)
+print("\n".join("layer:"+k for k in seen))'; }
 # the built window shader for the current window effect + colour (empty when none)
 window_file() {
   local fx col sf sc cf="" out args=()
@@ -277,7 +287,12 @@ window_file() {
   find "$WDIR" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
   echo "$out"
 }
-wsh_class() { hyprctl eval "$WSH_LUA.classshader(\"$1\",\"$2\")" >/dev/null 2>&1; } # CLASS PATH|clear
+wsh_class() { # CLASS PATH|clear; "layer:NAMESPACE" targets go to the plugin's layer shaders
+  case "$1" in
+    layer:*) hyprctl eval "$WSH_LUA.layershader(\"${1#layer:}\",\"$2\")" >/dev/null 2>&1 ;;
+    *) hyprctl eval "$WSH_LUA.classshader(\"$1\",\"$2\")" >/dev/null 2>&1 ;;
+  esac
+}
 # make the plugin's per-class shaders match the state: set on every target class, clear the ones we set before
 window_apply() {
   local file="" want=() c old=() applied="$STATE_DIR/window-applied" tg
@@ -387,7 +402,7 @@ window_cmd() {
         '') cat "$STATE_DIR/window-target" 2>/dev/null ;;
         *) window_target "$2" "$3" && window_apply ;;
       esac ;;
-    classes) open_classes ;;
+    classes) open_classes; open_layers ;;
     apply|sync) window_apply ;;
     load) window_load ;;
     frame) frame_cmd "$2" "$3" ;;
