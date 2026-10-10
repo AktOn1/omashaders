@@ -52,6 +52,7 @@ BarWidget {
   readonly property string winColorFile: stateDir + "/window-color"
   readonly property string winFrameFile: stateDir + "/window-frame"
   readonly property string winTargetFile: stateDir + "/window-target"
+  readonly property string winAppsFile: stateDir + "/window-apps"
   readonly property string winFxStrengthFile: stateDir + "/window-strength-effect"
   readonly property string winColStrengthFile: stateDir + "/window-strength-color"
   readonly property int fps: Number(setting("fps", 30)) || 30
@@ -254,8 +255,8 @@ BarWidget {
   }
   StrengthSender { id: fxSender; kind: "effect" }
   StrengthSender { id: colSender; kind: "color" }
-  StrengthSender { id: winFxSender; kind: "effect"; prefix: ["window"] }
-  StrengthSender { id: winColSender; kind: "color"; prefix: ["window"] }
+  StrengthSender { id: winFxSender; kind: "effect"; prefix: root.winScope === "*" ? ["window"] : ["window", "-a", root.winScope] }
+  StrengthSender { id: winColSender; kind: "color"; prefix: root.winScope === "*" ? ["window"] : ["window", "-a", root.winScope] }
   property int winFxStrength: 100
   property int winColStrength: 100
   // Wallpaper and Cursor effects have one strength each (the effect's opacity, or for bend effects how far the screen is bent):
@@ -271,13 +272,13 @@ BarWidget {
     if (kind === "color") { colStrength = v; colSender.send(v) }
     else if (kind === "wall") { wallStrength = v; pendingWallStrength = v; wallStrengthTimer.restart() }
     else if (kind === "mouse") { mouseStrength = v; pendingMouseStrength = v; mouseStrengthTimer.restart() }
-    else if (kind === "winfx") { winFxStrength = v; winFxSender.send(v) }
-    else if (kind === "wincol") { winColStrength = v; winColSender.send(v) }
+    else if (kind === "winfx") { if (winScope === "*") winFxStrength = v; else setWinAppValue("fx", v); winFxSender.send(v) }
+    else if (kind === "wincol") { if (winScope === "*") winColStrength = v; else setWinAppValue("col", v); winColSender.send(v) }
     else { fxStrength = v; fxSender.send(v) }
   }
   function strengthKind(k) { return k === "color" ? "color" : (k === "wall" ? "wall" : (k === "mouse" ? "mouse" : (k === "win" ? (winPart === "color" ? "wincol" : "winfx") : "effect"))) }
-  function strengthLiveOf(kind) { return kind === "color" ? colorOn : (kind === "wall" ? wallOn : (kind === "mouse" ? mouseOn : (kind === "winfx" ? winEffectOn : (kind === "wincol" ? winColorOn : shaderOn)))) }
-  function strengthOf(kind) { return kind === "color" ? colStrength : (kind === "wall" ? wallStrength : (kind === "mouse" ? mouseStrength : (kind === "winfx" ? winFxStrength : (kind === "wincol" ? winColStrength : fxStrength)))) }
+  function strengthLiveOf(kind) { return kind === "color" ? colorOn : (kind === "wall" ? wallOn : (kind === "mouse" ? mouseOn : (kind === "winfx" ? winEffectOnS : (kind === "wincol" ? winColorOnS : shaderOn)))) }
+  function strengthOf(kind) { return kind === "color" ? colStrength : (kind === "wall" ? wallStrength : (kind === "mouse" ? mouseStrength : (kind === "winfx" ? winFxStrengthS : (kind === "wincol" ? winColStrengthS : fxStrength)))) }
   function nudgeStrength(delta) {
     if (focusKind === "combo") return
     var kind = strengthKind(focusKind)
@@ -289,7 +290,7 @@ BarWidget {
     var kind = strengthKind(focusKind)
     if (!strengthLiveOf(kind)) return
     if (kind === "wall" || kind === "mouse") setStrength(kind, 100)
-    else if (kind === "winfx" || kind === "wincol") Quickshell.execDetached([root.script, "window", "strength", kind === "winfx" ? "effect" : "color", "reset"])
+    else if (kind === "winfx" || kind === "wincol") winRunS(["strength", kind === "winfx" ? "effect" : "color", "reset"])
     else Quickshell.execDetached([root.script, "strength", kind, "reset"])
   }
   function setPower(mode) { Quickshell.execDetached([root.script, "power", mode]) }
@@ -680,6 +681,33 @@ BarWidget {
   property string winColor: ""
   property var winTargets: []
   property var winClasses: []
+  // Which settings the Windows column edits: "*" = all windows, otherwise one app class that keeps its own settings.
+  // winApps maps each app with its own settings to { effect, color, fx, col } (from the window-apps state file).
+  property string winScope: "*"
+  property var winApps: ({})
+  property bool winOriginInherit: false
+  readonly property var winApp: winScope === "*" ? null : (winApps[winScope] || null)
+  readonly property string winEffectS: winApp ? winApp.effect : winEffect
+  readonly property string winColorS: winApp ? winApp.color : winColor
+  readonly property int winFxStrengthS: winApp ? winApp.fx : winFxStrength
+  readonly property int winColStrengthS: winApp ? winApp.col : winColStrength
+  readonly property bool winEffectOnS: winEffectS !== ""
+  readonly property bool winColorOnS: winColorS !== ""
+  readonly property string winScopeLabel: winScope.indexOf("layer:") === 0 ? winScope.slice(6) : winScope
+  readonly property int winAppCount: Object.keys(winApps).length
+  function setWinAppValue(which, v) {
+    var m = Object.assign({}, winApps)
+    var a = Object.assign({}, m[winScope] || { effect: winEffect, color: winColor, fx: winFxStrength, col: winColStrength })
+    a[which] = v
+    m[winScope] = a
+    winApps = m
+  }
+  function winAppSummary(c) {
+    var a = winApps[c]
+    if (!a) return ""
+    var p = [a.effect, a.color].filter(function(x) { return x !== "" })
+    return p.length > 0 ? p.join(" + ") : "off"
+  }
   property string winPlugin: "unknown"
   property string winOriginFx: ""
   property string winOriginCol: ""
@@ -690,7 +718,7 @@ BarWidget {
   readonly property bool winEffectOn: winEffect !== ""
   readonly property bool winColorOn: winColor !== ""
   readonly property bool winFrameOn: winFrame !== ""
-  readonly property bool winAnyOn: winEffectOn || winColorOn || winFrameOn
+  readonly property bool winAnyOn: winEffectOn || winColorOn || winFrameOn || winAppCount > 0
   readonly property var frameEntries: allEntries.filter(function(e) { return e.section === "frame" })
   function winFrameItem(e) { return { id: "f:" + e.name, label: e.name, desc: e.desc, hint: e.motion ? "spins" : "" } }
   readonly property var winFrameCats: catList(frameEntries, ["Shadow", "Glow", "Border", "Spin"]).map(function(c) {
@@ -705,13 +733,17 @@ BarWidget {
   function winShownFx(e) { return includeAnimated || !e.animated }
   readonly property var winEffectItems: screenEntries.filter(winShownFx).map(winFxItem)
   readonly property var winAppItems: {
-    var out = [{ id: "t:*", label: "All windows", desc: "Every open window, and windows that open later", hint: "" }]
+    var gsum = [winEffect, winColor].filter(function(x) { return x !== "" }).join(" + ")
+    var out = [{ id: "t:*", label: "All windows", desc: "The setting for every window. Apps that have their own setting (listed below) keep it.", hint: gsum }]
     var seen = {}
-    winClasses.concat(winTargets.filter(function(t) { return t !== "*" })).forEach(function(c) {
+    winClasses.concat(Object.keys(winApps), winTargets.filter(function(t) { return t !== "*" })).forEach(function(c) {
       if (!c || seen[c]) return
       seen[c] = true
-      if (c.indexOf("layer:") === 0) out.push({ id: "t:" + c, label: c.slice(6), desc: "Shell panel or overlay (bar, Companion pill, plugin menus), not a normal window", hint: "panel" })
-      else out.push({ id: "t:" + c, label: c, desc: "Every window of this app", hint: "" })
+      var own = winApps[c] !== undefined, sum = winAppSummary(c)
+      var what = c.indexOf("layer:") === 0 ? "Shell panel or overlay (bar, Companion pill, plugin menus), not a normal window. " : "Every window of this app. "
+      out.push({ id: "t:" + c, label: c.indexOf("layer:") === 0 ? c.slice(6) : c,
+                 desc: what + (own ? "Own setting: " + sum + "." : "Follows All windows. Pick an effect or colour to give it its own."),
+                 hint: own ? sum : (c.indexOf("layer:") === 0 ? "panel" : "") })
     })
     return out
   }
@@ -728,19 +760,22 @@ BarWidget {
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
       out.push({ id: "c:" + c, label: "Color · " + c, items: colorEntries.filter(function(e) { return e.cat === c }).map(winColItem), note: "" })
     })
-    winFrameCats.forEach(function(c) { out.push(c) })
+    if (winScope === "*") winFrameCats.forEach(function(c) { out.push(c) })
+    else out.push({ id: "@inherit", label: "Follow All windows", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
   }
   readonly property var winMarks: {
-    var out = winTargets.map(function(t) { return "t:" + t })
-    if (winColorOn) out.push("c:" + winColor)
-    if (winFrameOn) out.push("f:" + winFrame)
+    var out = ["t:" + winScope]
+    if (winEffectOnS) out.push("e:" + winEffectS)
+    if (winColorOnS) out.push("c:" + winColorS)
+    if (winFrameOn && winScope === "*") out.push("f:" + winFrame)
     return out
   }
 
   function winRun(args) { Quickshell.execDetached([root.script, "window"].concat(args)) }
-  function applyWinPart(kind, name) { winRun(name === "" ? [kind, "off"] : [kind, "set", name]) }
+  function winRunS(args) { winRun(winScope === "*" ? args : ["-a", winScope].concat(args)) }
+  function applyWinPart(kind, name) { winRunS(name === "" ? [kind, "off"] : [kind, "set", name]) }
   function applyWinFrame(name) { winRun(name === "" ? ["frame", "off"] : ["frame", "set", name]) }
   function applyWin(id) {
     if (id.charAt(0) === "f") applyWinFrame(id.slice(2))
@@ -748,21 +783,24 @@ BarWidget {
   }
   function previewWin(it) {
     if (!it || it.id.charAt(1) !== ":" || it.id.charAt(0) === "t") { winTimer.stop(); return }
-    if (it.id === "e:" + winEffect || it.id === "c:" + winColor || it.id === "f:" + winFrame) { winTimer.stop(); return }
+    if (it.id === "e:" + winEffectS || it.id === "c:" + winColorS || it.id === "f:" + winFrame) { winTimer.stop(); return }
+    if (!winPreviewed) winOriginInherit = winScope !== "*" && winApp === null
     winPending = it.id
     winPreviewed = true
     winTimer.restart()
   }
   Timer { id: winTimer; interval: 140; onTriggered: root.applyWin(root.winPending) }
-  function toggleWinTarget(cls) {
-    if (cls === "*") winRun(["target", winAll ? "none" : "all"])
-    else if (winAll) Quickshell.execDetached(["bash", "-c", '"$1" window target none && "$1" window target add "$2"', "bash", root.script, cls])
-    else winRun(["target", "toggle", cls])
+  function setWinScope(cls) {
+    revertWinPreview()
+    winScope = cls
+    winOriginFx = winEffectS
+    winOriginCol = winColorS
+    winPreviewed = false
   }
   function chooseWin(it, keep) {
     if (!it || it.id.charAt(1) !== ":") return
     winTimer.stop()
-    if (it.id.charAt(0) === "t") toggleWinTarget(it.id.slice(2))
+    if (it.id.charAt(0) === "t") { setWinScope(it.id.slice(2)); return }
     else {
       applyWin(it.id)
       if (it.id.charAt(0) === "e") winOriginFx = it.id.slice(2)
@@ -776,9 +814,10 @@ BarWidget {
     winTimer.stop()
     if (!winPreviewed) return
     winPreviewed = false
+    if (winOriginInherit) { winRunS(["inherit"]); return }
     applyWinPart("effect", winOriginFx)
     applyWinPart("color", winOriginCol)
-    applyWinFrame(winOriginFrame)
+    if (winScope === "*") applyWinFrame(winOriginFrame)
   }
   function refreshWin() { winStatus.running = true; winLister.running = true }
   Process {
@@ -821,6 +860,23 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: root.winFrame = String(text() || "").trim()
     onLoadFailed: root.winFrame = ""
+  }
+  FileView {
+    path: root.winAppsFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      if (winFxSender.busy || winColSender.busy) return
+      var m = {}
+      String(text() || "").split("\n").forEach(function(l) {
+        if (l === "") return
+        var q = l.split("\t"), fx = parseInt(q[3]), col = parseInt(q[4])
+        m[q[0]] = { effect: q[1] || "", color: q[2] || "", fx: isNaN(fx) ? 100 : fx, col: isNaN(col) ? 100 : col }
+      })
+      root.winApps = m
+    }
+    onLoadFailed: root.winApps = ({})
   }
   FileView {
     path: root.winTargetFile
@@ -1320,8 +1376,12 @@ BarWidget {
                         + (mixSecondOf("color") !== "" ? (mixColorMode === "blend" ? " ~ " : " + ") + color2 + " " + mixColorAmt + "%" : ""))
     if (wallOn) a.push("Wallpaper " + wallLabel(wallShown) + costTag("wall", wallShown))
     if (mouseOn) a.push("Cursor " + mouseCurrent + costTag("cursor", mouseCurrent))
-    if (winAnyOn) a.push("Windows " + [winEffect !== "" ? winEffect + costTag("win", winEffect) : "", winColor !== "" ? winColor + costTag("wincolor", perfName(winColor)) : "", winFrame !== "" ? "frame " + winFrame : ""].filter(function(x) { return x !== "" }).join(" + "))
+    if (winAnyOn) a.push("Windows " + winOwnText() + [winEffect !== "" ? winEffect + costTag("win", winEffect) : "", winColor !== "" ? winColor + costTag("wincolor", perfName(winColor)) : "", winFrame !== "" ? "frame " + winFrame : ""].filter(function(x) { return x !== "" }).join(" + "))
     return a
+  }
+  function winOwnText() {
+    var l = Object.keys(winApps).map(function(c) { return (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c) })
+    return l.length > 0 ? "(own: " + l.join(", ") + ") " : ""
   }
   function costReport() { Quickshell.execDetached(["bash", "-c", 'python3 "$1" report --notify >/dev/null 2>&1', "bash", root.path("bin/perf-log")]) }
 
@@ -1398,6 +1458,7 @@ BarWidget {
       mousePreviewed = false
       wallPreviewed = false
       winPreviewed = false
+      winScope = "*"
       winOriginFx = winEffect
       winOriginCol = winColor
       winOriginFrame = winFrame
@@ -1425,7 +1486,7 @@ BarWidget {
     }
   }
 
-  function savedOf(k) { return k === "screen" ? current : (k === "color" ? colorCurrent : (k === "wall" ? wallSaved : (k === "win" ? (winEffectOn ? "e:" + winEffect : "") : mouseCurrent))) }
+  function savedOf(k) { return k === "screen" ? current : (k === "color" ? colorCurrent : (k === "wall" ? wallSaved : (k === "win" ? (winEffectOnS ? "e:" + winEffectS : "") : mouseCurrent))) }
   function favsOf(k) { return k === "screen" ? screenFavs : (k === "color" ? colorFavs : (k === "wall" ? wallFavs : mouseFavs)) }
   function favFileOf(k) { return k === "screen" ? screenFavFile : (k === "color" ? colorFavFile : (k === "wall" ? wallFavFile : mouseFavFile)) }
   function itemsOf(k) { return k === "screen" ? screenItems : (k === "color" ? colorItems : (k === "wall" ? wallEffects : (k === "win" ? winEffectItems : mouseItems))) }
@@ -1453,6 +1514,8 @@ BarWidget {
   function runAction(k, id) {
     if (k === "combo") { if (id === "@save") saveCombo(); return }
     if (k === "win" && id === "@copy") { Quickshell.execDetached(["wl-copy", installCmd]); flash("Copied: " + installCmd); return }
+    if (k === "win" && id === "@inherit") { winRunS(["inherit"]); return }
+    if (k === "win" && id === "@off" && winScope !== "*") { winRunS(["off"]); return }
     if (id === "@off") offIn(k)
     else if (id === "@random") randomIn(k)
   }
@@ -1554,7 +1617,7 @@ BarWidget {
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winFxStrengthFile, root.winColStrengthFile,
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -1571,7 +1634,7 @@ BarWidget {
     tooltipText: "OmaShaders" + (root.paused ? " (paused)" : "") + "\nScreen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off")
                  + "\nColor: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
-                 + "\nWindows: " + (root.winAnyOn ? [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off")
+                 + "\nWindows: " + (root.winAnyOn ? root.winOwnText() + [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus.replace(/[<>&]/g, "?") : "")
                  + "\nclick: menu (hjkl) · right-click: pause / resume effects · middle-click: next wallpaper · scroll: step"
@@ -2596,7 +2659,7 @@ BarWidget {
             id: winSec
             visible: root.showWin
             width: secRow.secWidth
-            title: "Windows"
+            title: root.winScope === "*" ? "Windows" : "Windows · " + root.winScopeLabel
             rawCats: root.winCats
             saved: root.savedOf("win")
             alsoSaved: root.winMarks
@@ -2605,9 +2668,9 @@ BarWidget {
             defaultCat: 0
             hasStrength: root.winPart !== "frame"
             strengthLabel: root.winPart === "color" ? "Color strength" : "Effect strength"
-            strengthLive: root.winPart === "color" ? root.winColorOn : root.winEffectOn
-            strength: root.winPart === "color" ? root.winColStrength : root.winFxStrength
-            strengthDefault: root.winPart === "color" ? root.defaultStrengthOf("color", root.winColor) : root.defaultStrengthOf("screen", root.winEffect)
+            strengthLive: root.winPart === "color" ? root.winColorOnS : root.winEffectOnS
+            strength: root.winPart === "color" ? root.winColStrengthS : root.winFxStrengthS
+            strengthDefault: root.winPart === "color" ? root.defaultStrengthOf("color", root.winColorS) : root.defaultStrengthOf("screen", root.winEffectS)
             onStrengthPicked: function(v) { root.setStrength(root.winPart === "color" ? "wincol" : "winfx", v) }
             onPointed: function(item) { root.previewWin(item) }
             onChosen: function(item, keep) { root.chooseWin(item, keep) }

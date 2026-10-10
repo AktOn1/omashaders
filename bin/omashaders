@@ -4,7 +4,7 @@
 #        | effect [status|list|set NAME|off] | color [status|list|set NAME|off] | mouse [status|list|set NAME|off]
 #        | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
 #        | mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset] (a second effect/colour mixed into the first)
-#        | window [status|effect|color|strength|target|classes|apply|load|off] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
+#        | window [-a CLASS] [status|effect|color|strength|target|classes|apps|apply|load|off|inherit] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
 #        | window frame [status|list|set NAME|off|reload] (shadow, glow and border presets for all windows: Hyprland's own options, no plugin needed)
 #        | perf [status|on|off|report [--days N] [--notify]|bench [--kinds screen,color,wall] [--only A,B]|crashes [--hours N]] (what each effect costs; bin/perf-log)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
@@ -234,8 +234,32 @@ mix_cmd() {
 # State: window-effect, window-color, window-target (one line per app class, or "*" for all windows), window-applied (classes we set).
 WSH_LUA='hl.plugin.HyprWindowShade'
 WDIR="$STATE_DIR/built-win"
-wcur() { cat "$STATE_DIR/window-$1" 2>/dev/null; }
-wcur_strength() { local v; v=$(cat "$STATE_DIR/window-strength-$1" 2>/dev/null); echo "${v:-100}"; }
+# Settings come from the all-windows scope ("*", files window-KEY) or from one app's own override
+# (window-app/CLASS/KEY). WSCOPE picks the scope; an app with an override ignores the all-windows setting.
+WAPP="$STATE_DIR/window-app"
+WSCOPE='*'
+wpath() { if [ "$WSCOPE" = '*' ]; then echo "$STATE_DIR/window-$1"; else echo "$WAPP/$WSCOPE/$1"; fi; }
+wcur() { cat "$(wpath "$1")" 2>/dev/null; }
+wcur_strength() { local v; v=$(cat "$(wpath "strength-$1")" 2>/dev/null); echo "${v:-100}"; }
+# copy the all-windows settings into a new override so the first change only alters one part
+app_seed() {
+  local d="$WAPP/$1" k
+  [ -d "$d" ] && return 0
+  mkdir -p "$d"
+  for k in effect color strength-effect strength-color; do cp "$STATE_DIR/window-$k" "$d/$k" 2>/dev/null || : > "$d/$k"; done
+}
+# one line per app override for the menu: CLASS<TAB>effect<TAB>color<TAB>effect%<TAB>color%
+apps_summary() {
+  local d c out="" f="$STATE_DIR/window-apps" sc="$WSCOPE"
+  for d in "$WAPP"/*/; do
+    [ -d "$d" ] || continue
+    c=$(basename "$d"); WSCOPE=$c
+    out+=$(printf '%s\t%s\t%s\t%s\t%s' "$c" "$(wcur effect)" "$(wcur color)" "$(wcur_strength effect)" "$(wcur_strength color)")$'\n'
+  done
+  WSCOPE=$sc
+  [ -f "$f" ] && [ "$(cat "$f")" = "${out%$'\n'}" ] && return 0
+  mkdir -p "$STATE_DIR"; printf '%s' "$out" > "$f.tmp" && mv "$f.tmp" "$f"
+}
 window_plugin_loaded() { hyprctl plugin list 2>/dev/null | grep -q 'HyprWindowShade'; }
 window_plugin_file() {
   local f
@@ -284,7 +308,6 @@ window_file() {
     mkdir -p "$WDIR"
     python3 "$ROOT/bin/compose-shader" "$out.tmp" --window "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build window shader $fx + $col" >&2; return 1; }
   fi
-  find "$WDIR" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
   echo "$out"
 }
 wsh_class() { # CLASS PATH|clear; "layer:NAMESPACE" targets go to the plugin's layer shaders
@@ -293,33 +316,50 @@ wsh_class() { # CLASS PATH|clear; "layer:NAMESPACE" targets go to the plugin's l
     *) hyprctl eval "$WSH_LUA.classshader(\"$1\",\"$2\")" >/dev/null 2>&1 ;;
   esac
 }
-# make the plugin's per-class shaders match the state: set on every target class, clear the ones we set before
+# make the plugin's per-class shaders match the state: every target class gets the all-windows shader unless it has its
+# own override; classes we set before and no longer want are cleared
 window_apply() {
-  local file="" want=() c old=() applied="$STATE_DIR/window-applied" tg
-  [ -n "$(wcur effect)$(wcur color)" ] || [ -s "$applied" ] || return 0
-  local sigf="$STATE_DIR/window-sig" sig fresh=0
+  local applied="$STATE_DIR/window-applied" c f d gfile="" tg anyset=0 want=() old=() keep=() sig fresh=0
+  local sigf="$STATE_DIR/window-sig"
+  local -A map=()
+  [ -n "$(WSCOPE='*' wcur effect)$(WSCOPE='*' wcur color)" ] && anyset=1
+  for d in "$WAPP"/*/; do [ -d "$d" ] && anyset=1; done
+  [ "$anyset" = 1 ] || [ -s "$applied" ] || return 0
   if ! window_plugin_loaded; then
-    [ -n "$(wcur effect)$(wcur color)" ] && ! is_disabled || return 0
+    [ "$anyset" = 1 ] && ! is_disabled || return 0
     window_load || return 1
     fresh=1
   fi
-  is_disabled || file=$(window_file) || return 1
-  if [ -n "$file" ]; then
-    tg=$(cat "$STATE_DIR/window-target" 2>/dev/null)
-    if grep -qx '\*' <<<"$tg"; then while read -r c; do [ -n "$c" ] && want+=("$c"); done < <(open_classes; grep -vx '\*' <<<"$tg"); else while read -r c; do [ -n "$c" ] && want+=("$c"); done <<<"$tg"; fi
+  if ! is_disabled; then
+    gfile=$(WSCOPE='*' window_file) || return 1
+    if [ -n "$gfile" ]; then
+      tg=$(cat "$STATE_DIR/window-target" 2>/dev/null)
+      if grep -qx '\*' <<<"$tg"; then while read -r c; do [ -n "$c" ] && map["$c"]=$gfile; done < <(open_classes; grep -vx '\*' <<<"$tg")
+      else while read -r c; do [ -n "$c" ] && map["$c"]=$gfile; done <<<"$tg"; fi
+    fi
+    for d in "$WAPP"/*/; do
+      [ -d "$d" ] || continue
+      c=$(basename "$d")
+      f=$(WSCOPE=$c window_file) || continue
+      if [ -n "$f" ]; then map["$c"]=$f; else unset 'map["$c"]'; fi
+    done
   fi
-  sig="$HYPRLAND_INSTANCE_SIGNATURE|$(hyprctl plugin list 2>/dev/null | sed -n 's/.*Handle: //p')|$file|${want[*]}"
+  while read -r c; do [ -n "$c" ] && want+=("$c"); done < <(printf '%s\n' "${!map[@]}" | sort)
+  sig="$HYPRLAND_INSTANCE_SIGNATURE|$(hyprctl plugin list 2>/dev/null | sed -n 's/.*Handle: //p')"
+  for c in "${want[@]}"; do sig+="|$c=${map[$c]}"; done
   [ "$fresh" = 0 ] && [ "$(cat "$sigf" 2>/dev/null)" = "$sig" ] && return 0
   [ -s "$applied" ] && mapfile -t old < "$applied"
   for c in "${old[@]}"; do
-    [[ " ${want[*]} " == *" $c "* ]] || { safe_class "$c" && wsh_class "$c" clear; }
+    [[ -v map["$c"] ]] || { safe_class "$c" && wsh_class "$c" clear; }
   done
   : > "$applied.tmp"
   for c in "${want[@]}"; do
     safe_class "$c" || continue
-    wsh_class "$c" "$file"; echo "$c" >> "$applied.tmp"
+    wsh_class "$c" "${map[$c]}"; echo "$c" >> "$applied.tmp"
   done
   mv "$applied.tmp" "$applied"; echo "$sig" > "$sigf"
+  for c in "${want[@]}"; do keep+=("${map[$c]}"); done
+  while read -r f; do [[ " ${keep[*]} " == *" $f "* ]] || rm -f -- "$f"; done < <(find "$WDIR" -type f -mmin +60 2>/dev/null)
 }
 window_target() { # all | none | add CLASS | remove CLASS | toggle CLASS | here
   local f="$STATE_DIR/window-target" mode="$1" cls="$2" cur
@@ -342,13 +382,13 @@ window_set() { # effect|color NAME|off
   local kind="$1" name="$2" dir="$DIR" k=fx file
   [ "$kind" = color ] && { dir="$CDIR"; k=col; }
   mkdir -p "$STATE_DIR"
-  if [ "$name" = off ] || [ -z "$name" ]; then : > "$STATE_DIR/window-$kind"
+  if [ "$name" = off ] || [ -z "$name" ]; then : > "$(wpath "$kind")"
   else
     if [ "$kind" = color ]; then file=$(cfile "$name"); else file="$dir/$name.frag"; fi
     [ -f "$file" ] || { echo "unknown $kind: $name" >&2; return 1; }
-    echo "$name" > "$STATE_DIR/window-$kind"
-    echo "$(remembered_strength "$k" "$name" "$file")" > "$STATE_DIR/window-strength-$kind"
-    [ -s "$STATE_DIR/window-target" ] || echo '*' > "$STATE_DIR/window-target"
+    echo "$name" > "$(wpath "$kind")"
+    echo "$(remembered_strength "$k" "$name" "$file")" > "$(wpath "strength-$kind")"
+    [ "$WSCOPE" != '*' ] || [ -s "$STATE_DIR/window-target" ] || echo '*' > "$STATE_DIR/window-target"
   fi
 }
 window_strength() { # effect|color [PERCENT|+N|-N|reset]
@@ -363,7 +403,7 @@ window_strength() { # effect|color [PERCENT|+N|-N|reset]
     ''|*[!0-9]*) echo "usage: omashaders window strength effect|color PERCENT|+N|-N|reset" >&2; return 1 ;;
   esac
   [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
-  echo "$val" > "$STATE_DIR/window-strength-$kind"
+  echo "$val" > "$(wpath "strength-$kind")"
 }
 # ---- window frames: shadow / glow / border presets through Hyprland's own options (bin/frame-apply keeps the original look) ----
 frame_apply() { # make Hyprland match the chosen frame (none while paused); cheap when nothing is set
@@ -387,6 +427,22 @@ frame_cmd() {
 }
 window_cmd() {
   lock
+  WSCOPE='*'
+  if [ "${1:-}" = -a ]; then # window -a CLASS ...: act on one app's own settings
+    WSCOPE=$2; shift 2
+    safe_class "$WSCOPE" && [[ "$WSCOPE" != .* ]] || { echo "bad class name: $WSCOPE" >&2; return 1; }
+    case "${1:-status}" in
+      inherit) rm -rf -- "${WAPP:?}/$WSCOPE"; window_apply; apps_summary; return ;;
+      status) if [ -d "$WAPP/$WSCOPE" ]; then printf 'own effect=%s color=%s strength=%s/%s\n' "$(wcur effect | grep . || echo off)" "$(wcur color | grep . || echo off)" "$(wcur_strength effect)" "$(wcur_strength color)"; else echo inherits; fi; return ;;
+      off) app_seed "$WSCOPE"; : > "$(wpath effect)"; : > "$(wpath color)"; window_apply; apps_summary; return ;;
+      effect|color|strength) app_seed "$WSCOPE" ;;
+    esac
+  fi
+  window_cmd_run "$@"; local rc=$?
+  apps_summary
+  return $rc
+}
+window_cmd_run() {
   case "${1:-status}" in
     status) printf 'plugin=%s effect=%s color=%s strength=%s/%s target=%s\n' "$(window_plugin_loaded && echo loaded || { window_plugin_file >/dev/null && echo installed || echo missing; })" \
       "$(wcur effect | grep . || echo off)" "$(wcur color | grep . || echo off)" "$(wcur_strength effect)" "$(wcur_strength color)" "$(cat "$STATE_DIR/window-target" 2>/dev/null | paste -sd, | grep . || echo none)" ;;
@@ -395,7 +451,7 @@ window_cmd() {
         off) window_set "$1" off && window_apply ;;
         status) wcur "$1" | grep . || echo off ;;
         list) if [ "$1" = effect ]; then names -a; else color_names; fi ;;
-        *) echo "usage: omashaders window $1 [status|list|set NAME|off]" >&2; return 1 ;;
+        *) echo "usage: omashaders window [-a CLASS] $1 [status|list|set NAME|off]" >&2; return 1 ;;
       esac ;;
     strength) window_strength "$2" "$3" && window_apply ;;
     target) case "$2" in
@@ -403,11 +459,12 @@ window_cmd() {
         *) window_target "$2" "$3" && window_apply ;;
       esac ;;
     classes) open_classes; open_layers ;;
+    apps) cat "$STATE_DIR/window-apps" 2>/dev/null ;;
     apply|sync) window_apply ;;
     load) window_load ;;
     frame) frame_cmd "$2" "$3" ;;
-    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; window_apply; frame_cmd off ;;
-    *) echo "usage: omashaders window [status|effect|color|strength|target|classes|apply|load|off|frame]" >&2; return 1 ;;
+    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; rm -rf -- "${WAPP:?}"; window_apply; frame_cmd off ;;
+    *) echo "usage: omashaders window [-a CLASS inherit|off|status|effect|color|strength ...] [status|effect|color|strength|target|classes|apps|apply|load|off|frame]" >&2; return 1 ;;
   esac
 }
 step() { # step DIRECTION(1|-1) [-a]
@@ -508,7 +565,7 @@ case "${1:-}" in
       *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
   mix) case "$2" in effect|color) mix_cmd "$2" "$3" "$4" ;; *) echo "usage: omashaders mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount N]" >&2; exit 1 ;; esac ;;
-  window) window_cmd "$2" "$3" "$4" ;;
+  window) shift; window_cmd "$@" ;;
   power) power "$2" "$3" ;;
   status) current | grep . || echo off ;;
   off) turn_off ;;
