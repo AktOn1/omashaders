@@ -87,17 +87,18 @@ BarWidget {
   function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : (k === "win" ? winSec : comboSec)))) }
   function kindIcon(k) { return k === "screen" ? "󰍹" : (k === "color" ? "󰏘" : (k === "wall" ? "󰋩" : (k === "mouse" ? "󰍽" : (k === "win" ? "󰖲" : "󰽗")))) }
   function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : (k === "win" ? "Windows" : "Combos")))) }
-  readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "win", "combo"].filter(function(k) { return isShown(k) })
+  // every column is always drawn; the ticks in the header (showX) only choose what Surprise all / Clear all act on
+  readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "win", "combo"]
   readonly property int nVis: visibleKinds.length
   // effect menus that "off" and "surprise" act on; with only Combos shown they act on all three
   readonly property var effectKinds: {
-    var k = visibleKinds.filter(function(x) { return x !== "combo" })
+    var k = visibleKinds.filter(function(x) { return x !== "combo" && isShown(x) })
     return k.length > 0 ? k : ["screen", "color", "wall", "mouse"]
   }
-  readonly property int nEffectVis: visibleKinds.filter(function(x) { return x !== "combo" }).length
+  readonly property int nEffectVis: effectKinds.length
   readonly property real comboWeight: 1
   readonly property real colorWeight: 0.85
-  readonly property real widthUnits: (showScreen ? 1 : 0) + (showColor ? colorWeight : 0) + (showWall ? 1 : 0) + (showMouse ? 1 : 0) + (showWin ? 1 : 0) + (showCombo ? comboWeight : 0)
+  readonly property real widthUnits: 4 + colorWeight + comboWeight
   readonly property string focusKind: visibleKinds.indexOf(activeKind) >= 0 ? activeKind : (visibleKinds[0] || "screen")
   readonly property var activeSec: secOf(focusKind)
 
@@ -106,17 +107,13 @@ BarWidget {
     if (k === undefined) k = showColor
     if (x === undefined) x = showWin
     if (!s && !w && !m && !c && !k && !x) return
-    var before = { screen: showScreen, color: showColor, wall: showWall, mouse: showMouse, combo: showCombo, win: showWin }
     showScreen = s
     showColor = k
     showWall = w
     showMouse = m
     showCombo = c
     showWin = x
-    ;["screen", "color", "wall", "mouse", "win", "combo"].forEach(function(kind) {
-      if (isShown(kind) && !before[kind]) { secOf(kind).sync(); activeKind = kind }
-    })
-    if (persist) writeFile(sectionsFile, visibleKinds.join(" "))
+    if (persist) writeFile(sectionsFile, ["screen", "color", "wall", "mouse", "win", "combo"].filter(isShown).join(" "))
   }
   function toggleSection(kind) {
     setShown(kind === "screen" ? !showScreen : showScreen,
@@ -1551,32 +1548,38 @@ BarWidget {
   function perfName(n) { return n.indexOf("custom-") === 0 ? "custom" : n }
   readonly property var activeNow: {
     var a = []
-    function add(key, text) { a.push({ key: key, text: text }) }
+    function add(sec, key, text) { a.push({ sec: sec, key: key, text: text }) }
     if (shaderOn) {
-      add("screen", "Screen " + current + " " + fxStrength + "%" + costTag("screen", current))
-      if (mixSecondOf("screen") !== "") add("screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2))
+      add("screen", "screen", current + " " + fxStrength + "%" + costTag("screen", current))
+      if (mixSecondOf("screen") !== "") add("screen", "screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2))
     }
     if (colorOn) {
-      add("color", "Color " + colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)))
-      if (mixSecondOf("color") !== "") add("color2", (mixColorMode === "blend" ? "~ " : "+ ") + color2 + " " + mixColorAmt + "%")
+      add("color", "color", colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)))
+      if (mixSecondOf("color") !== "") add("color", "color2", (mixColorMode === "blend" ? "~ " : "+ ") + color2 + " " + mixColorAmt + "%")
     }
-    if (wallOn) add("wall", "Wallpaper " + wallLabel(wallShown) + costTag("wall", wallShown))
-    if (mouseOn) add("mouse", "Cursor " + mouseCurrent + costTag("cursor", mouseCurrent))
+    if (wallOn) {
+      add("wall", "wall", wallLabel(wallShown) + costTag("wall", wallShown))
+      if (mixSecondOf("wall") !== "") add("wall", "wall2", (wallMixMode === "blend" ? "~ " : "+ ") + wallLabel(wall2) + " " + wallMixAmt + "%" + costTag("wall", wall2))
+    }
+    if (mouseOn) add("mouse", "mouse", mouseCurrent + costTag("cursor", mouseCurrent))
     var gm = winMix["*"] || { fx2: "", col2: "", fxMode: "stack", fxAmt: 100, colMode: "stack", colAmt: 100 }
-    if (winEffectOn) add("winfx", "Windows " + winEffect + costTag("win", winEffect))
-    if (winEffectOn && gm.fx2 !== "") add("winfx2", "Windows " + (gm.fxMode === "blend" ? "~ " : "+ ") + gm.fx2 + " " + gm.fxAmt + "%")
-    if (winColorOn) add("wincol", "Windows " + winColor + costTag("wincolor", perfName(winColor)))
-    if (winColorOn && gm.col2 !== "") add("wincol2", "Windows " + (gm.colMode === "blend" ? "~ " : "+ ") + gm.col2 + " " + gm.colAmt + "%")
-    if (winFrameOn) add("winframe", "Frame " + winFrame)
-    Object.keys(winApps).forEach(function(c) { add("app:" + c, (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c)) })
+    if (winEffectOn) add("win", "winfx", "effect " + winEffect + costTag("win", winEffect))
+    if (winEffectOn && gm.fx2 !== "") add("win", "winfx2", (gm.fxMode === "blend" ? "~ " : "+ ") + gm.fx2 + " " + gm.fxAmt + "%")
+    if (winColorOn) add("win", "wincol", "color " + winColor + costTag("wincolor", perfName(winColor)))
+    if (winColorOn && gm.col2 !== "") add("win", "wincol2", (gm.colMode === "blend" ? "~ " : "+ ") + gm.col2 + " " + gm.colAmt + "%")
+    if (winFrameOn) add("win", "winframe", "frame " + winFrame)
+    Object.keys(winApps).forEach(function(c) { add("win", "app:" + c, (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c)) })
     return a
   }
+  readonly property int secH: Math.max(screenSec.implicitHeight, colorSec.implicitHeight, wallSec.implicitHeight, mouseSec.implicitHeight, winSec.implicitHeight, comboSec.implicitHeight)
+  function chipsOf(k) { return activeNow.filter(function(c) { return c.sec === k }) }
   function removeActive(key) {
     if (key === "screen") offIn("screen")
     else if (key === "screen2") Quickshell.execDetached([script, "mix", "effect", "off"])
     else if (key === "color") offIn("color")
     else if (key === "color2") Quickshell.execDetached([script, "mix", "color", "off"])
     else if (key === "wall") setWall("", true)
+    else if (key === "wall2") wallMixSet("")
     else if (key === "mouse") offIn("mouse")
     else if (key === "winfx") winRun(["effect", "off"])
     else if (key === "wincol") winRun(["color", "off"])
@@ -1766,7 +1769,7 @@ BarWidget {
   }
   function handleText(t) {
     var k = focusKind, s = secOf(k)
-    if (t === "A") { if (showWin && winPlugin !== "missing") { activeKind = "win"; toggleWinPicker() } }
+    if (t === "A") { if (winPlugin !== "missing") { activeKind = "win"; toggleWinPicker() } }
     else if (winPickOpen) { if (t === "q") close(); else if (t === "g") winSec.pickerIdx = 0; else if (t === "G") winSec.pickerIdx = winAppItems.length - 1 }
     else if (t === "/") focusSearch()
     else if (t === "q") close()
@@ -1780,7 +1783,7 @@ BarWidget {
     else if (t === "G") s.jump(true)
     else if (t === "f") toggleFav(k)
     else if (t === "F") saveCombo()
-    else if (t === "m") toggleSection("combo")
+    else if (t === "m") activeKind = "combo"
     else if (t === "s") toggleSection("screen")
     else if (t === "C") toggleSection("color")
     else if (t === "w") toggleSection("wall")
@@ -1803,10 +1806,10 @@ BarWidget {
     else if (t === "D") resetMix()
     else if (t === "\b" || t === "\x7f") clearMix()
     else if (t === "u") {
-      if (focusKind === "wall" && showWall && wallReactorOn) wallSec.focusTarget()
-      else if (showColor) { activeKind = "color"; colorSec.focusHex() }
+      if (focusKind === "wall" && wallReactorOn) wallSec.focusTarget()
+      else { activeKind = "color"; colorSec.focusHex() }
     }
-    else if (t === "U") { if (showColor) toggleCustomFav() }
+    else if (t === "U") toggleCustomFav()
     else if (t >= "1" && t <= "9") s.gotoCat(parseInt(t) - 1)
   }
 
@@ -2058,6 +2061,7 @@ BarWidget {
     property int strengthDefault: 100
     property string strengthLabel: "Strength"
     property var alsoSaved: []
+    property var chips: []
     property bool hasMix: false
     property bool mixLive: false
     property string mixName: ""
@@ -2117,7 +2121,61 @@ BarWidget {
     signal acted(string id)
     signal focusRequested()
 
-    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 3 * (rowH + Style.space(4)) : 0)
+    readonly property int baseH: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 3 * (rowH + Style.space(4)) : 0)
+    implicitHeight: baseH + Style.space(8) + chipFlow.implicitHeight
+
+    Flow {
+      id: chipFlow
+      visible: sec.visible
+      y: sec.baseH + Style.space(8)
+      width: sec.width
+      spacing: Style.space(4)
+      leftPadding: Style.space(10)
+      rightPadding: Style.space(4)
+      Text {
+        height: Style.space(24)
+        verticalAlignment: Text.AlignVCenter
+        textFormat: Text.PlainText
+        text: sec.chips.length > 0 ? "ON:" : "ON: nothing"
+        opacity: 0.55
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body * 0.85
+        font.bold: true
+      }
+      Repeater {
+        model: sec.chips
+        delegate: Rectangle {
+          id: chip
+          required property var modelData
+          width: Math.min(chipText.implicitWidth + Style.space(20), sec.width - Style.space(18))
+          height: Style.space(24)
+          radius: Style.space(12)
+          color: chipMouse.containsMouse ? root.fgA(0.22) : root.fgA(0.09)
+          Text {
+            id: chipText
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(10)
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(10)
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: chip.modelData.text + "  \u2715"
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.9
+          }
+          MouseArea {
+            id: chipMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.removeActive(chip.modelData.key)
+          }
+        }
+      }
+    }
 
     function indexOfSaved(ci) {
       if (saved === "" || ci < 0 || ci >= cats.length) return -1
@@ -2988,7 +3046,7 @@ BarWidget {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 10 - 1) / 10
+          readonly property real cell: (width - spacing * 9 - 1) / 9
 
           MenuRow {
             width: header.cell
@@ -3035,13 +3093,6 @@ BarWidget {
           MenuRow {
             width: header.cell
             toggle: true
-            checked: root.showCombo
-            label: (root.showCombo ? root.boxOn : root.boxOff) + " " + root.kindIcon("combo") + " Combos (m)"
-            onClicked: root.toggleSection("combo")
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
             checked: root.includeAnimated
             dim: !root.showScreen
             label: (root.includeAnimated ? root.boxOn : root.boxOff) + " 󰙴 Animated (a)"
@@ -3072,7 +3123,7 @@ BarWidget {
 
           TextField {
             id: searchField
-            width: searchRow.width - matchText.width - searchRow.spacing
+            width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
             height: searchRow.height
             verticalPadding: Style.space(2)
             placeholderText: "/  filter every column"
@@ -3088,6 +3139,20 @@ BarWidget {
               else if (event.key === Qt.Key_Tab) { root.cycleKind(1); event.accepted = true }
               else if (event.key === Qt.Key_Backtab) { root.cycleKind(-1); event.accepted = true }
             }
+          }
+          Text {
+            id: randHint
+            width: Style.space(330)
+            height: searchRow.height
+            verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: Text.AlignRight
+            textFormat: Text.PlainText
+            elide: Text.ElideLeft
+            text: "ticks above = what Surprise all / Clear all use"
+            opacity: 0.5
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.85
           }
           Text {
             id: matchText
@@ -3114,7 +3179,7 @@ BarWidget {
 
           SectionMenu {
             id: screenSec
-            visible: root.showScreen
+            chips: root.chipsOf("screen")
             width: secRow.secWidth
             title: "Screen"
             icon: root.kindIcon("screen")
@@ -3146,15 +3211,14 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showScreen && (root.showColor || root.showWall || root.showMouse || root.showWin || root.showCombo)
             width: 1
-            height: screenSec.implicitHeight
+            height: root.secH
             color: root.fgA(0.2)
           }
 
           SectionMenu {
             id: colorSec
-            visible: root.showColor
+            chips: root.chipsOf("color")
             width: Math.floor(secRow.secWidth * root.colorWeight)
             title: "Color"
             icon: root.kindIcon("color")
@@ -3196,15 +3260,14 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showColor && (root.showWall || root.showMouse || root.showWin || root.showCombo)
             width: 1
-            height: screenSec.implicitHeight
+            height: root.secH
             color: root.fgA(0.2)
           }
 
           SectionMenu {
             id: wallSec
-            visible: root.showWall
+            chips: root.chipsOf("wall")
             width: secRow.secWidth
             title: "Wallpaper"
             icon: root.kindIcon("wall")
@@ -3246,15 +3309,14 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showWall && (root.showMouse || root.showWin || root.showCombo)
             width: 1
-            height: screenSec.implicitHeight
+            height: root.secH
             color: root.fgA(0.2)
           }
 
           SectionMenu {
             id: mouseSec
-            visible: root.showMouse
+            chips: root.chipsOf("mouse")
             width: secRow.secWidth
             title: "Cursor"
             icon: root.kindIcon("mouse")
@@ -3275,15 +3337,14 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showMouse && (root.showWin || root.showCombo)
             width: 1
-            height: screenSec.implicitHeight
+            height: root.secH
             color: root.fgA(0.2)
           }
 
           SectionMenu {
             id: winSec
-            visible: root.showWin
+            chips: root.chipsOf("win")
             width: secRow.secWidth
             title: "Windows"
             icon: root.kindIcon("win")
@@ -3323,15 +3384,13 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showWin && root.showCombo
             width: 1
-            height: screenSec.implicitHeight
+            height: root.secH
             color: root.fgA(0.2)
           }
 
           SectionMenu {
             id: comboSec
-            visible: root.showCombo
             width: Math.floor(secRow.secWidth * root.comboWeight)
             title: "Combos"
             icon: root.kindIcon("combo")
@@ -3365,45 +3424,10 @@ BarWidget {
               verticalAlignment: Text.AlignVCenter
               textFormat: Text.PlainText
               visible: root.paused
-              text: "PAUSED (p to resume) ·"
+              text: "PAUSED (p to resume)"
               color: root.fg
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
-            }
-            Text {
-              height: Style.space(24)
-              verticalAlignment: Text.AlignVCenter
-              text: root.activeNow.length > 0 ? "Active now (" + root.activeNow.length + "), click to remove:" : "Active now: nothing"
-              color: root.fg
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-            }
-            Repeater {
-              model: root.activeNow
-              delegate: Rectangle {
-                id: chip
-                required property var modelData
-                width: chipText.implicitWidth + Style.space(20)
-                height: Style.space(24)
-                radius: Style.space(12)
-                color: chipMouse.containsMouse ? root.fgA(0.22) : root.fgA(0.09)
-                Text {
-                  id: chipText
-                  anchors.centerIn: parent
-                  textFormat: Text.PlainText
-                  text: chip.modelData.text + "  ✕"
-                  color: root.fg
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-                MouseArea {
-                  id: chipMouse
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.removeActive(chip.modelData.key)
-                }
-              }
             }
           }
           MenuRow {

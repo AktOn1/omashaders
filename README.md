@@ -27,7 +27,7 @@ Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy she
 
 ## First run
 
-1. Click the monitor icon in the bar. A menu with up to six columns opens: **Screen**, **Color**, **Wallpaper**, **Cursor**, **Windows** and **Combos**. Tick the ones you want at the top; ticked menus sit side by side and your choice is remembered.
+1. Click the monitor icon in the bar. A menu with six columns opens, all always shown: **Screen**, **Color**, **Wallpaper**, **Cursor**, **Windows** and **Combos**. The ticks at the top do not hide anything: they only choose which columns **Surprise all** and **Clear all** act on, and your choice is remembered.
 2. Move with `h j k l` or the arrow keys. Moving onto an effect with the keys previews it live; hovering with the mouse only highlights it; hold `Shift` while hovering to preview, and the previous setting comes back when you release Shift or move off the item (a click keeps it). Categories (left column) are never selected by hovering; click one.
 3. `Enter` keeps the effect and closes, `Space` keeps it and stays open, a click keeps it and stays open, `Esc` puts everything back as it was.
 4. Pick an effect and a colour together: the effect runs first, then the colour grade is applied to its result (for example `crt` + `gameboy` is a CRT look in Game Boy greens).
@@ -53,10 +53,10 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 | `f` | favourite (each menu has its own list) |
 | `F` | save the current Screen + Color + Wallpaper + Cursor combination as a combo (`m` shows the Combos menu) |
 
-| `r` / `R` | Surprise me in the focused menu / in every ticked menu |
-| `o` / `O` | off in the focused menu / in every ticked menu (the Clear all button in the header row does the same) |
+| `r` / `R` | Surprise me in the focused menu / in every ticked column |
+| `o` / `O` | off in the focused menu / in every ticked column (the Clear all button in the header row does the same) |
 | `P` | cost report: what each effect costs, written to the state folder and shown as a notification |
-| `s` `C` `w` `c` `W` `m` | tick Screen / Color / Wallpaper / Cursor / Windows / Combos |
+| `s` `C` `w` `c` `W` | tick Screen / Color / Wallpaper / Cursor / Windows for Surprise all / Clear all (`m` jumps to Combos) |
 | `A` | Windows column: open the app picker (`j` `k` choose, `Enter` edits that app, `Esc` closes) |
 | `a` | include the animated (heavy) screen effects |
 | `x` | cursor effects only while Shift is held |
@@ -90,7 +90,7 @@ Effects that move (grain, scan-sweep, vhs, heat-haze, glitch, hologram, matrix, 
 
 ### What is on, and what it costs (1.14)
 
-Under the menus a line lists everything that is active right now (screen and its mix, colour and its mix, wallpaper, cursor, window effect, window colour, frame, and each app or panel with its own window setting) as clickable chips: **click a chip to switch just that one off** (an app's chip removes its own setting, so it follows All windows again; clearing the main screen or colour chip also clears its mix). Windows shaders on All windows also reach shell panels, so this menu and other plugin flyouts are shaded too. While the plugin runs it also keeps a small log, `perf.jsonl` in the state folder: every 4 seconds while an effect is on (every 30 s otherwise) it records which layers are on and how much GPU `Hyprland` and the shell use (per process, from `nvidia-smi pmon`, so other apps do not count), their CPU use, VRAM, power and temperature. Nothing leaves the machine.
+At the bottom of each column an **ON:** row lists what is active in that column (Screen: effect and its mix; Color: grade and its mix; Wallpaper: effect and its mix; Cursor; Windows: effect, colour, frame, and each app or panel with its own window setting) as clickable chips: **click a chip to switch just that one off** (an app's chip removes its own setting, so it follows All windows again; clearing the main screen or colour chip also clears its mix). Windows shaders on All windows also reach shell panels, so this menu and other plugin flyouts are shaded too. While the plugin runs it also keeps a small log, `perf.jsonl` in the state folder: every 4 seconds while an effect is on (every 30 s otherwise) it records which layers are on and how much GPU `Hyprland` and the shell use (per process, from `nvidia-smi pmon`, so other apps do not count), their CPU use, VRAM, power and temperature. Nothing leaves the machine.
 
     omashaders perf report [--days N] [--notify]   cost per effect against the idle baseline, heavy ones first, plus crashes
     omashaders perf bench [--kinds screen,color,wall] [--only a,b]   try effects one by one (about 5 s each) and measure; your own effects are restored afterwards
