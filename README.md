@@ -46,7 +46,7 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 | `Esc`, `q` | clear the filter, or undo and close |
 | `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen, Color, Wallpaper or Cursor menu; wallpaper and cursor strength is how visible the effect is over the real wallpaper / screen) |
 | `v` `V` | wallpaper effect **Speed** -/+ 10 % (slider under the Mix row: 0 % freezes the animation, 100 % as made, up to 300 % three times faster) |
-| `z` `Z` | wallpaper effect **Zoom** -/+ 10 % (25 % to 300 %: how large the effect is drawn; the wallpaper picture inside it scales too. A stacked second effect is not zoomed again, it follows the first) |
+| `z` `Z` | wallpaper effect **Zoom** -/+ 10 % (25 % to 300 %: how large the effect is drawn; the wallpaper picture under it keeps its size. A stacked second effect is not zoomed again, it follows the first) |
 | `(` `)` | wallpaper mouse reaction -/+ 10 % (the **Mouse reaction** slider under the Wallpaper strength slider: 0 % ignores the pointer, 100 % is how the effect was made, up to 200 % exaggerates it). The slider's `Colour range` and `Reacts to #` rows belong to **Colour reactor**; `u` on the Wallpaper menu focuses its hex field, **Pick from screen** is an eyedropper (`hyprpicker`) |
 | `Ctrl+Enter`, `Ctrl+click` | mix a second effect (Screen, Wallpaper, Windows) or grade (Color, Windows) with the first, see Mixing below. Plain `Enter` / click replaces both |
 | `t`, `,` `.`, `<` `>`, `D`, `Backspace` | with a mix on: stack / blend, mix amount -/+ 5 % and -/+ 1 %, amount back to its start value, remove the second |

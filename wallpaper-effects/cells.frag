@@ -26,7 +26,7 @@ vec2 coverUV(vec2 uv) {
   vec2 s = ra > ia ? vec2(1.0, ia / ra) : vec2(ra / ia, 1.0);
   return (uv - 0.5) * s + 0.5;
 }
-vec3 wall(vec2 uv) { return texture(src, coverUV(clamp(uv, 0.0, 1.0))).rgb; }
+vec3 wall(vec2 uv) { return texture(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.05) + 0.5, 0.0, 1.0))).rgb; } // the picture stays unzoomed; only the effect scales
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
