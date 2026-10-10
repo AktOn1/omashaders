@@ -46,20 +46,20 @@ vec3 flies(vec2 p, vec2 mp, float sc, float seed, float t, float asp) {
       float h = hash(cell + seed);
       if (h < 0.55) continue;
       float h2 = hash(cell + seed + 4.3), h3 = hash(cell + seed + 8.9), h4 = hash(cell + seed + 1.1);
-      vec2 c = cell + 0.5 + 0.42 * vec2(sin(t * (0.23 + h2 * 0.30) + h * 40.0) + 0.5 * sin(t * (0.61 + h3 * 0.4) + h2 * 30.0),
-                                        sin(t * (0.19 + h3 * 0.30) + h2 * 50.0) + 0.5 * sin(t * (0.53 + h4 * 0.4) + h3 * 20.0));
+      vec2 c = cell + 0.5 + 0.42 * vec2(sin(t * 0.5 * (0.23 + h2 * 0.30) + h * 40.0) + 0.5 * sin(t * 0.5 * (0.61 + h3 * 0.4) + h2 * 30.0),
+                                        sin(t * 0.5 * (0.19 + h3 * 0.30) + h2 * 50.0) + 0.5 * sin(t * 0.5 * (0.53 + h4 * 0.4) + h3 * 20.0));
       vec2 w = c / sc;
       vec2 away = (w - mp) * vec2(asp, 1.0);
       float dm = length(away);
       c += normalize(away + 1e-4) * smoothstep(0.20, 0.0, dm) * 0.7 * sc * 0.1;
       vec2 dd = g - c;
       float d2 = dot(dd, dd);
-      float period = 2.4 + 2.2 * h4;
+      float period = 4.0 + 3.5 * h4;
       float ph = fract(t / period + h * 7.0);
       float blink = smoothstep(0.0, 0.12, ph) * smoothstep(0.55, 0.20, ph);
-      blink = blink * blink * (0.55 + 0.45 * sin(t * 18.0 + h * 90.0) * smoothstep(0.3, 0.1, ph) + 0.45);
-      float core = exp(-d2 * 90.0 / (sc * 0.11));
-      float halo = exp(-d2 * 9.0 / (sc * 0.11));
+      blink = blink * blink * (0.55 + 0.45 * sin(t * 9.0 + h * 90.0) * smoothstep(0.3, 0.1, ph) + 0.45);
+      float core = exp(-d2 * 240.0 / (sc * 0.11));
+      float halo = exp(-d2 * 26.0 / (sc * 0.11));
       vec3 tint = mix(vec3(0.55, 1.0, 0.22), vec3(0.78, 1.0, 0.35), h3);
       acc += blink * (tint * halo * 0.55 + vec3(0.72, 1.0, 0.50) * core * 1.2);
     }
@@ -75,7 +75,7 @@ void main() {
   vec3 col = wall(uv) * 0.62;
   col = mix(col, col * vec3(0.75, 0.95, 0.9), 0.5);
   vec3 glow = flies(p, vec2(m.x, m.y), 6.0, 0.0, time, asp)
-            + 0.8 * flies(p + 3.7, vec2(m.x, m.y), 10.0, 17.0, time * 1.15, asp);
+            + 0.8 * flies(p + 3.7, vec2(m.x, m.y), 10.0, 17.0, time, asp);
   col += glow * vec3(0.9, 1.0, 0.8);
   col = mix(col, col * (1.0 - 0.45 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.0) * 1.2), 1.0);
   fragColor = vec4(col, 1.0) * qt_Opacity;
