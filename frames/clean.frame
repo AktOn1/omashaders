@@ -1,0 +1,9 @@
+# category: Shadow
+# desc: No border, rounded corners and a soft shadow
+rounding=12
+border_size=0
+shadow_range=34
+shadow_power=3
+shadow_color=000000bb
+shadow_offset=0,8
+shadow_inactive=00000066

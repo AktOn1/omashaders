@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Cyan neon glow around the active window
+rounding=10
+border_size=2
+border_colors=33ccffff,7df9ffff
+border_angle=45
+shadow_range=42
+shadow_power=3
+shadow_color=33ccffcc
+shadow_inactive=00000000

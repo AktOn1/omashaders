@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Terminal-green glow
+rounding=8
+border_size=2
+border_colors=00ff99ff,7dffc4ff
+border_angle=45
+shadow_range=40
+shadow_power=3
+shadow_color=00ff99bb
+shadow_inactive=00000000

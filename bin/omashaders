@@ -5,6 +5,7 @@
 #        | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
 #        | mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset] (a second effect/colour mixed into the first)
 #        | window [status|effect|color|strength|target|classes|apply|load|off] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
+#        | window frame [status|list|set NAME|off|reload] (shadow, glow and border presets for all windows: Hyprland's own options, no plugin needed)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
@@ -20,6 +21,7 @@ DIR="$ROOT/shaders"
 CDIR="$ROOT/colors"
 MDIR="$ROOT/mouse-effects"
 BDIR="$ROOT/cursor-shaders"
+FRDIR="$ROOT/frames"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
 STATE="$STATE_DIR/current"
 names() {
@@ -101,6 +103,7 @@ mix_args() { # effect|color FLAG SECOND_NAME: sets MARGS (compose-shader flags) 
 # apply the current effect and colour layers: none, or one built shader file (bin/compose-shader)
 apply() {
   window_apply >/dev/null 2>&1 || true
+  frame_apply >/dev/null 2>&1 || true
   local fx col file="" out args=() fx2 col2 sig1="" sig2="" f2="" c2=""
   fx=$(current); col=$(current_color)
   [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
@@ -346,6 +349,26 @@ window_strength() { # effect|color [PERCENT|+N|-N|reset]
   [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
   echo "$val" > "$STATE_DIR/window-strength-$kind"
 }
+# ---- window frames: shadow / glow / border presets through Hyprland's own options (bin/frame-apply keeps the original look) ----
+frame_apply() { # make Hyprland match the chosen frame (none while paused); cheap when nothing is set
+  local name=""
+  is_disabled || name=$(cat "$STATE_DIR/window-frame" 2>/dev/null)
+  [ -n "$name" ] || [ -f "$STATE_DIR/frame-base.json" ] || return 0
+  python3 "$ROOT/bin/frame-apply" "$STATE_DIR" "$FRDIR" "$name"
+}
+frame_names() { for f in "$FRDIR"/*.frame; do [ -e "$f" ] && basename "$f" .frame; done; }
+frame_cmd() {
+  case "${1:-status}" in
+    status) cat "$STATE_DIR/window-frame" 2>/dev/null | grep . || echo off ;;
+    list) frame_names ;;
+    off) mkdir -p "$STATE_DIR"; : > "$STATE_DIR/window-frame"; frame_apply ;;
+    set) [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] && [ -f "$FRDIR/$2.frame" ] || { echo "unknown frame: $2" >&2; return 1; }
+         mkdir -p "$STATE_DIR"; echo "$2" > "$STATE_DIR/window-frame"; frame_apply ;;
+    reload|sync) [ -n "$(cat "$STATE_DIR/window-frame" 2>/dev/null)" ] || return 0
+         [ "$1" = reload ] && rm -f "$STATE_DIR/frame-base.json"; frame_apply ;;
+    *) echo "usage: omashaders window frame [status|list|set NAME|off|reload|sync]" >&2; return 1 ;;
+  esac
+}
 window_cmd() {
   lock
   case "${1:-status}" in
@@ -366,8 +389,9 @@ window_cmd() {
     classes) open_classes ;;
     apply|sync) window_apply ;;
     load) window_load ;;
-    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; window_apply ;;
-    *) echo "usage: omashaders window [status|effect|color|strength|target|classes|apply|load|off]" >&2; return 1 ;;
+    frame) frame_cmd "$2" "$3" ;;
+    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; window_apply; frame_cmd off ;;
+    *) echo "usage: omashaders window [status|effect|color|strength|target|classes|apply|load|off|frame]" >&2; return 1 ;;
   esac
 }
 step() { # step DIRECTION(1|-1) [-a]
@@ -394,6 +418,12 @@ case "${1:-}" in
       n=$(basename "$f" .frag)
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\tstatic\t%s\t%s\tcolor\t%s\n' "$n" "${cat:-Other}" "$desc" "$(default_strength "$f")"
+    done
+    for f in "$FRDIR"/*.frame; do # window frames (shadow, glow, border)
+      [ -e "$f" ] || continue
+      n=$(basename "$f" .frame); kind=static; grep -q '^spin=' "$f" && kind=motion
+      cat=$(sed -n 's|^# category: *||p' "$f" | head -1); desc=$(sed -n 's|^# desc: *||p' "$f" | head -1)
+      printf '%s\t%s\t%s\t%s\tframe\n' "$n" "$kind" "${cat:-Other}" "$desc"
     done
     for f in "$MDIR"/*.frag; do
       [ -e "$f" ] || continue

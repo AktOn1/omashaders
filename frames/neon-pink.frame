@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Hot pink neon glow
+rounding=10
+border_size=2
+border_colors=ff2fd0ff,ff7ae6ff
+border_angle=45
+shadow_range=42
+shadow_power=3
+shadow_color=ff2fd0cc
+shadow_inactive=00000000

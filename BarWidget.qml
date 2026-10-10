@@ -50,6 +50,7 @@ BarWidget {
   readonly property string mixColorFile: stateDir + "/mix-color"
   readonly property string winEffectFile: stateDir + "/window-effect"
   readonly property string winColorFile: stateDir + "/window-color"
+  readonly property string winFrameFile: stateDir + "/window-frame"
   readonly property string winTargetFile: stateDir + "/window-target"
   readonly property string winFxStrengthFile: stateDir + "/window-strength-effect"
   readonly property string winColStrengthFile: stateDir + "/window-strength-color"
@@ -555,8 +556,10 @@ BarWidget {
     function onRawEvent(event) {
       if (event.name === "configreloaded" && (root.shaderOn || root.colorOn)) reapplyTimer.restart()
       else if (event.name === "openwindow" && root.winAll && (root.winEffectOn || root.winColorOn)) winSyncTimer.restart()
+      if (event.name === "configreloaded" && root.winFrameOn) frameReloadTimer.restart()
     }
   }
+  Timer { id: frameReloadTimer; interval: 500; onTriggered: Quickshell.execDetached([root.script, "window", "frame", "reload"]) }
   Timer { id: winSyncTimer; interval: 400; onTriggered: Quickshell.execDetached([root.script, "window", "sync"]) }
   Timer { id: reapplyTimer; interval: 400; onTriggered: root.screenStep("reapply") }
 
@@ -680,12 +683,21 @@ BarWidget {
   property string winPlugin: "unknown"
   property string winOriginFx: ""
   property string winOriginCol: ""
+  property string winFrame: ""
+  property string winOriginFrame: ""
   property bool winPreviewed: false
   property string winPending: ""
   readonly property bool winEffectOn: winEffect !== ""
   readonly property bool winColorOn: winColor !== ""
+  readonly property bool winFrameOn: winFrame !== ""
+  readonly property bool winAnyOn: winEffectOn || winColorOn || winFrameOn
+  readonly property var frameEntries: allEntries.filter(function(e) { return e.section === "frame" })
+  function winFrameItem(e) { return { id: "f:" + e.name, label: e.name, desc: e.desc, hint: e.motion ? "spins" : "" } }
+  readonly property var winFrameCats: catList(frameEntries, ["Shadow", "Glow", "Border", "Spin"]).map(function(c) {
+    return { id: "f:" + c, label: "Frame · " + c, items: frameEntries.filter(function(e) { return e.cat === c }).map(winFrameItem), note: "" }
+  })
   readonly property bool winAll: winTargets.indexOf("*") >= 0
-  readonly property string winPart: (winSec.curCat && String(winSec.curCat.id).indexOf("c:") === 0) ? "color" : "effect"
+  readonly property string winPart: (winSec.curCat && String(winSec.curCat.id).indexOf("f:") === 0) ? "frame" : ((winSec.curCat && String(winSec.curCat.id).indexOf("c:") === 0) ? "color" : "effect")
   readonly property string installCmd: "hyprpm update && hyprpm add https://github.com/ManofJELLO/HyprWindowShade && hyprpm enable HyprWindowShade"
 
   function winFxItem(e) { return { id: "e:" + e.name, label: e.name, desc: e.desc, hint: e.animated ? "heavy" : "" } }
@@ -704,7 +716,7 @@ BarWidget {
     if (winPlugin === "missing") return [
       { id: "setup", label: "Setup needed", items: [], note: "Window shaders need the HyprWindowShade plugin, which is not installed. In a terminal run:\n\nhyprpm update\nhyprpm add https://github.com/ManofJELLO/HyprWindowShade\nhyprpm enable HyprWindowShade\n\nThen reopen this menu. Pick the next row to copy the commands." },
       { id: "@copy", label: "Copy install commands", action: true }
-    ]
+    ].concat(winFrameCats).concat([{ id: "@off", label: "Off", action: true }])
     var out = [{ id: "apps", label: "Apps", items: winAppItems, note: "" }]
     catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
       var items = screenEntries.filter(function(e) { return e.cat === c && winShownFx(e) }).map(winFxItem)
@@ -713,21 +725,27 @@ BarWidget {
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
       out.push({ id: "c:" + c, label: "Color · " + c, items: colorEntries.filter(function(e) { return e.cat === c }).map(winColItem), note: "" })
     })
+    winFrameCats.forEach(function(c) { out.push(c) })
     out.push({ id: "@off", label: "Off", action: true })
     return out
   }
   readonly property var winMarks: {
     var out = winTargets.map(function(t) { return "t:" + t })
     if (winColorOn) out.push("c:" + winColor)
+    if (winFrameOn) out.push("f:" + winFrame)
     return out
   }
 
   function winRun(args) { Quickshell.execDetached([root.script, "window"].concat(args)) }
   function applyWinPart(kind, name) { winRun(name === "" ? [kind, "off"] : [kind, "set", name]) }
-  function applyWin(id) { applyWinPart(id.charAt(0) === "e" ? "effect" : "color", id.slice(2)) }
+  function applyWinFrame(name) { winRun(name === "" ? ["frame", "off"] : ["frame", "set", name]) }
+  function applyWin(id) {
+    if (id.charAt(0) === "f") applyWinFrame(id.slice(2))
+    else applyWinPart(id.charAt(0) === "e" ? "effect" : "color", id.slice(2))
+  }
   function previewWin(it) {
     if (!it || it.id.charAt(1) !== ":" || it.id.charAt(0) === "t") { winTimer.stop(); return }
-    if (it.id === "e:" + winEffect || it.id === "c:" + winColor) { winTimer.stop(); return }
+    if (it.id === "e:" + winEffect || it.id === "c:" + winColor || it.id === "f:" + winFrame) { winTimer.stop(); return }
     winPending = it.id
     winPreviewed = true
     winTimer.restart()
@@ -745,6 +763,7 @@ BarWidget {
     else {
       applyWin(it.id)
       if (it.id.charAt(0) === "e") winOriginFx = it.id.slice(2)
+      else if (it.id.charAt(0) === "f") winOriginFrame = it.id.slice(2)
       else winOriginCol = it.id.slice(2)
       winPreviewed = false
     }
@@ -756,6 +775,7 @@ BarWidget {
     winPreviewed = false
     applyWinPart("effect", winOriginFx)
     applyWinPart("color", winOriginCol)
+    applyWinFrame(winOriginFrame)
   }
   function refreshWin() { winStatus.running = true; winLister.running = true }
   Process {
@@ -790,6 +810,14 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: root.winColor = String(text() || "").trim()
     onLoadFailed: root.winColor = ""
+  }
+  FileView {
+    path: root.winFrameFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.winFrame = String(text() || "").trim()
+    onLoadFailed: root.winFrame = ""
   }
   FileView {
     path: root.winTargetFile
@@ -1335,6 +1363,7 @@ BarWidget {
       winPreviewed = false
       winOriginFx = winEffect
       winOriginCol = winColor
+      winOriginFrame = winFrame
       refreshWin()
       hoverPreviewing = false
       hoverItem = null
@@ -1481,11 +1510,12 @@ BarWidget {
     resolver.running = true
     wallStep("status")
     winRun(["apply"])
+    winRun(["frame", "sync"])
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.winEffectFile, root.winColorFile, root.winTargetFile, root.winFxStrengthFile, root.winColStrengthFile,
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winFxStrengthFile, root.winColStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -1498,11 +1528,11 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.barGlyph
-    active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn || root.winEffectOn || root.winColorOn)
+    active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn || root.winAnyOn)
     tooltipText: "OmaShaders" + (root.paused ? " (paused)" : "") + "\nScreen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off")
                  + "\nColor: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
-                 + "\nWindows: " + ((root.winEffectOn || root.winColorOn) ? [root.winEffect, root.winColor].filter(function(x) { return x !== "" }).join(" + ") : "off")
+                 + "\nWindows: " + (root.winAnyOn ? [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus.replace(/[<>&]/g, "?") : "")
                  + "\nclick: menu (hjkl) · right-click: pause / resume effects · middle-click: next wallpaper · scroll: step"
@@ -2276,7 +2306,7 @@ BarWidget {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 8) / 9
+          readonly property real cell: (width - spacing * 9) / 10
 
           MenuRow {
             width: header.cell
@@ -2323,6 +2353,11 @@ BarWidget {
             width: header.cell
             label: (root.nEffectVis > 1 ? "Surprise all" : "Surprise me") + "  (R)"
             onClicked: root.randomAll()
+          }
+          MenuRow {
+            width: header.cell
+            label: (root.nEffectVis > 1 ? "Clear all" : "Clear") + "  (O)"
+            onClicked: root.offAll()
           }
         }
 
@@ -2529,7 +2564,7 @@ BarWidget {
             favs: []
             focused: root.focusKind === "win"
             defaultCat: 0
-            hasStrength: true
+            hasStrength: root.winPart !== "frame"
             strengthLabel: root.winPart === "color" ? "Color strength" : "Effect strength"
             strengthLive: root.winPart === "color" ? root.winColorOn : root.winEffectOn
             strength: root.winPart === "color" ? root.winColStrength : root.winFxStrength
@@ -2578,7 +2613,7 @@ BarWidget {
             if (root.comboFlash !== "") return root.comboFlash
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
-            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" + (root.mixSecondOf("screen") !== "" ? " " + (root.mixEffectMode === "blend" ? "~" : "+") + " " + root.effect2 + " " + root.mixEffectAmt + "%" : "") : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" + (root.mixSecondOf("color") !== "" ? " " + (root.mixColorMode === "blend" ? "~" : "+") + " " + root.color2 + " " + root.mixColorAmt + "%" : "") : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.showWin ? " · Windows: " + ((root.winEffectOn || root.winColorOn) ? [root.winEffect, root.winColor].filter(function(x) { return x !== "" }).join(" + ") : "off") : "")
+            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" + (root.mixSecondOf("screen") !== "" ? " " + (root.mixEffectMode === "blend" ? "~" : "+") + " " + root.effect2 + " " + root.mixEffectAmt + "%" : "") : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" + (root.mixSecondOf("color") !== "" ? " " + (root.mixColorMode === "blend" ? "~" : "+") + " " + root.color2 + " " + root.mixColorAmt + "%" : "") : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.showWin ? " · Windows: " + (root.winAnyOn ? [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off") : "")
           }
           color: root.fg
           font.family: root.bar.fontFamily

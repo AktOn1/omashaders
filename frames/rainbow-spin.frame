@@ -1,0 +1,7 @@
+# category: Spin
+# desc: Rainbow border that keeps turning
+rounding=8
+border_size=3
+border_colors=ff5f5fff,ffd75fff,5fff87ff,5fd7ffff,af5fffff,ff5f5fff
+border_angle=0
+spin=30

@@ -1,0 +1,7 @@
+# category: Shadow
+# desc: Tight shadow right under the window edge
+rounding=6
+shadow_range=10
+shadow_power=4
+shadow_color=000000dd
+shadow_offset=0,3

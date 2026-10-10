@@ -1,0 +1,11 @@
+# category: Border
+# desc: Thick pastel pink-blue border, very round
+rounding=18
+border_size=4
+border_colors=f8bbd0ff,b3e5fcff
+border_angle=45
+border_inactive=ffffff30
+shadow_range=24
+shadow_power=3
+shadow_color=00000066
+shadow_offset=0,4

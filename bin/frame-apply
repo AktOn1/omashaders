@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Window frames: shadow, glow and border presets applied through Hyprland's own options.
+
+usage: frame-apply STATE_DIR FRAMES_DIR NAME     apply frames/NAME.frame (remembers the original look first)
+       frame-apply STATE_DIR FRAMES_DIR ''       put the original look back
+       frame-apply STATE_DIR FRAMES_DIR @reload  forget the remembered look (Hyprland just reloaded its config) and apply NAME from STATE_DIR/window-frame
+Frame files hold key=value lines (colours are RRGGBBAA):
+  rounding, border_size, border_colors (comma list), border_angle, border_inactive,
+  shadow_range, shadow_power, shadow_color, shadow_inactive, shadow_offset (x,y), shadow_scale, shadow_sharp (0/1), spin (speed of the turning border)
+Options a frame does not mention keep the user's own value.
+"""
+import json, os, subprocess, sys, re
+
+state_dir, frames_dir, name = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
+base_file = os.path.join(state_dir, "frame-base.json")
+sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+
+
+def hypr(*args):
+    return subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=10).stdout
+
+
+def opt(key):
+    try:
+        return json.loads(hypr("-j", "getoption", key))
+    except Exception:
+        return {}
+
+
+def grad(o):
+    """'AARRGGBB AARRGGBB 45deg' -> ([RRGGBBAA, ...], angle)"""
+    toks = str(o.get("gradient", "")).split()
+    cols = [t[2:] + t[:2] for t in toks if re.fullmatch(r"[0-9a-fA-F]{8}", t)]
+    ang = 0
+    for t in toks:
+        m = re.fullmatch(r"(-?\d+)deg", t)
+        if m:
+            ang = int(m.group(1))
+    return cols, ang
+
+
+def capture():
+    anim = {}
+    try:
+        for a in json.loads(hypr("-j", "animations"))[0]:
+            if a.get("name") == "borderangle":
+                anim = {k: a.get(k) for k in ("enabled", "speed", "bezier", "style")}
+    except Exception:
+        pass
+    b = {
+        "sig": sig,
+        "rounding": opt("decoration:rounding").get("int", 0),
+        "border_size": opt("general:border_size").get("int", 2),
+        "border_active": grad(opt("general:col.active_border")),
+        "border_inactive": grad(opt("general:col.inactive_border")),
+        "shadow_enabled": opt("decoration:shadow:enabled").get("bool", False),
+        "shadow_range": opt("decoration:shadow:range").get("int", 4),
+        "shadow_power": opt("decoration:shadow:render_power").get("int", 3),
+        "shadow_color": grad(opt("decoration:shadow:color")),
+        "shadow_inactive": grad(opt("decoration:shadow:color_inactive")),
+        "shadow_offset": opt("decoration:shadow:offset").get("vec2", [0, 0]),
+        "shadow_scale": opt("decoration:shadow:scale").get("float", 1.0),
+        "shadow_sharp": opt("decoration:shadow:sharp").get("bool", False),
+        "anim": anim,
+    }
+    with open(base_file + ".tmp", "w") as f:
+        json.dump(b, f)
+    os.replace(base_file + ".tmp", base_file)
+    return b
+
+
+def load_base():
+    try:
+        b = json.load(open(base_file))
+        if b.get("sig") == sig:
+            return b
+    except Exception:
+        pass
+    return None
+
+
+def lua_col(c):
+    return 'rgba(%s)' % c
+
+
+def lua_grad(cols, ang):
+    cols = cols or ["ffffffff"]
+    if len(cols) == 1:
+        return '"%s"' % lua_col(cols[0])
+    return '{colors={%s},angle=%d}' % (",".join('"%s"' % lua_col(c) for c in cols), ang)
+
+
+def read_frame(n):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", n):
+        raise SystemExit("bad frame name")
+    d = {}
+    for line in open(os.path.join(frames_dir, n + ".frame")):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            d[k.strip()] = v.strip()
+    return d
+
+
+def hexcol(v):
+    if not re.fullmatch(r"[0-9a-fA-F]{8}", v):
+        raise SystemExit("bad colour " + v)
+    return v.lower()
+
+
+def build(b, f):
+    shadow_on = b["shadow_enabled"] or any(k.startswith("shadow_") for k in f)
+    sh = {
+        "range": int(f.get("shadow_range", b["shadow_range"])),
+        "power": int(f.get("shadow_power", b["shadow_power"])),
+        "scale": float(f.get("shadow_scale", b["shadow_scale"])),
+        "sharp": f.get("shadow_sharp", "1" if b["shadow_sharp"] else "0") == "1",
+    }
+    if "shadow_color" in f:
+        sc = ([hexcol(f["shadow_color"])], 0)
+    else:
+        sc = b["shadow_color"]
+    if "shadow_inactive" in f:
+        si = ([hexcol(f["shadow_inactive"])], 0)
+    else:
+        si = b["shadow_inactive"]
+    if si[0] == ["ffffffff"]:  # Hyprland's "not set" marker: the inactive shadow then follows the normal one
+        si = sc
+    off = [int(x) for x in f["shadow_offset"].split(",")] if "shadow_offset" in f else b["shadow_offset"]
+    if "border_colors" in f:
+        ba = ([hexcol(c) for c in f["border_colors"].split(",")], int(f.get("border_angle", 45)))
+    else:
+        ba = b["border_active"]
+    bi = ([hexcol(f["border_inactive"])], 0) if "border_inactive" in f else b["border_inactive"]
+    return (
+        'hl.config({decoration={rounding=%d,shadow={enabled=%s,range=%d,render_power=%d,color=%s,color_inactive=%s,offset={%d,%d},scale=%s,sharp=%s}},'
+        'general={border_size=%d,col={active_border=%s,inactive_border=%s}}})'
+        % (
+            int(f.get("rounding", b["rounding"])),
+            "true" if shadow_on else "false", sh["range"], sh["power"],
+            lua_grad(*sc), lua_grad(*si), off[0], off[1], repr(sh["scale"]), "true" if sh["sharp"] else "false",
+            int(f.get("border_size", b["border_size"])),
+            lua_grad(*ba), lua_grad(*bi),
+        )
+    )
+
+
+def run_lua(code):
+    out = hypr("eval", code)
+    if "error" in out.lower():
+        sys.stderr.write(out)
+        raise SystemExit(1)
+
+
+def set_anim(b, spin):
+    if spin:
+        run_lua('hl.animation({leaf="borderangle",enabled=true,speed=%s,bezier="linear",style="loop"})' % repr(float(spin)))
+        return
+    a = b.get("anim") or {"enabled": False, "speed": 1.0, "bezier": "default", "style": ""}
+    run_lua('hl.animation({leaf="borderangle",enabled=%s,speed=%s,bezier="%s"%s})' % (
+        "true" if a.get("enabled") else "false", repr(float(a.get("speed") or 1.0)), a.get("bezier") or "default",
+        (',style="%s"' % a["style"]) if a.get("style") else ""))
+
+
+def nudge():
+    """a turning border only starts when the active window is focused again (same window: nothing visible changes)"""
+    try:
+        addr = json.loads(hypr("-j", "activewindow")).get("address", "")
+        if re.fullmatch(r"0x[0-9a-f]+", addr):
+            hypr("dispatch", 'hl.dsp.focus({window="address:%s"})' % addr)
+    except Exception:
+        pass
+
+
+if name == "@reload":
+    try:
+        os.remove(base_file)
+    except FileNotFoundError:
+        pass
+    try:
+        name = open(os.path.join(state_dir, "window-frame")).read().strip()
+    except FileNotFoundError:
+        name = ""
+
+base = load_base()
+if name == "":
+    if base:
+        run_lua(build(base, {}))
+        set_anim(base, 0)
+        os.remove(base_file)
+    sys.exit(0)
+
+if base is None:
+    base = capture()
+frame = read_frame(name)
+run_lua(build(base, frame))
+set_anim(base, frame.get("spin"))
+if frame.get("spin"):
+    nudge()

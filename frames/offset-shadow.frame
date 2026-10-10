@@ -1,0 +1,8 @@
+# category: Shadow
+# desc: Hard sticker-style shadow, shifted down and right
+rounding=4
+shadow_range=2
+shadow_power=1
+shadow_sharp=1
+shadow_color=000000ee
+shadow_offset=9,9

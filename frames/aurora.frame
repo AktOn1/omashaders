@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Green to violet border with a faint northern-lights glow
+rounding=12
+border_size=2
+border_colors=5cffb0ff,4ab8ffff,b07bffff
+border_angle=45
+shadow_range=50
+shadow_power=2
+shadow_color=4ab8ff88
+shadow_inactive=00000000

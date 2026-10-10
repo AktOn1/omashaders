@@ -1,0 +1,6 @@
+# category: Border
+# desc: Thin white line, nothing else
+rounding=0
+border_size=1
+border_colors=ffffffd9
+border_inactive=ffffff26

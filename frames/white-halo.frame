@@ -1,0 +1,9 @@
+# category: Glow
+# desc: Quiet white halo on the active window only
+rounding=10
+border_size=1
+border_colors=ffffffcc
+shadow_range=32
+shadow_power=3
+shadow_color=ffffff77
+shadow_inactive=00000000

@@ -1,0 +1,7 @@
+# category: Border
+# desc: Thick square border, high contrast
+rounding=0
+border_size=5
+border_colors=ffd400ff,ff8a00ff
+border_angle=45
+border_inactive=33333399

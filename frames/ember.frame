@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Warm ember glow, orange and gold
+rounding=10
+border_size=2
+border_colors=ff7a1aff,ffd23fff
+border_angle=60
+shadow_range=46
+shadow_power=3
+shadow_color=ff7a1aaa
+shadow_inactive=00000000

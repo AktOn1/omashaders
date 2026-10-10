@@ -1,0 +1,7 @@
+# category: Border
+# desc: One pixel gold line, slightly rounded
+rounding=6
+border_size=1
+border_colors=f2d27aff,b8902dff
+border_angle=45
+border_inactive=5959594d

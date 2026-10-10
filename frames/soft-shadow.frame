@@ -1,0 +1,8 @@
+# category: Shadow
+# desc: Soft drop shadow that lifts windows off the wallpaper
+rounding=8
+shadow_range=30
+shadow_power=3
+shadow_color=000000aa
+shadow_offset=0,6
+shadow_inactive=00000066

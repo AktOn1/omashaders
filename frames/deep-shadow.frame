@@ -1,0 +1,8 @@
+# category: Shadow
+# desc: Big dark shadow, windows float high above the desktop
+rounding=10
+shadow_range=64
+shadow_power=2
+shadow_color=000000dd
+shadow_offset=0,16
+shadow_inactive=00000055

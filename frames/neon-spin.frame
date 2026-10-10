@@ -1,0 +1,11 @@
+# category: Spin
+# desc: Cyan and pink neon glow with a turning border
+rounding=10
+border_size=2
+border_colors=33ccffff,ff2fd0ff,33ccffff
+border_angle=0
+spin=25
+shadow_range=38
+shadow_power=3
+shadow_color=a05cffaa
+shadow_inactive=00000000

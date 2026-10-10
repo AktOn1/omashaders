@@ -1,0 +1,11 @@
+# category: Spin
+# desc: Fire-coloured border chasing around the window
+rounding=8
+border_size=2
+border_colors=ff7a1aff,ffd23fff,ff3d1aff,ff7a1aff
+border_angle=0
+spin=40
+shadow_range=36
+shadow_power=3
+shadow_color=ff7a1a99
+shadow_inactive=00000000

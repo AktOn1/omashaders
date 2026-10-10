@@ -1,0 +1,11 @@
+# category: Spin
+# desc: Slowly turning green, blue, violet border
+rounding=12
+border_size=3
+border_colors=5cffb0ff,4ab8ffff,b07bffff,5cffb0ff
+border_angle=0
+spin=60
+shadow_range=44
+shadow_power=2
+shadow_color=4ab8ff77
+shadow_inactive=00000000

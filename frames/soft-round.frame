@@ -1,0 +1,7 @@
+# category: Border
+# desc: Round corners, keeps your border colour
+rounding=14
+shadow_range=26
+shadow_power=3
+shadow_color=00000088
+shadow_offset=0,5

@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Coral to amber border, warm halo
+rounding=12
+border_size=2
+border_colors=ff6b6bff,ffb347ff
+border_angle=45
+shadow_range=44
+shadow_power=3
+shadow_color=ff8a5caa
+shadow_inactive=00000000
