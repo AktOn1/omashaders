@@ -46,7 +46,9 @@ void main() {
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
   vec3 dark = col * 0.32;
   vec3 bright = col * 1.15 + cCream.rgb * 0.10 * smoothstep(0.35, 0.0, r);
-  col = mix(dark, bright, lit);
-  col += cPink.rgb * 0.06 * smoothstep(0.15, 0.0, r) * (0.7 + 0.3 * sin(time * 1.5));
+  vec2 q = step(vec2(0.0), m) * step(m, vec2(1.0));
+  float on = q.x * q.y;
+  col = mix(col, mix(dark, bright, lit), on);
+  col += cPink.rgb * 0.06 * smoothstep(0.15, 0.0, r) * (0.7 + 0.3 * sin(time * 1.5)) * on;
   fragColor = vec4(col, 1.0) * qt_Opacity;
 }

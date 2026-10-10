@@ -32,6 +32,8 @@ Not possible inside a Hyprland screen shader: it gets only the current frame (no
 ## Wallpaper and cursor effects
 `wallpaper-effects/NAME.frag` and `mouse-effects/NAME.frag` are Qt shaders; the compiled `.frag.qsb` next to each is committed so users need no build tools.
 They are drawn by `WallpaperFx.qml` and `MouseFx.qml` in layer-shell windows (one per monitor) hosted by the first monitor's bar.
+A new wallpaper effect file that the menu's built-in list does not know appears under "More" the next time the menu opens (no shell restart); give it `// label:` and `// hint:` header lines. Only QML changes need a shell restart.
+
 Recompile after editing with `bin/build-wallpaper-effects` / `bin/build-mouse-effects` (needs qt6-shadertools).
 `bin/wallpaper-step next|prev|status|pick` steps or picks the wallpaper image; `bin/gpu-usage` prints `OVERALL SHELL HYPRLAND USED_MB TOTAL_MB`.
 `bin/cursor-watch` prints the pointer position from the Hyprland socket (about 40 times a second) and exits when its parent exits.

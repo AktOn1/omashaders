@@ -487,15 +487,25 @@ BarWidget {
       { id: "cinema",    label: "Film grain",      hint: "vignette, flicker" }
     ] }
   ]
+  // wallpaper effect files the list above does not know (added later) show up without a shell restart
+  readonly property var wallAll: {
+    var known = {}
+    for (var i = 1; i < wallBase.length; i++) wallBase[i].items.forEach(function(it) { known[it.id] = true })
+    var extra = []
+    allEntries.forEach(function(e) {
+      if (e.section === "wall" && !known[e.name]) extra.push({ id: e.name, label: e.cat, hint: e.desc })
+    })
+    return extra.length > 0 ? wallBase.concat([{ id: "more", label: "More", items: extra }]) : wallBase
+  }
   readonly property var wallEffects: {
     var out = []
-    for (var i = 1; i < wallBase.length; i++) out = out.concat(wallBase[i].items)
+    for (var i = 1; i < wallAll.length; i++) out = out.concat(wallAll[i].items)
     return out
   }
   property var wallFavs: []
   readonly property var wallCats: {
     var out = [wallBase[0], { id: "fav", label: "Favorites", items: favList(wallEffects, wallFavs), note: favNote }]
-    for (var i = 1; i < wallBase.length; i++) out.push(wallBase[i])
+    for (var i = 1; i < wallAll.length; i++) out.push(wallAll[i])
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
