@@ -5,12 +5,13 @@ import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
-// One bar icon, four effect menus (tick any of them at the top, ticked menus sit side by side):
+// One bar icon, five effect menus (tick any of them at the top, ticked menus sit side by side):
 //   Screen    full-screen GLSL effects applied by Hyprland (bin/omashaders)
 //   Color     a colour grade on top of the screen effect (merged into one shader by bin/compose-shader)
 //   Wallpaper animated GPU effects drawn over the wallpaper (WallpaperFx.qml) plus wallpaper picking
 //   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml), and Bend shaders that
 //             distort the real screen around it (bin/cursor-bend + BendMarker.qml)
+//   Windows   the Screen and Color lists drawn on chosen app windows only (needs the HyprWindowShade Hyprland plugin; bin/omashaders window)
 // hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (releasing Shift or leaving the item restores the saved setting) (keys preview as you move), a mouse click or Space keeps it and stays open, Enter keeps it and closes,
 // Esc undoes previews.
 BarWidget {
@@ -43,6 +44,11 @@ BarWidget {
   readonly property string colStrengthFile: stateDir + "/strength-color"
   readonly property string wallStrengthFile: stateDir + "/strength-wall"
   readonly property string mouseStrengthFile: stateDir + "/strength-mouse"
+  readonly property string winEffectFile: stateDir + "/window-effect"
+  readonly property string winColorFile: stateDir + "/window-color"
+  readonly property string winTargetFile: stateDir + "/window-target"
+  readonly property string winFxStrengthFile: stateDir + "/window-strength-effect"
+  readonly property string winColStrengthFile: stateDir + "/window-strength-color"
   readonly property int fps: Number(setting("fps", 30)) || 30
 
   readonly property color fg: root.bar.barForeground
@@ -63,11 +69,12 @@ BarWidget {
   property bool showWall: true
   property bool showMouse: false
   property bool showCombo: false
+  property bool showWin: false
   property string activeKind: "screen"
-  function isShown(k) { return k === "screen" ? showScreen : (k === "color" ? showColor : (k === "wall" ? showWall : (k === "mouse" ? showMouse : showCombo))) }
-  function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : comboSec))) }
-  function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : "Combos"))) }
-  readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "combo"].filter(function(k) { return isShown(k) })
+  function isShown(k) { return k === "screen" ? showScreen : (k === "color" ? showColor : (k === "wall" ? showWall : (k === "mouse" ? showMouse : (k === "win" ? showWin : showCombo)))) }
+  function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : (k === "win" ? winSec : comboSec)))) }
+  function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : (k === "win" ? "Windows" : "Combos")))) }
+  readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "win", "combo"].filter(function(k) { return isShown(k) })
   readonly property int nVis: visibleKinds.length
   // effect menus that "off" and "surprise" act on; with only Combos shown they act on all three
   readonly property var effectKinds: {
@@ -77,21 +84,23 @@ BarWidget {
   readonly property int nEffectVis: visibleKinds.filter(function(x) { return x !== "combo" }).length
   readonly property real comboWeight: 1
   readonly property real colorWeight: 0.85
-  readonly property real widthUnits: (showScreen ? 1 : 0) + (showColor ? colorWeight : 0) + (showWall ? 1 : 0) + (showMouse ? 1 : 0) + (showCombo ? comboWeight : 0)
+  readonly property real widthUnits: (showScreen ? 1 : 0) + (showColor ? colorWeight : 0) + (showWall ? 1 : 0) + (showMouse ? 1 : 0) + (showWin ? 1 : 0) + (showCombo ? comboWeight : 0)
   readonly property string focusKind: visibleKinds.indexOf(activeKind) >= 0 ? activeKind : (visibleKinds[0] || "screen")
   readonly property var activeSec: secOf(focusKind)
 
-  function setShown(s, w, m, persist, c, k) {
+  function setShown(s, w, m, persist, c, k, x) {
     if (c === undefined) c = showCombo
     if (k === undefined) k = showColor
-    if (!s && !w && !m && !c && !k) return
-    var before = { screen: showScreen, color: showColor, wall: showWall, mouse: showMouse, combo: showCombo }
+    if (x === undefined) x = showWin
+    if (!s && !w && !m && !c && !k && !x) return
+    var before = { screen: showScreen, color: showColor, wall: showWall, mouse: showMouse, combo: showCombo, win: showWin }
     showScreen = s
     showColor = k
     showWall = w
     showMouse = m
     showCombo = c
-    ;["screen", "color", "wall", "mouse", "combo"].forEach(function(kind) {
+    showWin = x
+    ;["screen", "color", "wall", "mouse", "win", "combo"].forEach(function(kind) {
       if (isShown(kind) && !before[kind]) { secOf(kind).sync(); activeKind = kind }
     })
     if (persist) writeFile(sectionsFile, visibleKinds.join(" "))
@@ -101,7 +110,8 @@ BarWidget {
              kind === "wall" ? !showWall : showWall,
              kind === "mouse" ? !showMouse : showMouse, true,
              kind === "combo" ? !showCombo : showCombo,
-             kind === "color" ? !showColor : showColor)
+             kind === "color" ? !showColor : showColor,
+             kind === "win" ? !showWin : showWin)
   }
   function setSections(mode) {
     var w = String(mode).toLowerCase().split(/[\s,+]+/)
@@ -110,7 +120,8 @@ BarWidget {
     setShown(both || w.indexOf("screen") >= 0, both || w.indexOf("wall") >= 0 || w.indexOf("wallpaper") >= 0,
              all || w.indexOf("mouse") >= 0 || w.indexOf("cursor") >= 0, true,
              all || w.indexOf("combo") >= 0 || w.indexOf("combos") >= 0,
-             both || w.indexOf("color") >= 0 || w.indexOf("colour") >= 0)
+             both || w.indexOf("color") >= 0 || w.indexOf("colour") >= 0,
+             all || w.indexOf("win") >= 0)
   }
   FileView {
     path: root.sectionsFile
@@ -119,9 +130,9 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: {
       var t = String(text() || "")
-      var s = t.indexOf("screen") >= 0, w = t.indexOf("wall") >= 0, m = t.indexOf("mouse") >= 0, c = t.indexOf("combo") >= 0, k = t.indexOf("color") >= 0
-      if (!s && !w && !m && !c && !k) { s = true; k = true; w = true }
-      root.setShown(s, w, m, false, c, k)
+      var s = t.indexOf("screen") >= 0, w = t.indexOf("wall") >= 0, m = t.indexOf("mouse") >= 0, c = t.indexOf("combo") >= 0, k = t.indexOf("color") >= 0, x = t.indexOf("win") >= 0
+      if (!s && !w && !m && !c && !k && !x) { s = true; k = true; w = true }
+      root.setShown(s, w, m, false, c, k, x)
     }
   }
 
@@ -223,6 +234,7 @@ BarWidget {
   }
   component StrengthSender: Process {
     property string kind: "effect"
+    property var prefix: []
     property int pending: -1
     readonly property bool busy: running || pending >= 0
     function send(v) { pending = v; if (!running) kick() }
@@ -230,13 +242,17 @@ BarWidget {
       if (pending < 0) return
       var v = pending
       pending = -1
-      command = [root.script, "strength", kind, String(v)]
+      command = [root.script].concat(prefix, ["strength", kind, String(v)])
       running = true
     }
     onRunningChanged: if (!running && pending >= 0) kick()
   }
   StrengthSender { id: fxSender; kind: "effect" }
   StrengthSender { id: colSender; kind: "color" }
+  StrengthSender { id: winFxSender; kind: "effect"; prefix: ["window"] }
+  StrengthSender { id: winColSender; kind: "color"; prefix: ["window"] }
+  property int winFxStrength: 100
+  property int winColStrength: 100
   // Wallpaper and Cursor effects have one strength each (the effect's opacity, or for bend effects how far the screen is bent):
   // a plain number in strength-wall / strength-mouse that the effect windows and bin/cursor-bend read.
   property int wallStrength: 100
@@ -250,11 +266,13 @@ BarWidget {
     if (kind === "color") { colStrength = v; colSender.send(v) }
     else if (kind === "wall") { wallStrength = v; pendingWallStrength = v; wallStrengthTimer.restart() }
     else if (kind === "mouse") { mouseStrength = v; pendingMouseStrength = v; mouseStrengthTimer.restart() }
+    else if (kind === "winfx") { winFxStrength = v; winFxSender.send(v) }
+    else if (kind === "wincol") { winColStrength = v; winColSender.send(v) }
     else { fxStrength = v; fxSender.send(v) }
   }
-  function strengthKind(k) { return k === "color" ? "color" : (k === "wall" ? "wall" : (k === "mouse" ? "mouse" : "effect")) }
-  function strengthLiveOf(kind) { return kind === "color" ? colorOn : (kind === "wall" ? wallOn : (kind === "mouse" ? mouseOn : shaderOn)) }
-  function strengthOf(kind) { return kind === "color" ? colStrength : (kind === "wall" ? wallStrength : (kind === "mouse" ? mouseStrength : fxStrength)) }
+  function strengthKind(k) { return k === "color" ? "color" : (k === "wall" ? "wall" : (k === "mouse" ? "mouse" : (k === "win" ? (winPart === "color" ? "wincol" : "winfx") : "effect"))) }
+  function strengthLiveOf(kind) { return kind === "color" ? colorOn : (kind === "wall" ? wallOn : (kind === "mouse" ? mouseOn : (kind === "winfx" ? winEffectOn : (kind === "wincol" ? winColorOn : shaderOn)))) }
+  function strengthOf(kind) { return kind === "color" ? colStrength : (kind === "wall" ? wallStrength : (kind === "mouse" ? mouseStrength : (kind === "winfx" ? winFxStrength : (kind === "wincol" ? winColStrength : fxStrength)))) }
   function nudgeStrength(delta) {
     if (focusKind === "combo") return
     var kind = strengthKind(focusKind)
@@ -266,6 +284,7 @@ BarWidget {
     var kind = strengthKind(focusKind)
     if (!strengthLiveOf(kind)) return
     if (kind === "wall" || kind === "mouse") setStrength(kind, 100)
+    else if (kind === "winfx" || kind === "wincol") Quickshell.execDetached([root.script, "window", "strength", kind === "winfx" ? "effect" : "color", "reset"])
     else Quickshell.execDetached([root.script, "strength", kind, "reset"])
   }
   function setPower(mode) { Quickshell.execDetached([root.script, "power", mode]) }
@@ -301,6 +320,22 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingMouseStrength < 0) root.mouseStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
     onLoadFailed: root.mouseStrength = 100
+  }
+  FileView {
+    path: root.winFxStrengthFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (!winFxSender.busy) root.winFxStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.winFxStrength = 100
+  }
+  FileView {
+    path: root.winColStrengthFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (!winColSender.busy) root.winColStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.winColStrength = 100
   }
   FileView {
     path: root.disabledFile
@@ -408,8 +443,10 @@ BarWidget {
     target: Hyprland
     function onRawEvent(event) {
       if (event.name === "configreloaded" && (root.shaderOn || root.colorOn)) reapplyTimer.restart()
+      else if (event.name === "openwindow" && root.winAll && (root.winEffectOn || root.winColorOn)) winSyncTimer.restart()
     }
   }
+  Timer { id: winSyncTimer; interval: 400; onTriggered: Quickshell.execDetached([root.script, "window", "sync"]) }
   Timer { id: reapplyTimer; interval: 400; onTriggered: root.screenStep("reapply") }
 
   // ---------------------------------------------------------------- colour grade (merged with the screen effect)
@@ -519,6 +556,137 @@ BarWidget {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.colorFavs = String(text() || "").split(/\s+/).filter(function(f) { return f !== "" })
+  }
+
+  // ---------------------------------------------------------------- window shaders (HyprWindowShade plugin)
+  // The Screen effect and Color lists, drawn on windows only. Targets are app classes (or all windows);
+  // bin/omashaders window does the work and only tells the plugin which class gets which shader.
+  // Item ids in this menu: "t:CLASS" / "t:*" target, "e:NAME" effect, "c:NAME" colour.
+  property string winEffect: ""
+  property string winColor: ""
+  property var winTargets: []
+  property var winClasses: []
+  property string winPlugin: "unknown"
+  property string winOriginFx: ""
+  property string winOriginCol: ""
+  property bool winPreviewed: false
+  property string winPending: ""
+  readonly property bool winEffectOn: winEffect !== ""
+  readonly property bool winColorOn: winColor !== ""
+  readonly property bool winAll: winTargets.indexOf("*") >= 0
+  readonly property string winPart: (winSec.curCat && String(winSec.curCat.id).indexOf("c:") === 0) ? "color" : "effect"
+  readonly property string installCmd: "hyprpm update && hyprpm add https://github.com/ManofJELLO/HyprWindowShade && hyprpm enable HyprWindowShade"
+
+  function winFxItem(e) { return { id: "e:" + e.name, label: e.name, desc: e.desc, hint: e.animated ? "heavy" : "" } }
+  function winColItem(e) { return { id: "c:" + e.name, label: e.name, desc: e.desc, hint: "" } }
+  function winShownFx(e) { return includeAnimated || !e.animated }
+  readonly property var winEffectItems: screenEntries.filter(winShownFx).map(winFxItem)
+  readonly property var winAppItems: {
+    var out = [{ id: "t:*", label: "All windows", desc: "Every open window, and windows that open later", hint: "" }]
+    var seen = {}
+    winClasses.concat(winTargets.filter(function(t) { return t !== "*" })).forEach(function(c) {
+      if (c && !seen[c]) { seen[c] = true; out.push({ id: "t:" + c, label: c, desc: "Every window of this app", hint: "" }) }
+    })
+    return out
+  }
+  readonly property var winCats: {
+    if (winPlugin === "missing") return [
+      { id: "setup", label: "Setup needed", items: [], note: "Window shaders need the HyprWindowShade plugin, which is not installed. In a terminal run:\n\nhyprpm update\nhyprpm add https://github.com/ManofJELLO/HyprWindowShade\nhyprpm enable HyprWindowShade\n\nThen reopen this menu. Pick the next row to copy the commands." },
+      { id: "@copy", label: "Copy install commands", action: true }
+    ]
+    var out = [{ id: "apps", label: "Apps", items: winAppItems, note: "" }]
+    catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
+      var items = screenEntries.filter(function(e) { return e.cat === c && winShownFx(e) }).map(winFxItem)
+      if (items.length > 0) out.push({ id: "e:" + c, label: c, items: items, note: "" })
+    })
+    catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
+      out.push({ id: "c:" + c, label: "Color · " + c, items: colorEntries.filter(function(e) { return e.cat === c }).map(winColItem), note: "" })
+    })
+    out.push({ id: "@off", label: "Off", action: true })
+    return out
+  }
+  readonly property var winMarks: {
+    var out = winTargets.map(function(t) { return "t:" + t })
+    if (winColorOn) out.push("c:" + winColor)
+    return out
+  }
+
+  function winRun(args) { Quickshell.execDetached([root.script, "window"].concat(args)) }
+  function applyWinPart(kind, name) { winRun(name === "" ? [kind, "off"] : [kind, "set", name]) }
+  function applyWin(id) { applyWinPart(id.charAt(0) === "e" ? "effect" : "color", id.slice(2)) }
+  function previewWin(it) {
+    if (!it || it.id.charAt(1) !== ":" || it.id.charAt(0) === "t") { winTimer.stop(); return }
+    if (it.id === "e:" + winEffect || it.id === "c:" + winColor) { winTimer.stop(); return }
+    winPending = it.id
+    winPreviewed = true
+    winTimer.restart()
+  }
+  Timer { id: winTimer; interval: 140; onTriggered: root.applyWin(root.winPending) }
+  function toggleWinTarget(cls) {
+    if (cls === "*") winRun(["target", winAll ? "none" : "all"])
+    else if (winAll) Quickshell.execDetached(["bash", "-c", '"$1" window target none && "$1" window target add "$2"', "bash", root.script, cls])
+    else winRun(["target", "toggle", cls])
+  }
+  function chooseWin(it, keep) {
+    if (!it || it.id.charAt(1) !== ":") return
+    winTimer.stop()
+    if (it.id.charAt(0) === "t") toggleWinTarget(it.id.slice(2))
+    else {
+      applyWin(it.id)
+      if (it.id.charAt(0) === "e") winOriginFx = it.id.slice(2)
+      else winOriginCol = it.id.slice(2)
+      winPreviewed = false
+    }
+    if (!keep) popupOpen = false
+  }
+  function revertWinPreview() {
+    winTimer.stop()
+    if (!winPreviewed) return
+    winPreviewed = false
+    applyWinPart("effect", winOriginFx)
+    applyWinPart("color", winOriginCol)
+  }
+  function refreshWin() { winStatus.running = true; winLister.running = true }
+  Process {
+    id: winStatus
+    command: [root.script, "window", "status"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var m = /plugin=(\w+)/.exec(String(text))
+        root.winPlugin = m ? m[1] : "unknown"
+      }
+    }
+  }
+  Process {
+    id: winLister
+    command: [root.script, "window", "classes"]
+    stdout: StdioCollector {
+      onStreamFinished: root.winClasses = String(text).split("\n").filter(function(c) { return c !== "" })
+    }
+  }
+  FileView {
+    path: root.winEffectFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.winEffect = String(text() || "").trim()
+    onLoadFailed: root.winEffect = ""
+  }
+  FileView {
+    path: root.winColorFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.winColor = String(text() || "").trim()
+    onLoadFailed: root.winColor = ""
+  }
+  FileView {
+    path: root.winTargetFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.winTargets = String(text() || "").split("\n").filter(function(c) { return c !== "" })
+    onLoadFailed: root.winTargets = []
   }
 
   // ---------------------------------------------------------------- cursor overlays (MouseFx)
@@ -1016,7 +1184,7 @@ BarWidget {
   function clearSearch() { searchField.text = ""; leaveSearch() }
   function applyQuery() {
     Qt.callLater(function() {
-      ["screen", "color", "wall", "mouse", "combo"].forEach(function(k) { secOf(k).resetForQuery() })
+      ["screen", "color", "wall", "mouse", "win", "combo"].forEach(function(k) { secOf(k).resetForQuery() })
       if (query.trim() !== "" && secOf(focusKind).cats.length === 0) {
         for (var i = 0; i < visibleKinds.length; i++) if (secOf(visibleKinds[i]).cats.length > 0) { activeKind = visibleKinds[i]; break }
       }
@@ -1052,6 +1220,10 @@ BarWidget {
       colorPreviewed = false
       mousePreviewed = false
       wallPreviewed = false
+      winPreviewed = false
+      winOriginFx = winEffect
+      winOriginCol = winColor
+      refreshWin()
       hoverPreviewing = false
       hoverItem = null
       menuShiftHeld = false
@@ -1061,11 +1233,13 @@ BarWidget {
       colorSec.sync()
       wallSec.sync()
       mouseSec.sync()
+      winSec.sync()
       comboSec.sync()
     } else {
       screenTimer.stop()
       colorTimer.stop()
       mouseTimer.stop()
+      revertWinPreview()
       if (screenPreviewed) { applyScreen(screenOrigin); screenPreviewed = false }
       if (colorPreviewed) { applyColor(colorOrigin); colorPreviewed = false }
       if (mousePreviewed) { applyMouse(mouseOrigin); mousePreviewed = false }
@@ -1073,19 +1247,21 @@ BarWidget {
     }
   }
 
-  function savedOf(k) { return k === "screen" ? current : (k === "color" ? colorCurrent : (k === "wall" ? wallSaved : mouseCurrent)) }
+  function savedOf(k) { return k === "screen" ? current : (k === "color" ? colorCurrent : (k === "wall" ? wallSaved : (k === "win" ? (winEffectOn ? "e:" + winEffect : "") : mouseCurrent))) }
   function favsOf(k) { return k === "screen" ? screenFavs : (k === "color" ? colorFavs : (k === "wall" ? wallFavs : mouseFavs)) }
   function favFileOf(k) { return k === "screen" ? screenFavFile : (k === "color" ? colorFavFile : (k === "wall" ? wallFavFile : mouseFavFile)) }
-  function itemsOf(k) { return k === "screen" ? screenItems : (k === "color" ? colorItems : (k === "wall" ? wallEffects : mouseItems)) }
+  function itemsOf(k) { return k === "screen" ? screenItems : (k === "color" ? colorItems : (k === "wall" ? wallEffects : (k === "win" ? winEffectItems : mouseItems))) }
   function chooseIn(k, it, keep) {
     if (k === "screen") chooseScreen(it, keep)
     else if (k === "color") chooseColor(it, keep)
     else if (k === "wall") chooseWall(it, keep)
+    else if (k === "win") chooseWin(it, keep)
     else chooseMouse(it, keep)
   }
   function offIn(k) {
     if (k === "combo") offAll()
     else if (k === "wall") setWall("", true)
+    else if (k === "win") winRun(["off"])
     else chooseIn(k, { id: "" }, true)
   }
   function randomIn(k) {
@@ -1098,12 +1274,13 @@ BarWidget {
   function offAll() { effectKinds.forEach(offIn) }
   function runAction(k, id) {
     if (k === "combo") { if (id === "@save") saveCombo(); return }
+    if (k === "win" && id === "@copy") { Quickshell.execDetached(["wl-copy", installCmd]); flash("Copied: " + installCmd); return }
     if (id === "@off") offIn(k)
     else if (id === "@random") randomIn(k)
   }
   function toggleFav(k) {
     var s = secOf(k), it = s.selected
-    if (!it || it.id.charAt(0) === "@") return
+    if (!it || it.id.charAt(0) === "@" || k === "win") return
     if (k === "combo") { deleteCombo(it.id); return }
     var next = favsOf(k).filter(function(f) { return f !== it.id })
     if (next.length === favsOf(k).length) next.push(it.id)
@@ -1149,6 +1326,7 @@ BarWidget {
     else if (t === "s") toggleSection("screen")
     else if (t === "C") toggleSection("color")
     else if (t === "w") toggleSection("wall")
+    else if (t === "W") toggleSection("win")
     else if (t === "c") toggleSection("mouse")
     else if (t === "x") setShiftOnly(!shiftOnly)
     else if (t === "p") togglePause()
@@ -1172,6 +1350,7 @@ BarWidget {
     function setMouse(name: string): void { root.applyMouse(name === "off" ? "" : name) }
     function wallpaper(name: string): void { root.setWall(name === "off" ? "" : name, true) }
     function sections(mode: string): void { root.setSections(mode) }
+    function windows(args: string): void { root.winRun(args.split(" ").filter(function(a) { return a !== "" })) }
     function combo(which: string): void { if (which === "save") root.saveCombo(); else root.applyCombo(root.comboAt(which), true) }
     function power(mode: string): void { root.setPower(mode === "" ? "toggle" : mode) }
     function strength(kind: string, value: string): void { Quickshell.execDetached([root.script, "strength", kind, value]) }
@@ -1182,11 +1361,12 @@ BarWidget {
     lister.running = true
     resolver.running = true
     wallStep("status")
+    winRun(["apply"])
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile,
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.winEffectFile, root.winColorFile, root.winTargetFile, root.winFxStrengthFile, root.winColStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -1199,10 +1379,11 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.barGlyph
-    active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn)
+    active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn || root.winEffectOn || root.winColorOn)
     tooltipText: "OmaShaders" + (root.paused ? " (paused)" : "") + "\nScreen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off")
                  + "\nColor: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
+                 + "\nWindows: " + ((root.winEffectOn || root.winColorOn) ? [root.winEffect, root.winColor].filter(function(x) { return x !== "" }).join(" + ") : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus.replace(/[<>&]/g, "?") : "")
                  + "\nclick: menu (hjkl) · right-click: pause / resume effects · middle-click: next wallpaper · scroll: step"
@@ -1290,6 +1471,8 @@ BarWidget {
     property bool strengthLive: false
     property int strength: 100
     property int strengthDefault: 100
+    property string strengthLabel: "Strength"
+    property var alsoSaved: []
     signal strengthPicked(int value)
     property bool hasCustom: false
     property string customHex: ""
@@ -1325,6 +1508,12 @@ BarWidget {
       var it = cats[ci].items || []
       for (var j = 0; j < it.length; j++) if (it[j].id === saved) return j
       return -1
+    }
+    function catHasMark(ci) {
+      if (alsoSaved.length === 0 || ci < 0 || ci >= cats.length) return false
+      var it = cats[ci].items || []
+      for (var j = 0; j < it.length; j++) if (alsoSaved.indexOf(it[j].id) >= 0) return true
+      return false
     }
     function catOfSaved() {
       for (var i = 0; i < cats.length; i++) if (cats[i].id !== "fav" && indexOfSaved(i) >= 0) return i
@@ -1431,7 +1620,7 @@ BarWidget {
             required property var modelData
             required property int index
             readonly property bool selected: index === sec.catIdx
-            readonly property bool hasSaved: modelData.id !== "fav" && sec.indexOfSaved(index) >= 0
+            readonly property bool hasSaved: modelData.id !== "fav" && (sec.indexOfSaved(index) >= 0 || sec.catHasMark(index))
             width: catCol.width
             height: sec.rowH
             radius: Style.space(6)
@@ -1490,7 +1679,7 @@ BarWidget {
           id: itemRow
           required property var modelData
           required property int index
-          readonly property bool isSaved: modelData.id === sec.saved
+          readonly property bool isSaved: modelData.id === sec.saved || sec.alsoSaved.indexOf(modelData.id) >= 0
           readonly property bool selected: index === sec.itemIdx
           width: list.width
           height: sec.rowH
@@ -1502,6 +1691,8 @@ BarWidget {
             anchors.left: parent.left
             anchors.leftMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, parent.width - Style.space(60))
+            elide: Text.ElideRight
             textFormat: Text.PlainText
             text: (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? "★ " : "") + itemRow.modelData.label
             color: root.fg
@@ -1569,7 +1760,7 @@ BarWidget {
         anchors.leftMargin: Style.space(10)
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
-        text: "Strength"
+        text: sec.strengthLabel
         color: root.fg
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body
@@ -1821,7 +2012,7 @@ BarWidget {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 7) / 8
+          readonly property real cell: (width - spacing * 8) / 9
 
           MenuRow {
             width: header.cell
@@ -1847,6 +2038,11 @@ BarWidget {
             width: header.cell
             label: (root.showMouse ? root.boxOn : root.boxOff) + "  Cursor  (c)"
             onClicked: root.toggleSection("mouse")
+          }
+          MenuRow {
+            width: header.cell
+            label: (root.showWin ? root.boxOn : root.boxOff) + "  Windows  (W)"
+            onClicked: root.toggleSection("win")
           }
           MenuRow {
             width: header.cell
@@ -1936,7 +2132,7 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showScreen && (root.showColor || root.showWall || root.showMouse || root.showCombo)
+            visible: root.showScreen && (root.showColor || root.showWall || root.showMouse || root.showWin || root.showCombo)
             width: 1
             height: screenSec.implicitHeight
             color: root.fgA(0.2)
@@ -1974,7 +2170,7 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showColor && (root.showWall || root.showMouse || root.showCombo)
+            visible: root.showColor && (root.showWall || root.showMouse || root.showWin || root.showCombo)
             width: 1
             height: screenSec.implicitHeight
             color: root.fgA(0.2)
@@ -2002,7 +2198,7 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showWall && (root.showMouse || root.showCombo)
+            visible: root.showWall && (root.showMouse || root.showWin || root.showCombo)
             width: 1
             height: screenSec.implicitHeight
             color: root.fgA(0.2)
@@ -2030,7 +2226,37 @@ BarWidget {
           }
 
           Rectangle {
-            visible: root.showMouse && root.showCombo
+            visible: root.showMouse && (root.showWin || root.showCombo)
+            width: 1
+            height: screenSec.implicitHeight
+            color: root.fgA(0.2)
+          }
+
+          SectionMenu {
+            id: winSec
+            visible: root.showWin
+            width: secRow.secWidth
+            title: "Windows"
+            rawCats: root.winCats
+            saved: root.savedOf("win")
+            alsoSaved: root.winMarks
+            favs: []
+            focused: root.focusKind === "win"
+            defaultCat: 0
+            hasStrength: true
+            strengthLabel: root.winPart === "color" ? "Color strength" : "Effect strength"
+            strengthLive: root.winPart === "color" ? root.winColorOn : root.winEffectOn
+            strength: root.winPart === "color" ? root.winColStrength : root.winFxStrength
+            strengthDefault: root.winPart === "color" ? root.defaultStrengthOf("color", root.winColor) : root.defaultStrengthOf("screen", root.winEffect)
+            onStrengthPicked: function(v) { root.setStrength(root.winPart === "color" ? "wincol" : "winfx", v) }
+            onPointed: function(item) { root.previewWin(item) }
+            onChosen: function(item, keep) { root.chooseWin(item, keep) }
+            onActed: function(id) { root.runAction("win", id) }
+            onFocusRequested: root.activeKind = "win"
+          }
+
+          Rectangle {
+            visible: root.showWin && root.showCombo
             width: 1
             height: screenSec.implicitHeight
             color: root.fgA(0.2)
@@ -2066,7 +2292,7 @@ BarWidget {
             if (root.comboFlash !== "") return root.comboFlash
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
-            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off")
+            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.showWin ? " · Windows: " + ((root.winEffectOn || root.winColorOn) ? [root.winEffect, root.winColor].filter(function(x) { return x !== "" }).join(" + ") : "off") : "")
           }
           color: root.fg
           font.family: root.bar.fontFamily
@@ -2079,7 +2305,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · s C w c W m menus · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

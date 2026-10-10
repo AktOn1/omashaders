@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.omashaders",
   "name": "OmaShaders",
-  "version": "1.10.3",
+  "version": "1.11.0",
   "author": "AktOn1",
   "license": "MIT",
   "description": "Brand new (one day old, expect rough edges). One bar icon opens menus for 38 full-screen GPU shader effects, 44 colour grades, 49 animated wallpaper effects and 24 cursor effects (overlays, plus shaders that bend the screen under the pointer). Hover to preview, strength slider per effect (starts readable), favourites, combos, pause key, GPU use.",
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "OmaShaders",
-    "description": "Click to open the menu: tick Screen, Color, Wallpaper and Cursor, hover to preview, Enter to keep, [ ] to adjust strength, p to pause. Right-click turns effects off, scroll steps the screen shader.",
+    "description": "Click to open the menu: tick Screen, Color, Wallpaper, Cursor and Windows, hover to preview, Enter to keep, [ ] to adjust strength, p to pause. Right-click turns effects off, scroll steps the screen shader.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",

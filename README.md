@@ -27,7 +27,7 @@ Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy she
 
 ## First run
 
-1. Click the monitor icon in the bar. A menu with up to five columns opens: **Screen**, **Color**, **Wallpaper**, **Cursor** and **Combos**. Tick the ones you want at the top; ticked menus sit side by side and your choice is remembered.
+1. Click the monitor icon in the bar. A menu with up to six columns opens: **Screen**, **Color**, **Wallpaper**, **Cursor**, **Windows** and **Combos**. Tick the ones you want at the top; ticked menus sit side by side and your choice is remembered.
 2. Move with `h j k l` or the arrow keys. Moving onto an effect with the keys previews it live; hovering with the mouse only highlights it; hold `Shift` while hovering to preview, and the previous setting comes back when you release Shift or move off the item (a click keeps it). Categories (left column) are never selected by hovering; click one.
 3. `Enter` keeps the effect and closes, `Space` keeps it and stays open, a click keeps it and stays open, `Esc` puts everything back as it was.
 4. Pick an effect and a colour together: the effect runs first, then the colour grade is applied to its result (for example `crt` + `gameboy` is a CRT look in Game Boy greens).
@@ -52,7 +52,7 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 
 | `r` / `R` | Surprise me in the focused menu / in every ticked menu |
 | `o` / `O` | off in the focused menu / in every ticked menu |
-| `s` `C` `w` `c` `m` | tick Screen / Color / Wallpaper / Cursor / Combos |
+| `s` `C` `w` `c` `W` `m` | tick Screen / Color / Wallpaper / Cursor / Windows / Combos |
 | `a` | include the animated (heavy) screen effects |
 | `x` | cursor effects only while Shift is held |
 | `g` / `G`, `1`-`9` | top / bottom, jump to a category |
@@ -73,6 +73,20 @@ Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power
 ### Animated effects
 
 Effects that move (grain, scan-sweep, vhs, heat-haze, glitch, hologram, matrix, fireflies, underwater, snowfall and a few more) need Hyprland's damage tracking switched off, which redraws the whole screen every frame and **raises GPU use a lot**. They are hidden until you press `a` (or turn on the setting below). While one is on, the plugin sets `debug:damage_tracking=0` itself so Hyprland shows no warning, and sets it back for static effects and for off. Static effects cost almost nothing.
+
+### Window shaders (optional, 1.11)
+
+The **Windows** column (`W`) draws the same effects and colour grades as Screen and Color, but only on the app windows you pick, so the desktop, bar and other apps stay untouched. Pick **Apps** first: *All windows* (new windows are included as they open) or one or more app classes, then choose an effect and/or a colour from the other categories. Strength has one slider per part (Effect strength while you are in an effect category, Color strength in a colour one). Windows follow the pause key (`p`). Combos do not include window shaders.
+
+Hyprland cannot do this by itself, so it needs the third-party plugin [HyprWindowShade](https://github.com/ManofJELLO/HyprWindowShade) (MIT, compiled against your Hyprland version, so it cannot ship with this plugin). If it is missing, the Windows column shows what to install (**Copy install commands** puts it on the clipboard):
+
+```
+hyprpm update
+hyprpm add https://github.com/ManofJELLO/HyprWindowShade
+hyprpm enable HyprWindowShade
+```
+
+The plugin must be built for your Hyprland version; if `hyprpm add` fails, the plugin's newest commit may need a newer Hyprland than you run (pick an older commit). OmaShaders loads an installed but not yet loaded copy itself with `hyprctl plugin load` (it looks in `hyprpm`'s cache and in `~/.local/share/hyprland/plugins/HyprWindowShade.so`; with a `.md5` file next to a hand-built copy it checks the file first). It only sets shaders per app class and never adds window rules or tags. Command line: `omashaders window status|effect set NAME|color set NAME|strength effect|color N|target all|none|add CLASS|remove CLASS|toggle CLASS|here|off`.
 
 ### Shift only (cursor effects)
 
@@ -120,6 +134,7 @@ State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current ef
 - **Wallpaper picker and next/previous:** these change your wallpaper with Omarchy's `omarchy-theme-bg-set`, on your click only. Picking makes a temporary folder of symlinks to your background images under `$XDG_RUNTIME_DIR` and removes it afterwards.
 - **Files written:** only the state directory above and the temporary folder just mentioned. Existing config of yours is never overwritten.
 - **Bend cursor effects:** a screen shader cannot see the pointer, so while one is selected `bin/cursor-bend` (python; polls the pointer from the Hyprland socket 60 times a second, writes a new shader file at most 30 times a second and only while the pointer moves, plus a short tail for the ripple-like ones) hands Hyprland a fresh composed shader through `hyprctl eval`. Screen and Color effects stay active, merged into the same shader. It starts and stops with the effect, exits with the shell, and then puts your normal shader back. With several monitors a 3x2 pixel marker (magenta, green, magenta) is drawn in the top-left corner of the pointer's monitor so only that monitor is bent; the shader hides it again.
+- **Window shaders:** the optional HyprWindowShade plugin is loaded into Hyprland with `hyprctl plugin load` (only when you set a window effect, or at login if one is set) and told per app class which shader file to use through `hyprctl eval`. Nothing is installed, built or downloaded by this plugin.
 - **Windows:** wallpaper and cursor effects are drawn in click-through layer-shell windows, one per monitor, that do not take keyboard focus. The menu takes keyboard focus while it is open.
 - **Bundled binaries:** the `.frag.qsb` files are compiled Qt shader packages (data, not programs), built from the `.frag` sources next to them with `bin/build-*-effects`.
 
@@ -147,6 +162,8 @@ Also remove the key bindings you added.
 - **Bend effects cost more than overlays:** the pointer position reaches the shader as a new file about 30 times a second, so Hyprland recompiles it each time (roughly 35% of a CPU core on the author's machine while the pointer moves, none while it rests). Use an overlay effect if that matters.
 - **Bend effect only shows on one monitor:** intended, it follows the pointer.
 - **Cursor effects never show:** you turned on "only while Shift is held" without the Shift binding above.
+- **Windows column says "Setup needed":** HyprWindowShade is not installed (see Window shaders above). After installing, reopen the menu.
+- **A window shader does not appear on one app:** the target is the app class (shown in the Apps list while the app is open); a window opened before you picked the effect is covered as soon as its class is targeted. Chrome / Electron apps with several windows share one class.
 - **GPU line empty:** neither `nvidia-smi` nor an AMD sysfs reading is available.
 
 Report bugs at https://github.com/AktOn1/omashaders/issues. How the effects work and how to add your own: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

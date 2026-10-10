@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""compose-shader OUT.frag [--fx FILE.frag PERCENT] [--col FILE.frag PERCENT] [--cur FILE.frag]
+"""compose-shader OUT.frag [--window] [--fx FILE.frag PERCENT] [--col FILE.frag PERCENT] [--cur FILE.frag]
 
 Build the one shader Hyprland runs: the effect first, then the colour grade on the effect's result.
 Each layer has a strength (0-100). --cur adds a cursor-bend layer (cursor-shaders/; its strength 0-100 blends the bent screen with the plain one): it defines `vec4 bend(vec2 uv)`
@@ -117,9 +117,10 @@ vec4 cur_tex(vec2 uv) {
 """
 
 
-def compose(fx=None, col=None, cur=None):
-    """fx/col/cur are (path, percent) tuples; returns the shader text."""
-    out = ["#version 300 es", "// composed: effect %s + colour %s%s" % (fx[0] if fx else "-", col[0] if col else "-", " + cursor " + cur[0] if cur else ""),
+def compose(fx=None, col=None, cur=None, window=False):
+    """fx/col/cur are (path, percent) tuples; returns the shader text. window=True builds a per-window shader for
+    HyprWindowShade (GLSL ES 3.20, premultiplied alpha taken from the window, so transparent margins stay transparent)."""
+    out = ["#version 320 es" if window else "#version 300 es", "// composed: effect %s + colour %s%s" % (fx[0] if fx else "-", col[0] if col else "-", " + cursor " + cur[0] if cur else ""),
            "precision highp float;", "in vec2 v_texcoord;", "uniform sampler2D tex;"]
     fx_src = fx_text = ""
     fx_native = False
@@ -153,6 +154,9 @@ def compose(fx=None, col=None, cur=None):
         body.append("    c_main();")
         if not col_native:
             body.append("    fragColor = vec4(mix(fx_in.rgb, fragColor.rgb, c_S), fragColor.a);")
+    if window:
+        body.append("    float w_a = texture(tex, v_texcoord).a;")
+        body.append("    fragColor = vec4(clamp(fragColor.rgb, 0.0, 1.0) * w_a, w_a);")
     body.append("}")
     return "\n".join(out + body) + "\n"
 
@@ -166,9 +170,12 @@ def main():
         print(custom_file(args[0], args[1]))
         return
     fx = col = cur = None
+    window = False
     while args:
         flag = args.pop(0)
-        if flag == "--fx":
+        if flag == "--window":
+            window = True
+        elif flag == "--fx":
             fx = (args.pop(0), args.pop(0))
         elif flag == "--col":
             col = (args.pop(0), args.pop(0))
@@ -178,7 +185,7 @@ def main():
             sys.exit(__doc__)
     if not fx and not col and not cur:
         sys.exit(__doc__)
-    open(out_path, "w").write(compose(fx, col, cur))
+    open(out_path, "w").write(compose(fx, col, cur, window))
 
 
 if __name__ == "__main__":

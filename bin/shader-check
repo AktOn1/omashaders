@@ -16,4 +16,15 @@ if [ $# -ge 3 ] && [ -z "$BEND_SKIP" ]; then
     grep -q '^ERROR' <<<"$out" && { echo "FAIL bend+$f"; echo "$out" | head -8; rc=1; }
   done
 fi
+# and as window shaders (#version 320 es, premultiplied alpha), alone and with a colour grade
+if [ $# -ge 3 ]; then
+  for f in "$R"/shaders/*.frag; do
+    python3 "$R/bin/compose-shader" "$T/c.frag" --window --fx "$f" 50 --col "$R/colors/vivid.frag" 50 && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL window+$f"; echo "$out" | head -8; rc=1; continue; }
+    grep -q '^ERROR' <<<"$out" && { echo "FAIL window+$f"; echo "$out" | head -8; rc=1; }
+  done
+  for f in "$R"/colors/*.frag; do
+    python3 "$R/bin/compose-shader" "$T/c.frag" --window --col "$f" 50 && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL window+$f"; echo "$out" | head -8; rc=1; continue; }
+    grep -q '^ERROR' <<<"$out" && { echo "FAIL window+$f"; echo "$out" | head -8; rc=1; }
+  done
+fi
 rm -rf "$T"; [ $rc = 0 ] && echo "all shaders ok"; exit $rc

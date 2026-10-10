@@ -3,6 +3,7 @@
 # usage: omashaders list [-a] | listall (name, static|animated|motion, category, description, screen|color|mouse; tab separated)
 #        | effect [status|list|set NAME|off] | color [status|list|set NAME|off] | mouse [status|list|set NAME|off]
 #        | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
+#        | window [status|effect|color|strength|target|classes|apply|load|off] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
@@ -77,6 +78,7 @@ DISABLED="$STATE_DIR/disabled"
 is_disabled() { [ -s "$DISABLED" ]; }
 # apply the current effect and colour layers: none, or one built shader file (bin/compose-shader)
 apply() {
+  window_apply >/dev/null 2>&1 || true
   local fx col file="" out args=()
   fx=$(current); col=$(current_color)
   [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
@@ -151,6 +153,7 @@ power() { # [status|on|off|toggle] ; "on" = shaders enabled
     off) mkdir -p "$STATE_DIR"; echo 1 > "$DISABLED"; apply ;;
     *) echo "$now"; return ;;
   esac
+  window_apply
   if [ "$2" = --notify ] && command -v notify-send >/dev/null 2>&1; then
     local fx col msg="paused"
     fx=$(current); col=$(current_color)
@@ -162,6 +165,150 @@ power() { # [status|on|off|toggle] ; "on" = shaders enabled
 effect_off() { lock; : > "$STATE"; apply; }
 color_off() { lock; : > "$COLOR_STATE"; apply; }
 turn_off() { lock; : > "$STATE"; : > "$COLOR_STATE"; apply; }
+# ---- window shaders: the same effect and colour lists, drawn on windows only (needs the HyprWindowShade Hyprland plugin) ----
+# State: window-effect, window-color, window-target (one line per app class, or "*" for all windows), window-applied (classes we set).
+WSH_LUA='hl.plugin.HyprWindowShade'
+WDIR="$STATE_DIR/built-win"
+wcur() { cat "$STATE_DIR/window-$1" 2>/dev/null; }
+wcur_strength() { local v; v=$(cat "$STATE_DIR/window-strength-$1" 2>/dev/null); echo "${v:-100}"; }
+window_plugin_loaded() { hyprctl plugin list 2>/dev/null | grep -q 'HyprWindowShade'; }
+window_plugin_file() {
+  local f
+  for f in "${OMASHADERS_WINDOW_PLUGIN:-}" "${XDG_DATA_HOME:-$HOME/.local/share}/hyprland/plugins/HyprWindowShade.so" "/var/cache/hyprpm/$USER/HyprWindowShade/HyprWindowShade.so"; do
+    [ -n "$f" ] && [ -f "$f" ] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+# load the plugin into the running session; a truncated .so can crash Hyprland, so a stored .md5 must match
+window_load() {
+  window_plugin_loaded && return 0
+  local f; f=$(window_plugin_file) || { echo "HyprWindowShade is not installed (see README: Window shaders)" >&2; return 1; }
+  if [ -f "$f.md5" ] && [ "$(md5sum < "$f" | cut -d' ' -f1)" != "$(cut -d' ' -f1 < "$f.md5")" ]; then echo "plugin file is damaged (md5 differs): $f" >&2; return 1; fi
+  hyprctl plugin load "$f" >/dev/null 2>&1; window_plugin_loaded
+}
+safe_class() { [[ "$1" =~ ^[A-Za-z0-9._:+@\ -]+$ ]]; }
+open_classes() { hyprctl clients -j 2>/dev/null | python3 -c 'import json,sys
+seen=[]
+for c in json.load(sys.stdin):
+    k=c.get("class") or ""
+    if k and k not in seen: seen.append(k)
+print("\n".join(seen))'; }
+# the built window shader for the current window effect + colour (empty when none)
+window_file() {
+  local fx col sf sc cf="" out args=()
+  fx=$(wcur effect); col=$(wcur color)
+  [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
+  [ -n "$col" ] && [ ! -f "$(cfile "$col")" ] && col=""
+  [ -z "$fx$col" ] && return 0
+  [ -n "$col" ] && cf=$(cfile "$col")
+  sf=$(wcur_strength effect); sc=$(wcur_strength color)
+  out="$WDIR/${fx:--}@${sf}+${col:--}@${sc}.frag"
+  [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
+  [ -n "$col" ] && args+=(--col "$cf" "$sc")
+  if [ ! -s "$out" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ] || { [ -n "$fx" ] && [ "$out" -ot "$DIR/$fx.frag" ]; } || { [ -n "$col" ] && [ "$out" -ot "$cf" ]; }; then
+    mkdir -p "$WDIR"
+    python3 "$ROOT/bin/compose-shader" "$out.tmp" --window "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build window shader $fx + $col" >&2; return 1; }
+  fi
+  find "$WDIR" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
+  echo "$out"
+}
+wsh_class() { hyprctl eval "$WSH_LUA.classshader(\"$1\",\"$2\")" >/dev/null 2>&1; } # CLASS PATH|clear
+# make the plugin's per-class shaders match the state: set on every target class, clear the ones we set before
+window_apply() {
+  local file="" want=() c old=() applied="$STATE_DIR/window-applied" tg
+  [ -n "$(wcur effect)$(wcur color)" ] || [ -s "$applied" ] || return 0
+  local sigf="$STATE_DIR/window-sig" sig fresh=0
+  if ! window_plugin_loaded; then
+    [ -n "$(wcur effect)$(wcur color)" ] && ! is_disabled || return 0
+    window_load || return 1
+    fresh=1
+  fi
+  is_disabled || file=$(window_file) || return 1
+  if [ -n "$file" ]; then
+    tg=$(cat "$STATE_DIR/window-target" 2>/dev/null)
+    if grep -qx '\*' <<<"$tg"; then while read -r c; do [ -n "$c" ] && want+=("$c"); done < <(open_classes; grep -vx '\*' <<<"$tg"); else while read -r c; do [ -n "$c" ] && want+=("$c"); done <<<"$tg"; fi
+  fi
+  sig="$HYPRLAND_INSTANCE_SIGNATURE|$(hyprctl plugin list 2>/dev/null | sed -n 's/.*Handle: //p')|$file|${want[*]}"
+  [ "$fresh" = 0 ] && [ "$(cat "$sigf" 2>/dev/null)" = "$sig" ] && return 0
+  [ -s "$applied" ] && mapfile -t old < "$applied"
+  for c in "${old[@]}"; do
+    [[ " ${want[*]} " == *" $c "* ]] || { safe_class "$c" && wsh_class "$c" clear; }
+  done
+  : > "$applied.tmp"
+  for c in "${want[@]}"; do
+    safe_class "$c" || continue
+    wsh_class "$c" "$file"; echo "$c" >> "$applied.tmp"
+  done
+  mv "$applied.tmp" "$applied"; echo "$sig" > "$sigf"
+}
+window_target() { # all | none | add CLASS | remove CLASS | toggle CLASS | here
+  local f="$STATE_DIR/window-target" mode="$1" cls="$2" cur
+  mkdir -p "$STATE_DIR"; touch "$f"
+  case "$mode" in
+    all) echo '*' > "$f" ;;
+    none) : > "$f" ;;
+    here) cls=$(hyprctl activewindow -j 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class",""))'); [ -n "$cls" ] || { echo "no active window" >&2; return 1; }; mode=toggle ;;
+  esac
+  case "$mode" in
+    add|remove|toggle|here)
+      safe_class "$cls" || { echo "bad class name: $cls" >&2; return 1; }
+      cur=$(grep -vx '\*' "$f" 2>/dev/null)
+      if grep -qxF -- "$cls" "$f"; then [ "$mode" = add ] || cur=$(grep -vxF -- "$cls" <<<"$cur"); else [ "$mode" = remove ] || cur=$(printf '%s\n%s' "$cur" "$cls"); fi
+      grep -qx '\*' "$f" && cur=$(printf '*\n%s' "$cur")
+      printf '%s\n' "$cur" | grep . > "$f" || : > "$f" ;;
+  esac
+}
+window_set() { # effect|color NAME|off
+  local kind="$1" name="$2" dir="$DIR" k=fx file
+  [ "$kind" = color ] && { dir="$CDIR"; k=col; }
+  mkdir -p "$STATE_DIR"
+  if [ "$name" = off ] || [ -z "$name" ]; then : > "$STATE_DIR/window-$kind"
+  else
+    if [ "$kind" = color ]; then file=$(cfile "$name"); else file="$dir/$name.frag"; fi
+    [ -f "$file" ] || { echo "unknown $kind: $name" >&2; return 1; }
+    echo "$name" > "$STATE_DIR/window-$kind"
+    echo "$(remembered_strength "$k" "$name" "$file")" > "$STATE_DIR/window-strength-$kind"
+    [ -s "$STATE_DIR/window-target" ] || echo '*' > "$STATE_DIR/window-target"
+  fi
+}
+window_strength() { # effect|color [PERCENT|+N|-N|reset]
+  local kind="$1" val="$2" cur name file
+  cur=$(wcur_strength "$kind")
+  [ -z "$val" ] && { echo "$cur"; return; }
+  name=$(wcur "$kind")
+  if [ "$kind" = effect ]; then file="$DIR/$name.frag"; else file=$(cfile "$name"); fi
+  case "$val" in
+    reset) val=$(default_strength "$file") ;;
+    +*|-*) val=$(( cur + val )) ;;
+    ''|*[!0-9]*) echo "usage: omashaders window strength effect|color PERCENT|+N|-N|reset" >&2; return 1 ;;
+  esac
+  [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
+  echo "$val" > "$STATE_DIR/window-strength-$kind"
+}
+window_cmd() {
+  lock
+  case "${1:-status}" in
+    status) printf 'plugin=%s effect=%s color=%s strength=%s/%s target=%s\n' "$(window_plugin_loaded && echo loaded || { window_plugin_file >/dev/null && echo installed || echo missing; })" \
+      "$(wcur effect | grep . || echo off)" "$(wcur color | grep . || echo off)" "$(wcur_strength effect)" "$(wcur_strength color)" "$(cat "$STATE_DIR/window-target" 2>/dev/null | paste -sd, | grep . || echo none)" ;;
+    effect|color) case "$2" in
+        set) window_set "$1" "$3" && window_apply ;;
+        off) window_set "$1" off && window_apply ;;
+        status) wcur "$1" | grep . || echo off ;;
+        list) if [ "$1" = effect ]; then names -a; else color_names; fi ;;
+        *) echo "usage: omashaders window $1 [status|list|set NAME|off]" >&2; return 1 ;;
+      esac ;;
+    strength) window_strength "$2" "$3" && window_apply ;;
+    target) case "$2" in
+        '') cat "$STATE_DIR/window-target" 2>/dev/null ;;
+        *) window_target "$2" "$3" && window_apply ;;
+      esac ;;
+    classes) open_classes ;;
+    apply|sync) window_apply ;;
+    load) window_load ;;
+    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; window_apply ;;
+    *) echo "usage: omashaders window [status|effect|color|strength|target|classes|apply|load|off]" >&2; return 1 ;;
+  esac
+}
 step() { # step DIRECTION(1|-1) [-a]
   local list=() n cur i idx=-1
   while read -r n; do [ -n "$n" ] && list+=("$n"); done < <(names "$2")
@@ -250,6 +397,7 @@ case "${1:-}" in
       wall|mouse) set_overlay_strength "$2" "$3" ;;
       *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
+  window) window_cmd "$2" "$3" "$4" ;;
   power) power "$2" "$3" ;;
   status) current | grep . || echo off ;;
   off) turn_off ;;
