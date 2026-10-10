@@ -42,7 +42,8 @@ Bar icon: **left click** menu, **right click** all effects off, **middle click**
 | `h j k l`, arrows | move between categories, effects and menus |
 | `Tab` | jump to the next menu |
 | `Enter` / `Space` | keep (and close) / keep and stay open |
-| `Esc`, `q` | undo and close |
+| `/` | filter every column at once: type to narrow (name, description, category; several words must all match), `Enter` keeps the filter and returns to `h j k l`, `Esc` clears it |
+| `Esc`, `q` | clear the filter, or undo and close |
 | `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen or Color menu) |
 | `p` | pause or resume every effect; they come back exactly as they were |
 | `f` | favourite (each menu has its own list) |

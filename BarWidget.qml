@@ -799,6 +799,28 @@ BarWidget {
   // ---------------------------------------------------------------- menu actions
   property bool popupOpen: false
   property bool viaEnter: false
+  // "/" filter: one query narrows every column at once (label, description, hint and category name; all words must match)
+  property string query: ""
+  function focusSearch() { searchField.forceActiveFocus(); searchField.selectAll() }
+  function leaveSearch() { keys.forceActiveFocus() }
+  function clearSearch() { searchField.text = ""; leaveSearch() }
+  function applyQuery() {
+    Qt.callLater(function() {
+      ["screen", "color", "wall", "mouse", "combo"].forEach(function(k) { secOf(k).resetForQuery() })
+      if (query.trim() !== "" && secOf(focusKind).cats.length === 0) {
+        for (var i = 0; i < visibleKinds.length; i++) if (secOf(visibleKinds[i]).cats.length > 0) { activeKind = visibleKinds[i]; break }
+      }
+    })
+  }
+  function matchTotal() {
+    var n = 0
+    visibleKinds.forEach(function(k) { n += secOf(k).matchCount })
+    return n
+  }
+  function cycleKind(dir) {
+    var i = visibleKinds.indexOf(focusKind) + dir
+    activeKind = visibleKinds[(i + nVis) % nVis]
+  }
   // the bar addresses panel widgets through these
   readonly property bool opened: popupOpen
   property bool popoutSwitchClosing: false
@@ -821,6 +843,7 @@ BarWidget {
       mousePreviewed = false
       wallPreviewed = false
       activeKind = visibleKinds[0]
+      searchField.text = ""
       screenSec.sync()
       colorSec.sync()
       wallSec.sync()
@@ -897,7 +920,8 @@ BarWidget {
   }
   function handleText(t) {
     var k = focusKind, s = secOf(k)
-    if (t === "q") close()
+    if (t === "/") focusSearch()
+    else if (t === "q") close()
     else if (t === "a") setAnimated()
     else if (t === "o" || t === "0") offIn(k)
     else if (t === "O") offAll()
@@ -1019,7 +1043,29 @@ BarWidget {
   component SectionMenu: Item {
     id: sec
     property string title: ""
-    property var cats: []
+    property var rawCats: []
+    readonly property bool filtering: root.query.trim() !== ""
+    readonly property var cats: {
+      if (!filtering) return rawCats
+      var terms = root.query.trim().toLowerCase().split(/\s+/)
+      var out = []
+      rawCats.forEach(function(c) {
+        if (c.action || c.id === "fav" || !c.items) return
+        var catText = String(c.label).toLowerCase()
+        var items = c.items.filter(function(it) {
+          if (it.id.charAt(0) === "@") return false
+          var hay = (it.label + " " + (it.desc || "") + " " + (it.hint || "") + " " + catText).toLowerCase()
+          return terms.every(function(t) { return hay.indexOf(t) >= 0 })
+        })
+        if (items.length > 0) out.push({ id: c.id, label: c.label, items: items, note: "" })
+      })
+      return out
+    }
+    readonly property int matchCount: {
+      var n = 0
+      cats.forEach(function(c) { n += (c.items || []).length })
+      return n
+    }
     property string saved: ""
     property var favs: []
     property bool focused: false
@@ -1060,6 +1106,12 @@ BarWidget {
       var ci = catOfSaved()
       if (ci >= 0) { catIdx = ci; itemIdx = indexOfSaved(ci); col = 1 }
       else { catIdx = Math.min(defaultCat, Math.max(0, cats.length - 1)); itemIdx = 0; col = 0 }
+    }
+    function resetForQuery() {
+      if (!filtering) { sync(); return }
+      catIdx = 0
+      itemIdx = 0
+      col = cats.length > 0 ? 1 : 0
     }
     function gotoCat(n) {
       if (n < 0 || n >= cats.length) return
@@ -1375,6 +1427,18 @@ BarWidget {
     }
 
     Text {
+      visible: sec.filtering && sec.cats.length === 0
+      x: Style.space(10)
+      y: titleText.height + Style.space(8)
+      textFormat: Text.PlainText
+      text: "No matches"
+      opacity: 0.45
+      color: root.fg
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body * 0.9
+    }
+
+    Text {
       visible: sec.curItems.length === 0 && sec.curCat !== null && !sec.curCat.action
       x: catCol.width + panes.spacing + Style.space(10)
       y: titleText.height + Style.space(8)
@@ -1404,13 +1468,12 @@ BarWidget {
       id: keys
       anchors.fill: parent
       onMoveRequested: function(dx, dy) { root.moveKeys(dx, dy) }
-      onTabRequested: function(dir) {
-        var i = root.visibleKinds.indexOf(root.focusKind) + dir
-        root.activeKind = root.visibleKinds[(i + root.nVis) % root.nVis]
-      }
+      blocked: searchField.activeFocus
+      onTabRequested: function(dir) { root.cycleKind(dir) }
+      onDeleteRequested: root.handleText("x")
       onReturnRequested: root.viaEnter = true
       onActivateRequested: { root.activeSec.activate(!root.viaEnter); root.viaEnter = false }
-      onCloseRequested: root.close()
+      onCloseRequested: { if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
 
       Column {
@@ -1468,6 +1531,46 @@ BarWidget {
           }
         }
 
+        Row {
+          id: searchRow
+          width: body.width
+          height: Style.space(28)
+          spacing: Style.space(10)
+
+          TextField {
+            id: searchField
+            width: searchRow.width - matchText.width - searchRow.spacing
+            height: searchRow.height
+            verticalPadding: Style.space(2)
+            placeholderText: "/  filter every column"
+            foreground: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+            onTextChanged: { root.query = text; root.applyQuery() }
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Escape) { root.clearSearch(); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.leaveSearch(); event.accepted = true }
+              else if (event.key === Qt.Key_Down) { root.moveKeys(0, 1); event.accepted = true }
+              else if (event.key === Qt.Key_Up) { root.moveKeys(0, -1); event.accepted = true }
+              else if (event.key === Qt.Key_Tab) { root.cycleKind(1); event.accepted = true }
+              else if (event.key === Qt.Key_Backtab) { root.cycleKind(-1); event.accepted = true }
+            }
+          }
+          Text {
+            id: matchText
+            width: Style.space(90)
+            height: searchRow.height
+            verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: Text.AlignRight
+            textFormat: Text.PlainText
+            text: root.query.trim() === "" ? "" : root.matchTotal() + " found"
+            opacity: 0.6
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.85
+          }
+        }
+
         Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
 
         Row {
@@ -1481,7 +1584,7 @@ BarWidget {
             visible: root.showScreen
             width: secRow.secWidth
             title: "Screen"
-            cats: root.screenCats
+            rawCats: root.screenCats
             saved: root.current
             favs: root.screenFavs
             focused: root.focusKind === "screen"
@@ -1509,7 +1612,7 @@ BarWidget {
             visible: root.showColor
             width: Math.floor(secRow.secWidth * root.colorWeight)
             title: "Color"
-            cats: root.colorCats
+            rawCats: root.colorCats
             saved: root.colorCurrent
             favs: root.colorFavs
             focused: root.focusKind === "color"
@@ -1537,7 +1640,7 @@ BarWidget {
             visible: root.showWall
             width: secRow.secWidth
             title: "Wallpaper"
-            cats: root.wallCats
+            rawCats: root.wallCats
             saved: root.wallShown
             favs: root.wallFavs
             focused: root.focusKind === "wall"
@@ -1560,7 +1663,7 @@ BarWidget {
             visible: root.showMouse
             width: secRow.secWidth
             title: "Cursor"
-            cats: root.mouseCats
+            rawCats: root.mouseCats
             saved: root.mouseCurrent
             favs: root.mouseFavs
             focused: root.focusKind === "mouse"
@@ -1583,7 +1686,7 @@ BarWidget {
             visible: root.showCombo
             width: Math.floor(secRow.secWidth * root.comboWeight)
             title: "Combos"
-            cats: root.comboCats
+            rawCats: root.comboCats
             saved: root.comboNow
             favs: []
             focused: root.focusKind === "combo"
@@ -1621,7 +1724,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc undo"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily
