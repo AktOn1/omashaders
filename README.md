@@ -88,7 +88,7 @@ Effects that move (grain, scan-sweep, vhs, heat-haze, glitch, hologram, matrix, 
 
 ### What is on, and what it costs (1.14)
 
-Under the menus a line lists everything that is active right now (screen with its mix, colour, wallpaper, cursor, windows). While the plugin runs it also keeps a small log, `perf.jsonl` in the state folder: every 4 seconds while an effect is on (every 30 s otherwise) it records which layers are on and how much GPU `Hyprland` and the shell use (per process, from `nvidia-smi pmon`, so other apps do not count), their CPU use, VRAM, power and temperature. Nothing leaves the machine.
+Under the menus a line lists everything that is active right now (screen and its mix, colour and its mix, wallpaper, cursor, window effect, window colour, frame, and each app or panel with its own window setting) as clickable chips: **click a chip to switch just that one off** (an app's chip removes its own setting, so it follows All windows again; clearing the main screen or colour chip also clears its mix). The menu itself is a shell panel, not a window, so Windows shaders on All windows never touch it. While the plugin runs it also keeps a small log, `perf.jsonl` in the state folder: every 4 seconds while an effect is on (every 30 s otherwise) it records which layers are on and how much GPU `Hyprland` and the shell use (per process, from `nvidia-smi pmon`, so other apps do not count), their CPU use, VRAM, power and temperature. Nothing leaves the machine.
 
     omashaders perf report [--days N] [--notify]   cost per effect against the idle baseline, heavy ones first, plus crashes
     omashaders perf bench [--kinds screen,color,wall] [--only a,b]   try effects one by one (about 5 s each) and measure; your own effects are restored afterwards

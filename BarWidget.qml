@@ -1370,14 +1370,34 @@ BarWidget {
   function perfName(n) { return n.indexOf("custom-") === 0 ? "custom" : n }
   readonly property var activeNow: {
     var a = []
-    if (shaderOn) a.push("Screen " + current + " " + fxStrength + "%" + costTag("screen", current)
-                         + (mixSecondOf("screen") !== "" ? (mixEffectMode === "blend" ? " ~ " : " + ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2) : ""))
-    if (colorOn) a.push("Color " + colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent))
-                        + (mixSecondOf("color") !== "" ? (mixColorMode === "blend" ? " ~ " : " + ") + color2 + " " + mixColorAmt + "%" : ""))
-    if (wallOn) a.push("Wallpaper " + wallLabel(wallShown) + costTag("wall", wallShown))
-    if (mouseOn) a.push("Cursor " + mouseCurrent + costTag("cursor", mouseCurrent))
-    if (winAnyOn) a.push("Windows " + winOwnText() + [winEffect !== "" ? winEffect + costTag("win", winEffect) : "", winColor !== "" ? winColor + costTag("wincolor", perfName(winColor)) : "", winFrame !== "" ? "frame " + winFrame : ""].filter(function(x) { return x !== "" }).join(" + "))
+    function add(key, text) { a.push({ key: key, text: text }) }
+    if (shaderOn) {
+      add("screen", "Screen " + current + " " + fxStrength + "%" + costTag("screen", current))
+      if (mixSecondOf("screen") !== "") add("screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2))
+    }
+    if (colorOn) {
+      add("color", "Color " + colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)))
+      if (mixSecondOf("color") !== "") add("color2", (mixColorMode === "blend" ? "~ " : "+ ") + color2 + " " + mixColorAmt + "%")
+    }
+    if (wallOn) add("wall", "Wallpaper " + wallLabel(wallShown) + costTag("wall", wallShown))
+    if (mouseOn) add("mouse", "Cursor " + mouseCurrent + costTag("cursor", mouseCurrent))
+    if (winEffectOn) add("winfx", "Windows " + winEffect + costTag("win", winEffect))
+    if (winColorOn) add("wincol", "Windows " + winColor + costTag("wincolor", perfName(winColor)))
+    if (winFrameOn) add("winframe", "Frame " + winFrame)
+    Object.keys(winApps).forEach(function(c) { add("app:" + c, (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c)) })
     return a
+  }
+  function removeActive(key) {
+    if (key === "screen") offIn("screen")
+    else if (key === "screen2") Quickshell.execDetached([script, "mix", "effect", "off"])
+    else if (key === "color") offIn("color")
+    else if (key === "color2") Quickshell.execDetached([script, "mix", "color", "off"])
+    else if (key === "wall") setWall("", true)
+    else if (key === "mouse") offIn("mouse")
+    else if (key === "winfx") winRun(["effect", "off"])
+    else if (key === "wincol") winRun(["color", "off"])
+    else if (key === "winframe") winRun(["frame", "off"])
+    else if (key.indexOf("app:") === 0) winRun(["-a", key.slice(4), "inherit"])
   }
   function winOwnText() {
     var l = Object.keys(winApps).map(function(c) { return (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c) })
@@ -2709,19 +2729,57 @@ BarWidget {
           width: body.width
           spacing: Style.space(6)
 
-          Text {
+          Flow {
+            id: activeFlow
             width: activeRow.width - reportBtn.width - activeRow.spacing
-            height: Math.max(reportBtn.height, implicitHeight)
-            verticalAlignment: Text.AlignVCenter
+            spacing: Style.space(4)
             leftPadding: Style.space(10)
-            wrapMode: Text.WordWrap
-            maximumLineCount: 2
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-            text: (root.paused ? "PAUSED (p to resume) · " : "") + (root.activeNow.length > 0 ? "Active now (" + root.activeNow.length + "): " + root.activeNow.join("  ·  ") : "Active now: nothing")
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body
+
+            Text {
+              height: Style.space(24)
+              verticalAlignment: Text.AlignVCenter
+              textFormat: Text.PlainText
+              visible: root.paused
+              text: "PAUSED (p to resume) ·"
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              height: Style.space(24)
+              verticalAlignment: Text.AlignVCenter
+              text: root.activeNow.length > 0 ? "Active now (" + root.activeNow.length + "), click to remove:" : "Active now: nothing"
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Repeater {
+              model: root.activeNow
+              delegate: Rectangle {
+                id: chip
+                required property var modelData
+                width: chipText.implicitWidth + Style.space(20)
+                height: Style.space(24)
+                radius: Style.space(12)
+                color: chipMouse.containsMouse ? root.fgA(0.22) : root.fgA(0.09)
+                Text {
+                  id: chipText
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: chip.modelData.text + "  ✕"
+                  color: root.fg
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                MouseArea {
+                  id: chipMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.removeActive(chip.modelData.key)
+                }
+              }
+            }
           }
           MenuRow {
             id: reportBtn
