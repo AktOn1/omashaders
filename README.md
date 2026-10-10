@@ -45,6 +45,8 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 | `/` | filter every column at once: type to narrow (name, description, category; several words must all match), `Enter` keeps the filter and returns to `h j k l`, `Esc` clears it |
 | `Esc`, `q` | clear the filter, or undo and close |
 | `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen, Color, Wallpaper or Cursor menu; wallpaper and cursor strength is how visible the effect is over the real wallpaper / screen) |
+| `Ctrl+Enter`, `Ctrl+click` | mix a second effect (Screen) or grade (Color) with the first, see Mixing below. Plain `Enter` / click replaces both |
+| `t`, `,` `.`, `<` `>`, `D`, `Backspace` | with a mix on: stack / blend, mix amount -/+ 5 % and -/+ 1 %, amount back to its start value, remove the second |
 | `u`, `U` | custom colour: focus the hex field (`Enter` applies it) / save the custom colour as a favourite (the star next to the field does the same). The H, S and V rails under the Color menu pick it by mouse |
 | `p` | pause or resume every effect; they come back exactly as they were |
 | `f` | favourite (each menu has its own list) |
@@ -69,6 +71,15 @@ hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("omarchy-shell io.github.akton1.omash
 ```
 
 Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power on|off|toggle|set NAME|setColor NAME|setMouse NAME|wallpaper NAME|strength effect|color N|sections screen|color|wall|mouse|both|all|combo N|combo save|shiftOnly on|off|toggle`. The effect script can also be run directly: `bin/omashaders list|status|set NAME|off|effect ...|color ...|strength ...|power ...`.
+
+### Mixing two effects (1.12)
+
+Hold **Ctrl** while you pick (`Ctrl+Enter`, or `Ctrl+click`) a second effect in the Screen menu, or a second grade in the Color menu. The first stays; the second is marked `+ stack` / `+ blend`, and a **Mix** row appears under the strength slider. Picking the second again with Ctrl removes it.
+
+- **Stack:** the second runs on the result of the first, and the Mix slider is the second one's strength (pixelate under a CRT, an amber grade on top of a duotone ...).
+- **Blend:** both run on the original picture and the slider is the share of the second (0 % = only the first, 100 % = only the second).
+
+Click the mode name (or press `t`) to flip between them. Both layers are merged into the same single shader Hyprland runs, so a mix costs about the sum of both effects; mixing an animated effect needs the same `debug:damage_tracking=0` as any animated one. While a mix is on, hover and key-move previews are off so they cannot throw it away; choosing any item normally replaces both, and so do Surprise me, Off and Combos (combos do not store a mix). Window shaders and the Wallpaper / Cursor menus do not mix. Command line: `omashaders mix effect|color status|set NAME|off|mode stack|blend|toggle|amount N|+N|-N|reset`.
 
 ### Animated effects
 
@@ -124,7 +135,7 @@ Plugin settings (Omarchy settings UI):
 
 **Starter combos:** the Combos menu comes with ready-made combinations (file `starter-combos`, kept in step with the author's own list). Each release adds the new ones to your list, once: a combo you removed with `f` does not come back, and your own combos are never changed. To ship your own set from a checkout, create an empty file `dev-export` in the state folder; then every save or remove also rewrites `starter-combos`.
 
-State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current effects, strengths, favourites, combos, pause flag, built shader files). Hyprland forgets a runtime screen shader on a config reload; the icon re-applies it.
+State lives in `~/.local/state/omarchy/io.github.akton1.omashaders/` (current effects, mixes, strengths, favourites, combos, pause flag, built shader files). Hyprland forgets a runtime screen shader on a config reload; the icon re-applies it.
 
 ## Permissions and behaviour
 

@@ -27,4 +27,21 @@ if [ $# -ge 3 ]; then
     grep -q '^ERROR' <<<"$out" && { echo "FAIL window+$f"; echo "$out" | head -8; rc=1; }
   done
 fi
+# mixing: every effect as the second (stack and blend) and as the first layer, every colour as the second one
+if [ $# -ge 3 ]; then
+  for f in "$R"/shaders/*.frag; do
+    for m in stack blend; do
+      python3 "$R/bin/compose-shader" "$T/c.frag" --fx "$R/shaders/crt.frag" 50 --fx2 "$f" 50 $m 50 --col "$R/colors/sepia.frag" 50 --col2 "$R/colors/vivid.frag" 50 $m 50 && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL mix $m 2nd $f"; echo "$out" | head -8; rc=1; continue; }
+      grep -q '^ERROR' <<<"$out" && { echo "FAIL mix $m 2nd $f"; echo "$out" | head -8; rc=1; }
+      python3 "$R/bin/compose-shader" "$T/c.frag" --window --fx "$f" 50 --fx2 "$R/shaders/pixelate.frag" 50 $m 50 --cur "$R/cursor-shaders/swirl.frag" && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL mix $m 1st $f"; echo "$out" | head -8; rc=1; continue; }
+      grep -q '^ERROR' <<<"$out" && { echo "FAIL mix $m 1st $f"; echo "$out" | head -8; rc=1; }
+    done
+  done
+  for f in "$R"/colors/*.frag; do
+    for m in stack blend; do
+      python3 "$R/bin/compose-shader" "$T/c.frag" --fx "$R/shaders/crt.frag" 50 --col "$R/colors/sepia.frag" 50 --col2 "$f" 50 $m 50 && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL colour mix $m $f"; echo "$out" | head -8; rc=1; continue; }
+      grep -q '^ERROR' <<<"$out" && { echo "FAIL colour mix $m $f"; echo "$out" | head -8; rc=1; }
+    done
+  done
+fi
 rm -rf "$T"; [ $rc = 0 ] && echo "all shaders ok"; exit $rc

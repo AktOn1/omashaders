@@ -76,6 +76,28 @@ def monitors():
     return out
 
 
+def second_layer(kind, primary):
+    """(path, percent, mode, mix) of the second effect/colour mixed into the first one (bin/omashaders mix ...), or None."""
+    name = read(kind + "2")
+    if not primary or not name or name == primary:
+        return None
+    path = os.path.join(ROOT, "shaders" if kind == "effect" else "colors", name + ".frag")
+    if kind == "color" and cs.CUSTOM_RE.match(name):
+        path = cs.custom_file(STATE, name)
+    if not os.path.isfile(path):
+        return None
+    parts = (read("mix-" + kind) or "stack 100").split()
+    mode = parts[0] if parts and parts[0] in ("stack", "blend") else "stack"
+    try:
+        val = max(0, min(100, int(parts[1])))
+    except (IndexError, ValueError):
+        val = 100
+    pct = val
+    if mode == "blend":
+        pct = read("strengths/%s-%s" % ("fx" if kind == "effect" else "col", name)) or header(path, "strength", "100")
+    return (path, pct, mode, val)
+
+
 class Template:
     """The composed shader for the current effect + colour + bend layers, with a cursor-constants slot."""
 
@@ -104,15 +126,17 @@ class Template:
             bs = max(0, min(100, int(read("strength-mouse") or "100")))
         except ValueError:
             bs = 100
-        key = (name, fx, col, read("strength-effect"), read("strength-color"), bs, paused)
+        fx2 = second_layer("effect", fx)
+        col2 = second_layer("color", col)
+        key = (name, fx, col, read("strength-effect"), read("strength-color"), bs, paused, fx2, col2)
         if key == self.key:
             return True
         self.key = key
         fxl = (fxp, read("strength-effect") or "100") if fx and not paused else None
         coll = (colp, read("strength-color") or "100") if col and not paused else None
-        text = cs.compose(fxl, coll, (cur, bs))
+        text = cs.compose(fxl, coll, (cur, bs), fx2=fx2, col2=col2)
         self.pre, _, self.post = text.partition(cs.CUR_MARK + "\n" + cs.CUR_DEFAULTS)
-        self.animated = bool(fxl) and is_animated(fxp)
+        self.animated = bool(fxl) and (is_animated(fxp) or bool(fx2 and is_animated(fx2[0])))
         try:
             self.tail = float(header(cur, "tail", "0"))
         except ValueError:

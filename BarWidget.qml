@@ -44,6 +44,10 @@ BarWidget {
   readonly property string colStrengthFile: stateDir + "/strength-color"
   readonly property string wallStrengthFile: stateDir + "/strength-wall"
   readonly property string mouseStrengthFile: stateDir + "/strength-mouse"
+  readonly property string effect2File: stateDir + "/effect2"
+  readonly property string color2File: stateDir + "/color2"
+  readonly property string mixEffectFile: stateDir + "/mix-effect"
+  readonly property string mixColorFile: stateDir + "/mix-color"
   readonly property string winEffectFile: stateDir + "/window-effect"
   readonly property string winColorFile: stateDir + "/window-color"
   readonly property string winTargetFile: stateDir + "/window-target"
@@ -337,6 +341,113 @@ BarWidget {
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (!winColSender.busy) root.winColStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
     onLoadFailed: root.winColStrength = 100
   }
+  // ---------------------------------------------------------------- mixing two effects of the same menu (Ctrl+Enter / Ctrl+click)
+  // Screen and Color can each hold a second item next to the first. bin/omashaders mix ... keeps it in effect2 / color2 and
+  // mix-effect / mix-color ("stack|blend AMOUNT"). Stack: the second runs on the first's result, AMOUNT is its strength.
+  // Blend: both run on the original picture, AMOUNT is the share of the second.
+  property string effect2: ""
+  property string color2: ""
+  property string mixEffectMode: "stack"
+  property string mixColorMode: "stack"
+  property int mixEffectAmt: 100
+  property int mixColorAmt: 100
+  function mixKindOf(k) { return k === "screen" ? "effect" : (k === "color" ? "color" : "") }
+  function mixSecondOf(k) { return k === "screen" ? (shaderOn ? effect2 : "") : (k === "color" ? (colorOn ? color2 : "") : "") }
+  function mixModeOf(k) { return k === "screen" ? mixEffectMode : mixColorMode }
+  function mixAmtOf(k) { return k === "screen" ? mixEffectAmt : mixColorAmt }
+  function mixDefaultOf(k) {
+    if (mixModeOf(k) === "blend") return 50
+    return defaultStrengthOf(k, mixSecondOf(k))
+  }
+  function parseMix(t, kind) {
+    var p = String(t || "").trim().split(/\s+/)
+    var mode = p[0] === "blend" ? "blend" : "stack"
+    var v = parseInt(p[1])
+    v = isNaN(v) ? 100 : clamp(v, 0, 100)
+    if (kind === "effect") { mixEffectMode = mode; if (!mixFxSender.busy) mixEffectAmt = v }
+    else { mixColorMode = mode; if (!mixColSender.busy) mixColorAmt = v }
+  }
+  component MixSender: Process {
+    property string kind: "effect"
+    property int pending: -1
+    readonly property bool busy: running || pending >= 0
+    function send(v) { pending = v; if (!running) kick() }
+    function kick() {
+      if (pending < 0) return
+      var v = pending
+      pending = -1
+      command = [root.script, "mix", kind, "amount", String(v)]
+      running = true
+    }
+    onRunningChanged: if (!running && pending >= 0) kick()
+  }
+  MixSender { id: mixFxSender; kind: "effect" }
+  MixSender { id: mixColSender; kind: "color" }
+  function setMixAmount(k, v) {
+    v = clamp(Math.round(v), 0, 100)
+    if (mixSecondOf(k) === "") return
+    if (k === "screen") { mixEffectAmt = v; mixFxSender.send(v) }
+    else { mixColorAmt = v; mixColSender.send(v) }
+  }
+  function nudgeMix(delta) {
+    if (mixSecondOf(focusKind) === "") return
+    setMixAmount(focusKind, mixAmtOf(focusKind) + delta)
+  }
+  function resetMix() {
+    if (mixSecondOf(focusKind) === "") return
+    Quickshell.execDetached([script, "mix", mixKindOf(focusKind), "amount", "reset"])
+  }
+  function toggleMixMode() {
+    if (mixSecondOf(focusKind) === "") return
+    Quickshell.execDetached([script, "mix", mixKindOf(focusKind), "mode", "toggle"])
+  }
+  function clearMix() {
+    if (mixSecondOf(focusKind) === "") return
+    Quickshell.execDetached([script, "mix", mixKindOf(focusKind), "off"])
+  }
+  function pickSecond(k, it, keep) {
+    var mk = mixKindOf(k)
+    if (mk === "" || !it || it.id.charAt(0) === "@") return
+    screenTimer.stop(); colorTimer.stop()
+    var primary = k === "screen" ? current : colorCurrent
+    if (primary === "") { flash("Pick a first " + (k === "screen" ? "effect" : "colour grade") + " before mixing a second one"); return }
+    if (it.id === primary) { flash("The second one has to differ from the first"); return }
+    if (it.id === mixSecondOf(k)) Quickshell.execDetached([script, "mix", mk, "off"])
+    else Quickshell.execDetached([script, "mix", mk, "set", it.id])
+    if (!keep) popupOpen = false
+  }
+  readonly property var screenMarks: mixSecondOf("screen") !== "" ? [effect2] : []
+  readonly property var colorMarks: mixSecondOf("color") !== "" ? [color2] : []
+  FileView {
+    path: root.effect2File
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.effect2 = String(text() || "").trim()
+    onLoadFailed: root.effect2 = ""
+  }
+  FileView {
+    path: root.color2File
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.color2 = String(text() || "").trim()
+    onLoadFailed: root.color2 = ""
+  }
+  FileView {
+    path: root.mixEffectFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.parseMix(text(), "effect")
+  }
+  FileView {
+    path: root.mixColorFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.parseMix(text(), "color")
+  }
   FileView {
     path: root.disabledFile
     watchChanges: true
@@ -376,7 +487,7 @@ BarWidget {
     Quickshell.execDetached(name === "" ? [root.script, "effect", "off"] : [root.script, "effect", "set", name])
   }
   function previewScreen(it) {
-    if (!it || it.id.charAt(0) === "@" || it.id === current) { screenTimer.stop(); return }
+    if (!it || it.id.charAt(0) === "@" || it.id === current || mixSecondOf("screen") !== "") { screenTimer.stop(); return }
     screenPending = it.id
     screenPreviewed = true
     screenTimer.restart()
@@ -528,7 +639,7 @@ BarWidget {
     Quickshell.execDetached(name === "" ? [root.script, "color", "off"] : [root.script, "color", "set", name])
   }
   function previewColor(it) {
-    if (!it || it.id.charAt(0) === "@" || it.id === colorCurrent) { colorTimer.stop(); return }
+    if (!it || it.id.charAt(0) === "@" || it.id === colorCurrent || mixSecondOf("color") !== "") { colorTimer.stop(); return }
     colorPending = it.id
     colorPreviewed = true
     colorTimer.restart()
@@ -1177,6 +1288,7 @@ BarWidget {
   // ---------------------------------------------------------------- menu actions
   property bool popupOpen: false
   property bool viaEnter: false
+  property bool ctrlDown: false
   // "/" filter: one query narrows every column at once (label, description, hint and category name; all words must match)
   property string query: ""
   function focusSearch() { searchField.forceActiveFocus(); searchField.selectAll() }
@@ -1335,6 +1447,13 @@ BarWidget {
     else if (t === "}") nudgeStrength(1)
     else if (t === "{") nudgeStrength(-1)
     else if (t === "d") resetStrength()
+    else if (t === ".") nudgeMix(5)
+    else if (t === ",") nudgeMix(-5)
+    else if (t === ">") nudgeMix(1)
+    else if (t === "<") nudgeMix(-1)
+    else if (t === "t") toggleMixMode()
+    else if (t === "D") resetMix()
+    else if (t === "\b" || t === "\x7f") clearMix()
     else if (t === "u") { if (showColor) { activeKind = "color"; colorSec.focusHex() } }
     else if (t === "U") { if (showColor) toggleCustomFav() }
     else if (t >= "1" && t <= "9") s.gotoCat(parseInt(t) - 1)
@@ -1473,7 +1592,17 @@ BarWidget {
     property int strengthDefault: 100
     property string strengthLabel: "Strength"
     property var alsoSaved: []
+    property bool hasMix: false
+    property bool mixLive: false
+    property string mixName: ""
+    property string mixMode: "stack"
+    property int mixValue: 100
+    property int mixDefault: 100
+    property string mixNoun: "effect"
     signal strengthPicked(int value)
+    signal mixPicked(int value)
+    signal mixModeToggled()
+    signal mixChosen(var item, bool keep)
     property bool hasCustom: false
     property string customHex: ""
     property real customH: 0
@@ -1501,7 +1630,7 @@ BarWidget {
     signal acted(string id)
     signal focusRequested()
 
-    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0)
+    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0)
 
     function indexOfSaved(ci) {
       if (saved === "" || ci < 0 || ci >= cats.length) return -1
@@ -1564,12 +1693,13 @@ BarWidget {
       if (col === 0) { catIdx = last ? cats.length - 1 : 0; itemIdx = Math.max(0, indexOfSaved(catIdx)) }
       else if (curItems.length > 0) { itemIdx = last ? curItems.length - 1 : 0; pointed(selected) }
     }
-    function activate(keep) {
+    function activate(keep, mix) {
       if (col === 0) {
         if (curCat && curCat.action) acted(curCat.id)
         else if (curItems.length > 0) { col = 1; itemIdx = root.clamp(itemIdx, 0, curItems.length - 1); pointed(selected) }
       } else if (selected) {
-        chosen(selected, keep)
+        if (mix && hasMix) mixChosen(selected, keep)
+        else chosen(selected, keep)
       }
     }
     // pointer events also arrive when a list scrolls under a resting mouse; only real movement counts
@@ -1679,7 +1809,8 @@ BarWidget {
           id: itemRow
           required property var modelData
           required property int index
-          readonly property bool isSaved: modelData.id === sec.saved || sec.alsoSaved.indexOf(modelData.id) >= 0
+          readonly property bool isSecond: sec.mixLive && modelData.id === sec.mixName
+          readonly property bool isSaved: modelData.id === sec.saved || sec.alsoSaved.indexOf(modelData.id) >= 0 || isSecond
           readonly property bool selected: index === sec.itemIdx
           width: list.width
           height: sec.rowH
@@ -1708,11 +1839,11 @@ BarWidget {
             horizontalAlignment: Text.AlignRight
             elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: itemRow.isSaved ? root.checkGlyph : (itemRow.modelData.hint || "")
+            text: itemRow.isSecond ? "+ " + sec.mixMode : (itemRow.isSaved ? root.checkGlyph : (itemRow.modelData.hint || ""))
             opacity: itemRow.isSaved ? 1 : 0.5
             color: root.fg
             font.family: root.bar.fontFamily
-            font.pixelSize: itemRow.isSaved ? Style.font.body : Style.font.body * 0.8
+            font.pixelSize: (itemRow.isSaved && !itemRow.isSecond) ? Style.font.body : Style.font.body * 0.8
           }
           MouseArea {
             id: itemMouse
@@ -1728,12 +1859,13 @@ BarWidget {
               root.hoverPoint(sec, itemRow.modelData)
             }
             onExited: root.hoverLeave(itemRow.modelData)
-            onClicked: {
+            onClicked: function(m) {
               root.hoverPreviewing = false
               sec.focusRequested()
               sec.col = 1
               sec.itemIdx = itemRow.index
-              sec.chosen(itemRow.modelData, true)
+              if ((m.modifiers & Qt.ControlModifier) && sec.hasMix) sec.mixChosen(itemRow.modelData, true)
+              else sec.chosen(itemRow.modelData, true)
             }
           }
         }
@@ -1842,11 +1974,137 @@ BarWidget {
       }
     }
 
+    // mix row (Screen and Color): the second item picked with Ctrl+Enter / Ctrl+click; click the mode to flip stack / blend, t flips it from the keys, , . (< >) move the amount, D resets it, backspace removes the second
+    Item {
+      id: mixRow
+      visible: sec.hasMix
+      y: strengthRow.y + sec.rowH + Style.space(4)
+      width: sec.width
+      height: sec.rowH
+      property bool dragging: false
+      property int dragValue: 0
+      readonly property int shown: (dragging || mixHold.running) ? dragValue : sec.mixValue
+      opacity: sec.mixLive ? 1 : 0.4
+      Timer { id: mixHold; interval: 700 }
+
+      Rectangle { anchors.fill: parent; radius: Style.space(6); color: root.fgA(sec.focused ? 0.1 : 0.05) }
+      Text {
+        id: mixLabel
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: sec.mixLive ? (sec.mixMode === "blend" ? "Blend  ⇄" : "Stack  ⇄") : "Mix"
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -Style.space(4)
+          enabled: sec.mixLive
+          cursorShape: Qt.PointingHandCursor
+          onClicked: { sec.focusRequested(); sec.mixModeToggled() }
+        }
+      }
+      Text {
+        id: mixValueText
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(42)
+        horizontalAlignment: Text.AlignRight
+        textFormat: Text.PlainText
+        text: sec.mixLive ? mixRow.shown + "%" : "–"
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: mixHint
+        visible: !sec.mixLive
+        anchors.left: mixLabel.right
+        anchors.leftMargin: Style.space(14)
+        anchors.right: mixValueText.left
+        anchors.verticalCenter: parent.verticalCenter
+        elide: Text.ElideRight
+        textFormat: Text.PlainText
+        text: "Ctrl+⏎ or Ctrl+click adds a second " + sec.mixNoun
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body * 0.85
+      }
+      Item {
+        id: mixTrack
+        visible: sec.mixLive
+        anchors.left: mixLabel.right
+        anchors.leftMargin: Style.space(14)
+        anchors.right: mixValueText.left
+        anchors.rightMargin: Style.space(10)
+        height: parent.height
+
+        Rectangle {
+          id: mixRail
+          width: parent.width
+          height: Style.space(4)
+          radius: height / 2
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fgA(0.2)
+        }
+        Rectangle {
+          width: mixRail.width * mixRow.shown / 100
+          height: mixRail.height
+          radius: mixRail.radius
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fgA(0.85)
+        }
+        Rectangle {
+          x: mixRail.width * sec.mixDefault / 100 - width / 2
+          width: Style.space(2)
+          height: Style.space(12)
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fgA(0.55)
+        }
+        Rectangle {
+          x: mixRail.width * mixRow.shown / 100 - width / 2
+          width: Style.space(12)
+          height: width
+          radius: width / 2
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.fg
+        }
+      }
+      MouseArea {
+        anchors.left: mixTrack.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        enabled: sec.mixLive
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: Qt.PointingHandCursor
+        function pctAt(mx) { return Math.round(root.clamp(mapToItem(mixTrack, mx, 0).x / mixTrack.width, 0, 1) * 100) }
+        function pick(v) { mixRow.dragValue = v; mixHold.restart(); sec.mixPicked(v) }
+        onPressed: function(m) {
+          sec.focusRequested()
+          if (m.button === Qt.RightButton) { pick(sec.mixDefault); return }
+          mixRow.dragging = true
+          pick(pctAt(m.x))
+        }
+        onPositionChanged: function(m) {
+          if (!mixRow.dragging) return
+          var v = pctAt(m.x)
+          if (v !== mixRow.dragValue) pick(v)
+        }
+        onReleased: mixRow.dragging = false
+        onCanceled: mixRow.dragging = false
+        onWheel: function(w) { pick(root.clamp(mixRow.shown + (w.angleDelta.y > 0 ? 5 : -5), 0, 100)) }
+      }
+    }
+
     // custom colour: hex field, hue / saturation / brightness rails, star = favorite (u focuses the field, U toggles favorite)
     Item {
       id: customRow
       visible: sec.hasCustom
-      y: strengthRow.y + sec.rowH + Style.space(4)
+      y: (sec.hasMix ? mixRow.y : strengthRow.y) + sec.rowH + Style.space(4)
       width: sec.width
       height: 2 * sec.rowH + Style.space(4)
 
@@ -1992,14 +2250,20 @@ BarWidget {
       onTabRequested: function(dir) { root.cycleKind(dir) }
       onDeleteRequested: root.handleText("x")
       onReturnRequested: root.viaEnter = true
-      onActivateRequested: { root.activeSec.activate(!root.viaEnter); root.viaEnter = false }
+      onActivateRequested: { root.activeSec.activate(!root.viaEnter, root.ctrlDown); root.viaEnter = false }
       onCloseRequested: { if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
       Keys.forwardTo: [shiftWatcher]
       Item {
         id: shiftWatcher
-        Keys.onPressed: function(event) { if (event.key === Qt.Key_Shift) root.setMenuShift(true) }
-        Keys.onReleased: function(event) { if (event.key === Qt.Key_Shift) root.setMenuShift(false) }
+        Keys.onPressed: function(event) {
+          root.ctrlDown = (event.modifiers & Qt.ControlModifier) !== 0
+          if (event.key === Qt.Key_Shift) root.setMenuShift(true)
+        }
+        Keys.onReleased: function(event) {
+          root.ctrlDown = (event.modifiers & Qt.ControlModifier) !== 0
+          if (event.key === Qt.Key_Shift) root.setMenuShift(false)
+        }
       }
 
       Column {
@@ -2124,6 +2388,17 @@ BarWidget {
             strengthLive: root.shaderOn
             strength: root.fxStrength
             strengthDefault: root.defaultStrengthOf("screen", root.current)
+            alsoSaved: root.screenMarks
+            hasMix: true
+            mixNoun: "effect"
+            mixLive: root.mixSecondOf("screen") !== ""
+            mixName: root.effect2
+            mixMode: root.mixEffectMode
+            mixValue: root.mixEffectAmt
+            mixDefault: root.mixDefaultOf("screen")
+            onMixPicked: function(v) { root.setMixAmount("screen", v) }
+            onMixModeToggled: { root.activeKind = "screen"; root.toggleMixMode() }
+            onMixChosen: function(item, keep) { root.pickSecond("screen", item, keep) }
             onStrengthPicked: function(v) { root.setStrength("effect", v) }
             onPointed: function(item) { root.previewScreen(item) }
             onChosen: function(item, keep) { root.chooseScreen(item, keep) }
@@ -2152,6 +2427,17 @@ BarWidget {
             strengthLive: root.colorOn
             strength: root.colStrength
             strengthDefault: root.defaultStrengthOf("color", root.colorCurrent)
+            alsoSaved: root.colorMarks
+            hasMix: true
+            mixNoun: "colour grade"
+            mixLive: root.mixSecondOf("color") !== ""
+            mixName: root.color2
+            mixMode: root.mixColorMode
+            mixValue: root.mixColorAmt
+            mixDefault: root.mixDefaultOf("color")
+            onMixPicked: function(v) { root.setMixAmount("color", v) }
+            onMixModeToggled: { root.activeKind = "color"; root.toggleMixMode() }
+            onMixChosen: function(item, keep) { root.pickSecond("color", item, keep) }
             hasCustom: true
             customHex: root.customHex
             customH: root.customH
@@ -2292,7 +2578,7 @@ BarWidget {
             if (root.comboFlash !== "") return root.comboFlash
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
-            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.showWin ? " · Windows: " + ((root.winEffectOn || root.winColorOn) ? [root.winEffect, root.winColor].filter(function(x) { return x !== "" }).join(" + ") : "off") : "")
+            return (root.paused ? "PAUSED (p to resume) · " : "") + "Screen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" + (root.mixSecondOf("screen") !== "" ? " " + (root.mixEffectMode === "blend" ? "~" : "+") + " " + root.effect2 + " " + root.mixEffectAmt + "%" : "") : "off") + " · Color: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" + (root.mixSecondOf("color") !== "" ? " " + (root.mixColorMode === "blend" ? "~" : "+") + " " + root.color2 + " " + root.mixColorAmt + "%" : "") : "off") + " · Wallpaper: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off") + " · Cursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.showWin ? " · Windows: " + ((root.winEffectOn || root.winColorOn) ? [root.winEffect, root.winColor].filter(function(x) { return x !== "" }).join(" + ") : "off") : "")
           }
           color: root.fg
           font.family: root.bar.fontFamily
@@ -2305,7 +2591,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · s C w c W m menus · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · s C w c W m menus · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

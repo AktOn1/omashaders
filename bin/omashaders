@@ -3,6 +3,7 @@
 # usage: omashaders list [-a] | listall (name, static|animated|motion, category, description, screen|color|mouse; tab separated)
 #        | effect [status|list|set NAME|off] | color [status|list|set NAME|off] | mouse [status|list|set NAME|off]
 #        | status | set NAME | off | toggle [NAME] | next [-a] | prev [-a] | reapply | animated [on|off|toggle] | gpu
+#        | mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset] (a second effect/colour mixed into the first)
 #        | window [status|effect|color|strength|target|classes|apply|load|off] (same effects/colours on chosen app windows; needs the HyprWindowShade plugin)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
@@ -76,10 +77,31 @@ remembered_strength() { # KIND(fx|col) NAME FILE
 cur_strength() { local v; v=$(cat "$STATE_DIR/strength-$1" 2>/dev/null); echo "${v:-100}"; }
 DISABLED="$STATE_DIR/disabled"
 is_disabled() { [ -s "$DISABLED" ]; }
+# Mixing: a second effect (effect2) or colour (color2) can be mixed into the first one. State: mix-effect / mix-color = "MODE VALUE",
+# MODE stack (the second runs on the first one's result; VALUE is how much of it, percent) or blend (both run on the original picture;
+# VALUE is the share of the second, percent).
+mix_second() { # effect|color PRIMARY_NAME: the name of the second layer when it is valid, else nothing
+  local n f; n=$(cat "$STATE_DIR/${1}2" 2>/dev/null)
+  [ -n "$2" ] && [ -n "$n" ] && [ "$n" != "$2" ] || return 0
+  if [ "$1" = effect ]; then f="$DIR/$n.frag"; else f=$(cfile "$n"); fi
+  [ -f "$f" ] && echo "$n"
+}
+mix_spec() { local s; s=$(cat "$STATE_DIR/mix-$1" 2>/dev/null); echo "${s:-stack 100}"; }
+mix_default() { # effect|color MODE FILE_OF_SECOND: the start value for a mode
+  if [ "$2" = blend ]; then echo 50; else default_strength "$3"; fi
+}
+MIXSIG=""; MARGS=()
+mix_args() { # effect|color FLAG SECOND_NAME: sets MARGS (compose-shader flags) and MIXSIG (part of the built file name)
+  local mode val pct file k=fx
+  read -r mode val <<<"$(mix_spec "$1")"
+  if [ "$1" = effect ]; then file="$DIR/$3.frag"; else file=$(cfile "$3"); k=col; fi
+  pct=$val; [ "$mode" = blend ] && pct=$(remembered_strength "$k" "$3" "$file")
+  MARGS=("$2" "$file" "$pct" "$mode" "$val"); MIXSIG="~$3.$mode$val.$pct"
+}
 # apply the current effect and colour layers: none, or one built shader file (bin/compose-shader)
 apply() {
   window_apply >/dev/null 2>&1 || true
-  local fx col file="" out args=()
+  local fx col file="" out args=() fx2 col2 sig1="" sig2="" f2="" c2=""
   fx=$(current); col=$(current_color)
   [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
   [ -n "$col" ] && [ ! -f "$(cfile "$col")" ] && col=""
@@ -87,15 +109,18 @@ apply() {
     local sf sc cf=""
     [ -n "$col" ] && cf=$(cfile "$col")
     sf=$(cur_strength effect); sc=$(cur_strength color)
-    out="$STATE_DIR/built/${fx:--}@${sf}+${col:--}@${sc}.frag"
+    fx2=$(mix_second effect "$fx"); col2=$(mix_second color "$col")
     [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
+    if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$DIR/$fx2.frag"; fi
     [ -n "$col" ] && args+=(--col "$cf" "$sc")
-    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$DIR/$fx.frag" ] || [ -n "$col" -a "$out" -ot "$cf" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
+    if [ -n "$col2" ]; then mix_args color --col2 "$col2"; args+=("${MARGS[@]}"); sig2="$MIXSIG"; c2=$(cfile "$col2"); fi
+    out="$STATE_DIR/built/${fx:--}@${sf}${sig1}+${col:--}@${sc}${sig2}.frag"
+    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$DIR/$fx.frag" ] || [ -n "$col" -a "$out" -ot "$cf" ] || [ -n "$f2" -a "$out" -ot "$f2" ] || [ -n "$c2" -a "$out" -ot "$c2" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
       mkdir -p "$STATE_DIR/built"
       python3 "$ROOT/bin/compose-shader" "$out.tmp" "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build $fx + $col" >&2; exit 1; }
     fi
     find "$STATE_DIR/built" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
-    find "$STATE_DIR/custom-colors" -type f -mtime +30 ! -path "$cf" -delete 2>/dev/null
+    find "$STATE_DIR/custom-colors" -type f -mtime +30 ! -path "$cf" ! -path "$c2" -delete 2>/dev/null
     file="$out"
   fi
   bend_running && return 0
@@ -107,13 +132,13 @@ set_shader() {
   lock
   if [ ! -f "$DIR/$1.frag" ] && { [ -f "$CDIR/$1.frag" ] || [[ "$1" == custom-* ]]; }; then set_color "$1"; return; fi
   [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
-  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; echo "$(remembered_strength fx "$1" "$DIR/$1.frag")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
+  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; : > "$STATE_DIR/effect2"; echo "$(remembered_strength fx "$1" "$DIR/$1.frag")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
 }
 set_color() {
   lock
   local cf; cf=$(cfile "$1")
   [ -f "$cf" ] || { echo "unknown colour: $1" >&2; exit 1; }
-  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; echo "$(remembered_strength col "$1" "$cf")" > "$STATE_DIR/strength-color"; : > "$DISABLED"; apply
+  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; : > "$STATE_DIR/color2"; echo "$(remembered_strength col "$1" "$cf")" > "$STATE_DIR/strength-color"; : > "$DISABLED"; apply
 }
 # strength KIND(effect|color) VALUE: VALUE is a percent, +N, -N or reset; remembered for that effect/colour
 set_strength() {
@@ -162,9 +187,45 @@ power() { # [status|on|off|toggle] ; "on" = shaders enabled
   fi
   echo "$want"
 }
-effect_off() { lock; : > "$STATE"; apply; }
-color_off() { lock; : > "$COLOR_STATE"; apply; }
-turn_off() { lock; : > "$STATE"; : > "$COLOR_STATE"; apply; }
+effect_off() { lock; : > "$STATE"; : > "$STATE_DIR/effect2"; apply; }
+color_off() { lock; : > "$COLOR_STATE"; : > "$STATE_DIR/color2"; apply; }
+turn_off() { lock; : > "$STATE"; : > "$COLOR_STATE"; : > "$STATE_DIR/effect2"; : > "$STATE_DIR/color2"; apply; }
+# mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount N|+N|-N|reset]: a second effect (colour) mixed into the first
+mix_cmd() {
+  lock
+  local kind="$1" cmd="${2:-status}" arg="$3" prim second file k=fx mode val
+  if [ "$kind" = effect ]; then prim=$(current); else prim=$(current_color); k=col; fi
+  second=$(cat "$STATE_DIR/${kind}2" 2>/dev/null)
+  read -r mode val <<<"$(mix_spec "$kind")"
+  mkdir -p "$STATE_DIR"
+  mixfile() { if [ "$kind" = effect ]; then echo "$DIR/$1.frag"; else cfile "$1"; fi; }
+  case "$cmd" in
+    status) if [ -n "$(mix_second "$kind" "$prim")" ]; then echo "$second $mode $val"; else echo off; fi; return ;;
+    set)
+      [ -n "$prim" ] || { echo "set a first $kind before mixing a second one" >&2; return 1; }
+      [ "$arg" != "$prim" ] || { echo "the second $kind must differ from the first" >&2; return 1; }
+      file=$(mixfile "$arg"); [ -f "$file" ] || { echo "unknown $kind: $arg" >&2; return 1; }
+      echo "$arg" > "$STATE_DIR/${kind}2"; echo "$mode $(mix_default "$kind" "$mode" "$file")" > "$STATE_DIR/mix-$kind"; : > "$DISABLED" ;;
+    off) : > "$STATE_DIR/${kind}2" ;;
+    mode)
+      [ -n "$second" ] || { echo "no second $kind to mix" >&2; return 1; }
+      case "$arg" in toggle) [ "$mode" = stack ] && arg=blend || arg=stack ;; stack|blend) ;; *) echo "usage: omashaders mix $kind mode stack|blend|toggle" >&2; return 1 ;; esac
+      echo "$arg $(mix_default "$kind" "$arg" "$(mixfile "$second")")" > "$STATE_DIR/mix-$kind" ;;
+    amount)
+      [ -n "$second" ] || { echo "no second $kind to mix" >&2; return 1; }
+      [ -n "$arg" ] || { echo "$val"; return; }
+      case "$arg" in
+        reset) val=$(mix_default "$kind" "$mode" "$(mixfile "$second")") ;;
+        +*|-*) val=$(( val + arg )) ;;
+        ''|*[!0-9]*) echo "usage: omashaders mix $kind amount PERCENT|+N|-N|reset" >&2; return 1 ;;
+        *) val=$arg ;;
+      esac
+      [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
+      echo "$mode $val" > "$STATE_DIR/mix-$kind" ;;
+    *) echo "usage: omashaders mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset]" >&2; return 1 ;;
+  esac
+  apply
+}
 # ---- window shaders: the same effect and colour lists, drawn on windows only (needs the HyprWindowShade Hyprland plugin) ----
 # State: window-effect, window-color, window-target (one line per app class, or "*" for all windows), window-applied (classes we set).
 WSH_LUA='hl.plugin.HyprWindowShade'
@@ -397,6 +458,7 @@ case "${1:-}" in
       wall|mouse) set_overlay_strength "$2" "$3" ;;
       *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
+  mix) case "$2" in effect|color) mix_cmd "$2" "$3" "$4" ;; *) echo "usage: omashaders mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount N]" >&2; exit 1 ;; esac ;;
   window) window_cmd "$2" "$3" "$4" ;;
   power) power "$2" "$3" ;;
   status) current | grep . || echo off ;;

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""compose-shader OUT.frag [--window] [--fx FILE.frag PERCENT] [--col FILE.frag PERCENT] [--cur FILE.frag]
+"""compose-shader OUT.frag [--window] [--fx FILE.frag PERCENT [--fx2 FILE.frag PERCENT stack|blend MIX]] [--col FILE.frag PERCENT [--col2 FILE.frag PERCENT stack|blend MIX]] [--cur FILE.frag]
+
+--fx2/--col2 mix a second effect (colour grade) into the first one. stack: the second runs on the first one's result (its PERCENT
+is how much of it is applied); blend: both run on the original picture and MIX (0-100) is the share of the second in the result.
 
 Build the one shader Hyprland runs: the effect first, then the colour grade on the effect's result.
 Each layer has a strength (0-100). --cur adds a cursor-bend layer (cursor-shaders/; its strength 0-100 blends the bent screen with the plain one): it defines `vec4 bend(vec2 uv)`
@@ -13,7 +16,7 @@ HEADER = re.compile(r'^\s*(#version\b|precision\b|in\s+vec2\s+v_texcoord|uniform
 TYPES = r'(?:const\s+)?(?:float|int|uint|bool|[iu]?vec[234]|mat[234]|void)'
 
 
-def layer(path, percent, prefix, sample=None):
+def layer(path, percent, prefix, sample=None, evalable=False):
     src = open(path).read()
     native = re.search(r'^//\s*strength-mode:\s*native\b', src, re.M) is not None
     text = "\n".join(l for l in src.splitlines() if not HEADER.match(l))
@@ -26,6 +29,10 @@ def layer(path, percent, prefix, sample=None):
         if re.search(r'v_texcoord|gl_FragCoord|\btex\b|\btime\b', rest):
             sys.exit("%s: a colour grade may only read texture(tex, v_texcoord)" % path)
         text = text.replace('texture(tex, v_texcoord)', sample)
+    if evalable:  # the layer becomes a function of the sample position: its input coordinate and result are globals
+        text = re.sub(r'\bv_texcoord\b', prefix + 'uv', text)
+        text = re.sub(r'\bfragColor\b', prefix + 'o', text)
+        text = "vec2 %suv;\nvec4 %so;\n%s" % (prefix, prefix, text)
     s = max(0.0, min(100.0, float(percent))) / 100.0
     text = re.sub(r'\bSTRENGTH\b', prefix + 'S', text)
     return src, "const float %sS = %.4f;\n%s" % (prefix, s, text), native
@@ -117,18 +124,40 @@ vec4 cur_tex(vec2 uv) {
 """
 
 
-def compose(fx=None, col=None, cur=None, window=False):
+def _eval_fn(prefix, sample, native):
+    """fx_eval(uv) / fy_eval(uv): the layer as a function of the position it is sampled at, strength applied."""
+    call = "%s(uv)" % sample if sample else "texture(tex, uv)"
+    result = "%so" % prefix if native else "vec4(mix(s.rgb, %so.rgb, %sS), %so.a)" % (prefix, prefix, prefix)
+    return "vec4 %seval(vec2 uv) {\n    %suv = uv;\n    vec4 s = %s;\n    %so = s;\n    %smain();\n    return %s;\n}" % (prefix, prefix, call, prefix, prefix, result)
+
+
+def _share(v):
+    return max(0.0, min(100.0, float(v))) / 100.0
+
+
+def compose(fx=None, col=None, cur=None, window=False, fx2=None, col2=None):
     """fx/col/cur are (path, percent) tuples; returns the shader text. window=True builds a per-window shader for
-    HyprWindowShade (GLSL ES 3.20, premultiplied alpha taken from the window, so transparent margins stay transparent)."""
+    HyprWindowShade (GLSL ES 3.20, premultiplied alpha taken from the window, so transparent margins stay transparent).
+    fx2/col2 are (path, percent, mode, mix) second layers (see the module doc); they need fx/col."""
+    fx2 = fx2 if fx else None
+    col2 = col2 if col else None
     out = ["#version 320 es" if window else "#version 300 es", "// composed: effect %s + colour %s%s" % (fx[0] if fx else "-", col[0] if col else "-", " + cursor " + cur[0] if cur else ""),
            "precision highp float;", "in vec2 v_texcoord;", "uniform sampler2D tex;"]
     fx_src = fx_text = ""
     fx_native = False
     if fx:
-        fx_src, fx_text, fx_native = layer(fx[0], fx[1], "fx_")
+        fx_src, fx_text, fx_native = layer(fx[0], fx[1], "fx_", evalable=bool(fx2))
         if cur:
             fx_text = re.sub(r'\btexture\s*\(\s*tex\s*,', 'cur_tex(', fx_text)
-    if re.search(r'^\s*uniform\s+float\s+time\b', fx_src, re.M):
+    fy_src = fy_text = ""
+    fy_native = False
+    if fx2:
+        fy_src, fy_text, fy_native = layer(fx2[0], fx2[1], "fy_", evalable=True)
+        if fx2[2] == "stack":
+            fy_text = re.sub(r'\btexture\s*\(\s*tex\s*,', 'fx_eval(', fy_text)
+        elif cur:
+            fy_text = re.sub(r'\btexture\s*\(\s*tex\s*,', 'cur_tex(', fy_text)
+    if re.search(r'^\s*uniform\s+float\s+time\b', fx_src + "\n" + fy_src, re.M):
         out.append("uniform float time;")
     out.append("layout(location = 0) out vec4 fragColor;")
     body = ["void main() {"]
@@ -141,7 +170,14 @@ def compose(fx=None, col=None, cur=None, window=False):
         body.append("    cur_here = !CMARK || cur_marked();")
         first = "cur_tex(v_texcoord)"
     body += ["    vec4 src0 = %s;" % first, "    fragColor = src0;"]
-    if fx:
+    if fx and fx2:
+        base = "cur_tex" if cur else ""
+        out += [fx_text, _eval_fn("fx_", base, fx_native), fy_text, _eval_fn("fy_", "fx_eval" if fx2[2] == "stack" else base, fy_native)]
+        if fx2[2] == "stack":
+            body.append("    fragColor = fy_eval(v_texcoord);")
+        else:
+            body.append("    fragColor = mix(fx_eval(v_texcoord), fy_eval(v_texcoord), %.4f);" % _share(fx2[3]))
+    elif fx:
         out.append(fx_text)
         body.append("    fx_main();")
         if not fx_native:
@@ -150,10 +186,24 @@ def compose(fx=None, col=None, cur=None, window=False):
     if col:
         _, col_text, col_native = layer(col[0], col[1], "c_", sample="fx_in")
         out.append(col_text)
-        body.append("    fx_in = fragColor;")
+        body.append("    vec4 col_base = fragColor;")
+        body.append("    fx_in = col_base;")
         body.append("    c_main();")
         if not col_native:
             body.append("    fragColor = vec4(mix(fx_in.rgb, fragColor.rgb, c_S), fragColor.a);")
+        if col2:
+            _, cy_text, cy_native = layer(col2[0], col2[1], "cy_", sample="fx_in")
+            out.append(cy_text)
+            if col2[2] == "stack":
+                body.append("    fx_in = fragColor;")
+            else:
+                body.append("    vec4 col_a = fragColor;")
+                body.append("    fx_in = col_base;")
+            body.append("    cy_main();")
+            if not cy_native:
+                body.append("    fragColor = vec4(mix(fx_in.rgb, fragColor.rgb, cy_S), fragColor.a);")
+            if col2[2] != "stack":
+                body.append("    fragColor = mix(col_a, fragColor, %.4f);" % _share(col2[3]))
     if window:
         body.append("    float w_a = texture(tex, v_texcoord).a;")
         body.append("    fragColor = vec4(clamp(fragColor.rgb, 0.0, 1.0) * w_a, w_a);")
@@ -169,7 +219,7 @@ def main():
     if out_path == "--custom":  # --custom STATE_DIR NAME: print the path of the generated custom colour shader
         print(custom_file(args[0], args[1]))
         return
-    fx = col = cur = None
+    fx = col = cur = fx2 = col2 = None
     window = False
     while args:
         flag = args.pop(0)
@@ -179,13 +229,21 @@ def main():
             fx = (args.pop(0), args.pop(0))
         elif flag == "--col":
             col = (args.pop(0), args.pop(0))
+        elif flag in ("--fx2", "--col2"):
+            spec = (args.pop(0), args.pop(0), args.pop(0), args.pop(0))
+            if spec[2] not in ("stack", "blend"):
+                sys.exit(__doc__)
+            if flag == "--fx2":
+                fx2 = spec
+            else:
+                col2 = spec
         elif flag == "--cur":
             cur = (args.pop(0), 100)
         else:
             sys.exit(__doc__)
     if not fx and not col and not cur:
         sys.exit(__doc__)
-    open(out_path, "w").write(compose(fx, col, cur, window))
+    open(out_path, "w").write(compose(fx, col, cur, window, fx2, col2))
 
 
 if __name__ == "__main__":
