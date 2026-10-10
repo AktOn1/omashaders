@@ -556,7 +556,7 @@ BarWidget {
     target: Hyprland
     function onRawEvent(event) {
       if (event.name === "configreloaded" && (root.shaderOn || root.colorOn)) reapplyTimer.restart()
-      else if (event.name === "openwindow" && root.winAll && (root.winEffectOn || root.winColorOn)) winSyncTimer.restart()
+      else if ((event.name === "openwindow" || event.name === "openlayer") && root.winAll && (root.winEffectOn || root.winColorOn)) winSyncTimer.restart()
       if (event.name === "configreloaded" && root.winFrameOn) frameReloadTimer.restart()
     }
   }

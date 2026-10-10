@@ -292,6 +292,13 @@ for m in json.load(sys.stdin).values():
             k=l.get("namespace") or ""
             if k and k not in skip and k not in seen: seen.append(k)
 print("\n".join("layer:"+k for k in seen))'; }
+# "All windows" also covers shell panels and flyouts: every open layer plus the known ones (so a flyout is shaded from its first
+# frame) plus layers shaded before; not the bar, wallpaper, mouse overlay or invisible click-catchers
+ALL_LAYERS_KNOWN="aktlabs-companion-pill agent-mascots omarchy-keyboard-panel omarchy-menu omarchy-image-selector omarchy-emojis omarchy-clipboard omarchy-notifications omarchy-osd omarchy-reminders omarchy-polkit omarchy-network-qr scratchpad-frame"
+all_layers() {
+  { open_layers | sed 's/^layer://'; printf '%s\n' $ALL_LAYERS_KNOWN; grep '^layer:' "$STATE_DIR/window-applied" 2>/dev/null | sed 's/^layer://'; } |
+    grep -vE '^(omarchy-bar|omarchy-background|wallpaper-fx|omashaders-mouse|omarchy-lock-preview|.*-dismiss|.*-ghost)$' | sort -u | sed 's/^/layer:/'
+}
 # the built window shader for the current window effect + colour (empty when none)
 window_file() {
   local fx col sf sc cf="" out args=()
@@ -334,7 +341,7 @@ window_apply() {
     gfile=$(WSCOPE='*' window_file) || return 1
     if [ -n "$gfile" ]; then
       tg=$(cat "$STATE_DIR/window-target" 2>/dev/null)
-      if grep -qx '\*' <<<"$tg"; then while read -r c; do [ -n "$c" ] && map["$c"]=$gfile; done < <(open_classes; grep -vx '\*' <<<"$tg")
+      if grep -qx '\*' <<<"$tg"; then while read -r c; do [ -n "$c" ] && map["$c"]=$gfile; done < <(open_classes; all_layers; grep -vx '\*' <<<"$tg")
       else while read -r c; do [ -n "$c" ] && map["$c"]=$gfile; done <<<"$tg"; fi
     fi
     for d in "$WAPP"/*/; do
