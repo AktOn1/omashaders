@@ -1192,6 +1192,8 @@ BarWidget {
       { id: "plasma",    label: "Plasma",          hint: "theme colours" },
       { id: "synth",     label: "Synthwave",       hint: "sun and grid" },
       { id: "matrix",    label: "Digital rain",    hint: "mouse lights it" },
+      { id: "rainhd",    label: "Digital rain HD", hint: "sharp glyphs, mouse lights it" },
+      { id: "rainwall",  label: "Digital rain, wallpaper colours", hint: "glyphs take the picture colours" },
       { id: "crystals",  label: "Crystals",        hint: "glowing cells" }
     ] },
     { id: "blobs", label: "Merging blobs", items: [
