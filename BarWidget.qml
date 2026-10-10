@@ -41,6 +41,8 @@ BarWidget {
   readonly property string disabledFile: stateDir + "/disabled"
   readonly property string fxStrengthFile: stateDir + "/strength-effect"
   readonly property string colStrengthFile: stateDir + "/strength-color"
+  readonly property string wallStrengthFile: stateDir + "/strength-wall"
+  readonly property string mouseStrengthFile: stateDir + "/strength-mouse"
   readonly property int fps: Number(setting("fps", 30)) || 30
 
   readonly property color fg: root.bar.barForeground
@@ -146,8 +148,78 @@ BarWidget {
   property string disabledFlag: ""
   readonly property bool paused: disabledFlag !== ""
   function defaultStrengthOf(section, name) {
+    if (section === "color" && customRe.test(name)) return 80
     for (var i = 0; i < allEntries.length; i++) if (allEntries[i].section === section && allEntries[i].name === name) return allEntries[i].dflt
     return 100
+  }
+  component Rail: Item {
+    id: rl
+    property string name: ""
+    property real value: 0
+    property var stops: []
+    property color fg: "white"
+    property string fontFamily: ""
+    property real cellW: 100
+    property real cellH: 28
+    signal moved(real v)
+    function stopAt(i) {
+      if (stops.length >= 7) return stops[i]
+      var a = Qt.color(stops[0]), b = Qt.color(stops[1]), t = i / 6
+      return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1)
+    }
+    width: cellW
+    height: cellH
+    Text {
+      id: rlName
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: rl.name
+      opacity: 0.7
+      color: rl.fg
+      font.family: rl.fontFamily
+      font.pixelSize: Style.font.body * 0.85
+    }
+    Rectangle {
+      id: rlBar
+      anchors.left: rlName.right
+      anchors.leftMargin: Style.space(6)
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      height: Style.space(8)
+      radius: height / 2
+      border.width: 1
+      border.color: Qt.rgba(rl.fg.r, rl.fg.g, rl.fg.b, 0.3)
+      gradient: Gradient {
+        orientation: Gradient.Horizontal
+        GradientStop { position: 0 / 6; color: rl.stopAt(0) }
+        GradientStop { position: 1 / 6; color: rl.stopAt(1) }
+        GradientStop { position: 2 / 6; color: rl.stopAt(2) }
+        GradientStop { position: 3 / 6; color: rl.stopAt(3) }
+        GradientStop { position: 4 / 6; color: rl.stopAt(4) }
+        GradientStop { position: 5 / 6; color: rl.stopAt(5) }
+        GradientStop { position: 6 / 6; color: rl.stopAt(6) }
+      }
+      Rectangle {
+        x: parent.width * rl.value - width / 2
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(12)
+        height: width
+        radius: width / 2
+        color: rl.fg
+        border.width: 1
+        border.color: Qt.rgba(0, 0, 0, 0.6)
+      }
+    }
+    MouseArea {
+      anchors.fill: rlBar
+      anchors.topMargin: -Style.space(8)
+      anchors.bottomMargin: -Style.space(8)
+      cursorShape: Qt.PointingHandCursor
+      function at(mx) { return Math.max(0, Math.min(1, mx / rlBar.width)) }
+      onPressed: function(m) { rl.moved(at(m.x)) }
+      onPositionChanged: function(m) { if (pressed) rl.moved(at(m.x)) }
+      onWheel: function(w) { rl.moved(Math.max(0, Math.min(1, rl.value + (w.angleDelta.y > 0 ? 0.03 : -0.03)))) }
+    }
   }
   component StrengthSender: Process {
     property string kind: "effect"
@@ -165,23 +237,36 @@ BarWidget {
   }
   StrengthSender { id: fxSender; kind: "effect" }
   StrengthSender { id: colSender; kind: "color" }
+  // Wallpaper and Cursor effects have one strength each (the effect's opacity, or for bend effects how far the screen is bent):
+  // a plain number in strength-wall / strength-mouse that the effect windows and bin/cursor-bend read.
+  property int wallStrength: 100
+  property int mouseStrength: 100
+  property int pendingWallStrength: -1
+  property int pendingMouseStrength: -1
+  Timer { id: wallStrengthTimer; interval: 80; onTriggered: { root.writeFile(root.wallStrengthFile, String(root.wallStrength)); root.pendingWallStrength = -1 } }
+  Timer { id: mouseStrengthTimer; interval: 80; onTriggered: { root.writeFile(root.mouseStrengthFile, String(root.mouseStrength)); root.pendingMouseStrength = -1 } }
   function setStrength(kind, v) {
     v = clamp(Math.round(v), 0, 100)
     if (kind === "color") { colStrength = v; colSender.send(v) }
+    else if (kind === "wall") { wallStrength = v; pendingWallStrength = v; wallStrengthTimer.restart() }
+    else if (kind === "mouse") { mouseStrength = v; pendingMouseStrength = v; mouseStrengthTimer.restart() }
     else { fxStrength = v; fxSender.send(v) }
   }
-  function strengthKind(k) { return k === "color" ? "color" : "effect" }
+  function strengthKind(k) { return k === "color" ? "color" : (k === "wall" ? "wall" : (k === "mouse" ? "mouse" : "effect")) }
+  function strengthLiveOf(kind) { return kind === "color" ? colorOn : (kind === "wall" ? wallOn : (kind === "mouse" ? mouseOn : shaderOn)) }
+  function strengthOf(kind) { return kind === "color" ? colStrength : (kind === "wall" ? wallStrength : (kind === "mouse" ? mouseStrength : fxStrength)) }
   function nudgeStrength(delta) {
-    if (focusKind !== "screen" && focusKind !== "color") return
+    if (focusKind === "combo") return
     var kind = strengthKind(focusKind)
-    if (kind === "color" ? !colorOn : !shaderOn) return
-    setStrength(kind, (kind === "color" ? colStrength : fxStrength) + delta)
+    if (!strengthLiveOf(kind)) return
+    setStrength(kind, strengthOf(kind) + delta)
   }
   function resetStrength() {
-    if (focusKind !== "screen" && focusKind !== "color") return
+    if (focusKind === "combo") return
     var kind = strengthKind(focusKind)
-    if (kind === "color" ? !colorOn : !shaderOn) return
-    Quickshell.execDetached([root.script, "strength", kind, "reset"])
+    if (!strengthLiveOf(kind)) return
+    if (kind === "wall" || kind === "mouse") setStrength(kind, 100)
+    else Quickshell.execDetached([root.script, "strength", kind, "reset"])
   }
   function setPower(mode) { Quickshell.execDetached([root.script, "power", mode]) }
   function togglePause() { setPower(paused ? "on" : "off") }
@@ -200,6 +285,22 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (!colSender.busy) root.colStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
     onLoadFailed: root.colStrength = 100
+  }
+  FileView {
+    path: root.wallStrengthFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingWallStrength < 0) root.wallStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.wallStrength = 100
+  }
+  FileView {
+    path: root.mouseStrengthFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingMouseStrength < 0) root.mouseStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.mouseStrength = 100
   }
   FileView {
     path: root.disabledFile
@@ -322,8 +423,62 @@ BarWidget {
   readonly property var colorEntries: allEntries.filter(function(e) { return e.section === "color" })
   function colorItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: "" } }
   readonly property var colorItems: colorEntries.map(colorItem)
+  // a custom colour is the generated grade "custom-RRGGBB" (bin/compose-shader --custom), so it works with strength, favorites and combos like any other
+  readonly property var customRe: /^custom-[0-9a-f]{6}$/
+  function colorFavItems() {
+    var out = []
+    colorFavs.forEach(function(id) {
+      if (customRe.test(id)) { out.push({ id: id, label: "Custom #" + id.slice(7), desc: "Your own colour", hint: "" }); return }
+      for (var i = 0; i < colorItems.length; i++) if (colorItems[i].id === id) { out.push(colorItems[i]); break }
+    })
+    return out
+  }
+  property string customHex: "ff8a00"
+  property real customH: 0.09
+  property real customS: 1.0
+  property real customV: 1.0
+  readonly property bool customActive: colorCurrent === "custom-" + customHex
+  readonly property bool customIsFav: colorFavs.indexOf("custom-" + customHex) >= 0
+  function hex2(x) { var h = Math.round(x * 255).toString(16); return h.length < 2 ? "0" + h : h }
+  function setCustomHsv(h, sat, v) {
+    customH = clamp(h, 0, 1); customS = clamp(sat, 0, 1); customV = clamp(v, 0, 1)
+    var c = Qt.hsva(customH, customS, customV, 1)
+    customHex = hex2(c.r) + hex2(c.g) + hex2(c.b)
+    customTimer.restart()
+  }
+  function setCustomHex(t) {
+    t = String(t).replace(/^#/, "").toLowerCase()
+    if (!/^[0-9a-f]{6}$/.test(t)) return false
+    syncCustom(t)
+    applyCustom()
+    return true
+  }
+  function syncCustom(t) {
+    var c = Qt.color("#" + t)
+    customHex = t
+    if (c.hsvHue >= 0) customH = c.hsvHue
+    customS = c.hsvSaturation
+    customV = c.hsvValue
+  }
+  function applyCustom() {
+    customTimer.stop()
+    colorOrigin = "custom-" + customHex
+    colorPreviewed = false
+    applyColor(colorOrigin)
+  }
+  Timer { id: customTimer; interval: 140; onTriggered: root.applyCustom() }
+  onColorCurrentChanged: {
+    if (customRe.test(colorCurrent) && colorCurrent.slice(7) !== customHex && !customTimer.running) syncCustom(colorCurrent.slice(7))
+  }
+  function toggleCustomFav() {
+    var id = "custom-" + customHex
+    var next = colorFavs.filter(function(f) { return f !== id })
+    if (next.length === colorFavs.length) next.push(id)
+    colorFavs = next
+    writeFile(colorFavFile, next.join("\n"))
+  }
   readonly property var colorCats: {
-    var out = [{ id: "fav", label: "Favorites", items: favList(colorItems, colorFavs), note: favNote }]
+    var out = [{ id: "fav", label: "Favorites", items: colorFavItems(), note: favNote }]
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
       out.push({ id: c, label: c, items: colorEntries.filter(function(e) { return e.cat === c }).map(colorItem), note: "" })
     })
@@ -639,6 +794,7 @@ BarWidget {
   function pal(key, fallback) { return root.palette[key] || fallback }
 
   WallpaperFx {
+    strength: root.wallStrength / 100
     effect: root.fxHost && !root.paused ? root.wallShown : ""
     wallpaper: root.wallpaperPath
     mouse: root.cursorLive ? root.cursor : Qt.point(-10000, -10000)
@@ -676,6 +832,7 @@ BarWidget {
   onShiftOnlyChanged: if (!shiftOnly) shiftDown = false
 
   MouseFx {
+    strength: root.mouseStrength / 100
     effect: root.fxHost && !root.paused && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : ""
     motion: root.mouseMotion
     mouse: root.cursor
@@ -953,6 +1110,8 @@ BarWidget {
     else if (t === "}") nudgeStrength(1)
     else if (t === "{") nudgeStrength(-1)
     else if (t === "d") resetStrength()
+    else if (t === "u") { if (showColor) { activeKind = "color"; colorSec.focusHex() } }
+    else if (t === "U") { if (showColor) toggleCustomFav() }
     else if (t >= "1" && t <= "9") s.gotoCat(parseInt(t) - 1)
   }
 
@@ -980,7 +1139,7 @@ BarWidget {
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile,
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -999,9 +1158,9 @@ BarWidget {
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus.replace(/[<>&]/g, "?") : "")
-                 + "\nclick: menu (hjkl) · right-click: effects off · middle-click: next wallpaper · scroll: step"
+                 + "\nclick: menu (hjkl) · right-click: pause / resume effects · middle-click: next wallpaper · scroll: step"
     onPressed: function(b) {
-      if (b === Qt.RightButton) root.offAll()
+      if (b === Qt.RightButton) root.togglePause()
       else if (b === Qt.MiddleButton) root.wallStep("next")
       else root.toggle()
     }
@@ -1085,6 +1244,18 @@ BarWidget {
     property int strength: 100
     property int strengthDefault: 100
     signal strengthPicked(int value)
+    property bool hasCustom: false
+    property string customHex: ""
+    property real customH: 0
+    property real customS: 1
+    property real customV: 1
+    property bool customFav: false
+    property bool customActive: false
+    readonly property bool editing: hexField.activeFocus
+    signal customHsv(real h, real s, real v)
+    signal customHexEntered(string text)
+    signal customFavToggled()
+    function focusHex() { hexField.forceActiveFocus(); hexField.selectAll() }
     property int col: 0
     property int catIdx: 0
     property int itemIdx: 0
@@ -1100,7 +1271,7 @@ BarWidget {
     signal acted(string id)
     signal focusRequested()
 
-    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0)
+    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0)
 
     function indexOfSaved(ci) {
       if (saved === "" || ci < 0 || ci >= cats.length) return -1
@@ -1436,6 +1607,110 @@ BarWidget {
       }
     }
 
+    // custom colour: hex field, hue / saturation / brightness rails, star = favorite (u focuses the field, U toggles favorite)
+    Item {
+      id: customRow
+      visible: sec.hasCustom
+      y: strengthRow.y + sec.rowH + Style.space(4)
+      width: sec.width
+      height: 2 * sec.rowH + Style.space(4)
+
+      Rectangle { anchors.fill: parent; radius: Style.space(6); color: root.fgA(sec.focused ? 0.1 : 0.05) }
+      Item {
+        id: hexRow
+        width: parent.width
+        height: sec.rowH
+        Rectangle {
+          id: swatch
+          x: Style.space(10)
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(18)
+          height: width
+          radius: Style.space(4)
+          color: "#" + sec.customHex
+          border.width: sec.customActive ? 2 : 1
+          border.color: root.fgA(sec.customActive ? 0.9 : 0.4)
+        }
+        Text {
+          id: customLabel
+          anchors.left: swatch.right
+          anchors.leftMargin: Style.space(10)
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: "Custom  #"
+          color: root.fg
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+        }
+        TextField {
+          id: hexField
+          anchors.left: customLabel.right
+          anchors.right: starText.left
+          anchors.rightMargin: Style.space(8)
+          anchors.verticalCenter: parent.verticalCenter
+          height: sec.rowH - Style.space(4)
+          verticalPadding: Style.space(2)
+          maximumLength: 7
+          placeholderText: "rrggbb"
+          foreground: root.fg
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+          Binding on text { when: !hexField.activeFocus; value: sec.customHex }
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Escape) { text = sec.customHex; sec.focusRequested(); keysFocus(); event.accepted = true }
+            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { sec.customHexEntered(text); keysFocus(); event.accepted = true }
+          }
+          function keysFocus() { root.leaveSearch() }
+        }
+        Text {
+          id: starText
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(10)
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: sec.customFav ? "★" : "☆"
+          color: root.fg
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body * 1.2
+          MouseArea {
+            anchors.fill: parent
+            anchors.margins: -Style.space(6)
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { sec.focusRequested(); sec.customFavToggled() }
+          }
+        }
+      }
+      Row {
+        y: sec.rowH
+        width: parent.width
+        height: sec.rowH
+        leftPadding: Style.space(10)
+        rightPadding: Style.space(10)
+        spacing: Style.space(10)
+        Rail {
+          name: "H"
+          fg: root.fg; fontFamily: root.bar.fontFamily; cellW: (customRow.width - 4 * Style.space(10)) / 3; cellH: sec.rowH
+          value: sec.customH
+          stops: ["#ff0000", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#ff00ff", "#ff0000"]
+          onMoved: function(v) { sec.focusRequested(); sec.customHsv(v, sec.customS, sec.customV) }
+        }
+        Rail {
+          name: "S"
+          fg: root.fg; fontFamily: root.bar.fontFamily; cellW: (customRow.width - 4 * Style.space(10)) / 3; cellH: sec.rowH
+          value: sec.customS
+          stops: ["#ffffff", Qt.hsva(sec.customH, 1, 1, 1)]
+          onMoved: function(v) { sec.focusRequested(); sec.customHsv(sec.customH, v, sec.customV) }
+        }
+        Rail {
+          name: "V"
+          fg: root.fg; fontFamily: root.bar.fontFamily; cellW: (customRow.width - 4 * Style.space(10)) / 3; cellH: sec.rowH
+          value: sec.customV
+          stops: ["#000000", Qt.hsva(sec.customH, sec.customS, 1, 1)]
+          onMoved: function(v) { sec.focusRequested(); sec.customHsv(sec.customH, sec.customS, v) }
+        }
+      }
+    }
+
     Text {
       visible: sec.filtering && sec.cats.length === 0
       x: Style.space(10)
@@ -1478,7 +1753,7 @@ BarWidget {
       id: keys
       anchors.fill: parent
       onMoveRequested: function(dx, dy) { root.moveKeys(dx, dy) }
-      blocked: searchField.activeFocus
+      blocked: searchField.activeFocus || colorSec.editing
       onTabRequested: function(dir) { root.cycleKind(dir) }
       onDeleteRequested: root.handleText("x")
       onReturnRequested: root.viaEnter = true
@@ -1631,6 +1906,16 @@ BarWidget {
             strengthLive: root.colorOn
             strength: root.colStrength
             strengthDefault: root.defaultStrengthOf("color", root.colorCurrent)
+            hasCustom: true
+            customHex: root.customHex
+            customH: root.customH
+            customS: root.customS
+            customV: root.customV
+            customFav: root.customIsFav
+            customActive: root.customActive
+            onCustomHsv: function(h, sat, v) { root.setCustomHsv(h, sat, v) }
+            onCustomHexEntered: function(t) { root.setCustomHex(t) }
+            onCustomFavToggled: root.toggleCustomFav()
             onStrengthPicked: function(v) { root.setStrength("color", v) }
             onPointed: function(item) { root.previewColor(item) }
             onChosen: function(item, keep) { root.chooseColor(item, keep) }
@@ -1655,6 +1940,11 @@ BarWidget {
             favs: root.wallFavs
             focused: root.focusKind === "wall"
             defaultCat: 2
+            hasStrength: true
+            strengthLive: root.wallOn
+            strength: root.wallStrength
+            strengthDefault: 100
+            onStrengthPicked: function(v) { root.setStrength("wall", v) }
             onPointed: function(item) { root.previewWall(item) }
             onChosen: function(item, keep) { root.chooseWall(item, keep) }
             onActed: function(id) { root.runAction("wall", id) }
@@ -1678,6 +1968,11 @@ BarWidget {
             favs: root.mouseFavs
             focused: root.focusKind === "mouse"
             defaultCat: 1
+            hasStrength: true
+            strengthLive: root.mouseOn
+            strength: root.mouseStrength
+            strengthDefault: 100
+            onStrengthPicked: function(v) { root.setStrength("mouse", v) }
             onPointed: function(item) { root.previewMouse(item) }
             onChosen: function(item, keep) { root.chooseMouse(item, keep) }
             onActed: function(id) { root.runAction("mouse", id) }
@@ -1734,7 +2029,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · s C w c m menus · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

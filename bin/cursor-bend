@@ -93,18 +93,24 @@ class Template:
         fx, col = read("current"), read("color")
         fxp = os.path.join(ROOT, "shaders", fx + ".frag")
         colp = os.path.join(ROOT, "colors", col + ".frag")
+        if cs.CUSTOM_RE.match(col):
+            colp = cs.custom_file(STATE, col)
         if not os.path.isfile(fxp):
             fx = ""
         if not os.path.isfile(colp):
             col = ""
         paused = bool(read("disabled"))
-        key = (name, fx, col, read("strength-effect"), read("strength-color"), paused)
+        try:
+            bs = max(0, min(100, int(read("strength-mouse") or "100")))
+        except ValueError:
+            bs = 100
+        key = (name, fx, col, read("strength-effect"), read("strength-color"), bs, paused)
         if key == self.key:
             return True
         self.key = key
         fxl = (fxp, read("strength-effect") or "100") if fx and not paused else None
         coll = (colp, read("strength-color") or "100") if col and not paused else None
-        text = cs.compose(fxl, coll, (cur, 100))
+        text = cs.compose(fxl, coll, (cur, bs))
         self.pre, _, self.post = text.partition(cs.CUR_MARK + "\n" + cs.CUR_DEFAULTS)
         self.animated = bool(fxl) and is_animated(fxp)
         try:

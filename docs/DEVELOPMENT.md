@@ -5,7 +5,7 @@ They run inside the compositor on the GPU: no extra window, no CPU use, same cos
 
     bin/omashaders list | status | set NAME | off | toggle [NAME] | next | prev   (add -a to include animated) | animated [on|off|toggle] | gpu
     bin/omashaders effect [status|list|set NAME|off] | color [status|list|set NAME|off]
-    bin/omashaders strength [effect|color [N|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
+    bin/omashaders strength [effect|color|wall|mouse [N|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 
 Effects live in `shaders/*.frag`, colour grades in `colors/*.frag` (GLSL ES 3.00, uniforms `tex`, `time`, input `v_texcoord`).
 Validate with `glslangValidator -S frag shaders/NAME.frag`. Hyprland runs only one screen shader, so with an effect and a colour set,
@@ -23,6 +23,10 @@ are costly: `omashaders` sets `debug:damage_tracking=0` itself when an animated 
 ## Adding a shader
 Effect: drop `shaders/NAME.frag` with two comment lines right after `#version 300 es`: `// category: Lens|Retro|Devices|Art|Mood|Ambient|Motion` and `// desc: one line shown in the menu`.
 Colour: `colors/NAME.frag`, category `Comfort|Color|Retro|Devices`; it must be a per-pixel function of `texture(tex, v_texcoord)` only (one such call, no other `v_texcoord`, no `gl_FragCoord`, no `time`), because the composer swaps that call for the effect's output and prefixes the colour's helper functions with `c_`.
+Wallpaper and cursor strength (`strength-wall`, `strength-mouse` in the state dir) is the opacity of the overlay window over the real wallpaper / screen (`WallpaperFx.qml`, `MouseFx.qml`); for the cursor-bend effects `bin/cursor-bend` blends plain and bent screen with it inside the composed shader.
+
+Custom colours: the name `custom-RRGGBB` (any hex) is turned by `bin/compose-shader --custom STATE_DIR NAME` into a generated grade in `<state dir>/custom-colors/`, so favourites, combos and strength treat it like any shipped colour.
+
 Strength: add `// strength: N` for the start value (default 100). By default the result is blended with the untouched screen (`mix(input, result, S)`), which is right for tints and overlays. Shaders whose look changes shape (pixel blocks, blur radius, curvature) add `// strength-mode: native` and read `STRENGTH` (0.0-1.0) themselves, so 0 % really is the original screen and the start value is readable.
 Check everything with `bin/shader-check` (composes every effect and colour at 50 % and validates it with glslangValidator; standalone validation of a native shader fails on `STRENGTH`). Preview without touching the desktop: `bin/shader-preview IN.png SHADER.frag OUT.png [TIME]` (CPU rendering with Mesa; build the shader first with `bin/compose-shader`).
 

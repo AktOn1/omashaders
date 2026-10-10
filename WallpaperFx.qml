@@ -16,6 +16,7 @@ Scope {
   property color cPink: "#f56c90"
   property color cCream: "#FAF0BF"
   property int fps: 30
+  property real strength: 1.0
 
   property real time: 0
   readonly property real startMs: Date.now()
@@ -72,6 +73,7 @@ Scope {
 
       ShaderEffect {
         anchors.fill: parent
+        opacity: fx.strength
         property variant src: img
         property real time: fx.time
         property vector2d mouse: Qt.vector2d(fx.mouse.x - win.screen.x, fx.mouse.y - win.screen.y)

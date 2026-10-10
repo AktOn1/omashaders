@@ -10,6 +10,7 @@ Scope {
   property bool motion: false
   property point mouse: Qt.point(-10000, -10000)
   property int fps: 30
+  property real strength: 1.0
 
   property real time: 0
   property var hist: []
@@ -50,6 +51,7 @@ Scope {
 
       ShaderEffect {
         anchors.fill: parent
+        opacity: fx.strength
         property real time: fx.time
         property vector2d mouse: Qt.vector2d(fx.mouse.x - win.screen.x, fx.mouse.y - win.screen.y)
         property vector2d res: Qt.vector2d(width, height)

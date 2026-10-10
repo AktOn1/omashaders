@@ -2,12 +2,12 @@
 """compose-shader OUT.frag [--fx FILE.frag PERCENT] [--col FILE.frag PERCENT] [--cur FILE.frag]
 
 Build the one shader Hyprland runs: the effect first, then the colour grade on the effect's result.
-Each layer has a strength (0-100). --cur adds a cursor-bend layer (cursor-shaders/): it defines `vec4 bend(vec2 uv)`
+Each layer has a strength (0-100). --cur adds a cursor-bend layer (cursor-shaders/; its strength 0-100 blends the bent screen with the plain one): it defines `vec4 bend(vec2 uv)`
 (the screen as seen through the effect) and the effect layer's texture(tex, ...) calls go through it, so the effect and
 colour are drawn on the bent screen. bin/cursor-bend swaps the line //@CURSOR-CONSTS@ for the live cursor values. A shader that declares `// strength-mode: native` reads the constant
 STRENGTH (0.0-1.0) itself; every other shader is blended with its input: mix(input, result, strength).
 """
-import re, sys
+import os, re, sys
 
 HEADER = re.compile(r'^\s*(#version\b|precision\b|in\s+vec2\s+v_texcoord|uniform\s+sampler2D\s+tex\b|uniform\s+float\s+time\b|layout\s*\(location\s*=\s*0\)\s*out\s+vec4\s+fragColor)')
 TYPES = r'(?:const\s+)?(?:float|int|uint|bool|[iu]?vec[234]|mat[234]|void)'
@@ -29,6 +29,48 @@ def layer(path, percent, prefix, sample=None):
     s = max(0.0, min(100.0, float(percent))) / 100.0
     text = re.sub(r'\bSTRENGTH\b', prefix + 'S', text)
     return src, "const float %sS = %.4f;\n%s" % (prefix, s, text), native
+
+CUSTOM_RE = re.compile(r'^custom-([0-9a-fA-F]{6})$')
+
+
+def custom_source(name):
+    """GLSL for the custom colour grade `custom-RRGGBB`: shadows go to a dark shade of the colour, mid greys to the
+    colour, highlights to a pale tint of it. Luminance is kept, so text stays readable."""
+    m = CUSTOM_RE.match(name)
+    if not m:
+        raise ValueError("not a custom colour name: %s" % name)
+    h = m.group(1).lower()
+    r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    return """#version 300 es
+// category: Custom
+// strength: 80
+// desc: Your own colour #%s: dark shade in the shadows, the colour in the middle, a pale tint in the highlights
+precision highp float;
+in vec2 v_texcoord;
+uniform sampler2D tex;
+layout(location = 0) out vec4 fragColor;
+void main() {
+    vec4 s = texture(tex, v_texcoord);
+    float l = dot(s.rgb, vec3(0.299, 0.587, 0.114));
+    vec3 t = vec3(%.4f, %.4f, %.4f);
+    vec3 lo = t * 0.07;
+    vec3 hi = mix(t, vec3(1.0), 0.8);
+    vec3 c = l < 0.5 ? mix(lo, t, l * 2.0) : mix(t, hi, (l - 0.5) * 2.0);
+    fragColor = vec4(c, s.a);
+}
+""" % (h, r, g, b)
+
+
+def custom_file(state_dir, name):
+    """Path of the generated shader for a custom colour name (written on first use)."""
+    path = os.path.join(state_dir, "custom-colors", name.lower() + ".frag")
+    if not os.path.isfile(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w") as f:
+            f.write(custom_source(name))
+        os.replace(path + ".tmp", path)
+    return path
+
 
 CUR_MARK = "//@CURSOR-CONSTS@"
 CUR_DEFAULTS = ("const vec2 CUR = vec2(960.0, 540.0);\nconst vec2 CVEL = vec2(0.0, 0.0);\nconst float CT = 99.0;\nconst bool CMARK = false;\n"
@@ -70,13 +112,13 @@ bool cur_marked() {
 vec4 cur_tex(vec2 uv) {
     vec2 q = uv * RES;
     if (CMARK && q.y < 2.0 && q.x < 3.0) uv = vec2(3.5, 2.5) / RES;
-    return cur_here ? %sbend(uv) : texture(tex, uv);
+    return cur_here ? mix(texture(tex, uv), %sbend(uv), %sS) : texture(tex, uv);
 }
 """
 
 
 def compose(fx=None, col=None, cur=None):
-    """fx/col/cur are (path, percent) tuples (cur: (path, 100)); returns the shader text."""
+    """fx/col/cur are (path, percent) tuples; returns the shader text."""
     out = ["#version 300 es", "// composed: effect %s + colour %s%s" % (fx[0] if fx else "-", col[0] if col else "-", " + cursor " + cur[0] if cur else ""),
            "precision highp float;", "in vec2 v_texcoord;", "uniform sampler2D tex;"]
     fx_src = fx_text = ""
@@ -91,10 +133,10 @@ def compose(fx=None, col=None, cur=None):
     body = ["void main() {"]
     first = "texture(tex, v_texcoord)"
     if cur:
-        _, cur_text, _ = layer(cur[0], 100, "bd_")
+        _, cur_text, _ = layer(cur[0], cur[1], "bd_")
         out.append(CUR_PRELUDE % (CUR_MARK, CUR_DEFAULTS))
         out.append(cur_text)
-        out.append(CUR_TAIL % "bd_")
+        out.append(CUR_TAIL % ("bd_", "bd_"))
         body.append("    cur_here = !CMARK || cur_marked();")
         first = "cur_tex(v_texcoord)"
     body += ["    vec4 src0 = %s;" % first, "    fragColor = src0;"]
@@ -120,6 +162,9 @@ def main():
     if not args:
         sys.exit(__doc__)
     out_path = args.pop(0)
+    if out_path == "--custom":  # --custom STATE_DIR NAME: print the path of the generated custom colour shader
+        print(custom_file(args[0], args[1]))
+        return
     fx = col = cur = None
     while args:
         flag = args.pop(0)

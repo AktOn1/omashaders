@@ -30,6 +30,13 @@ names() {
 COLOR_STATE="$STATE_DIR/color"
 current() { cat "$STATE" 2>/dev/null; }
 current_color() { cat "$COLOR_STATE" 2>/dev/null; }
+# path of a colour grade's shader; "custom-RRGGBB" is a colour of your own, generated on first use into the state folder
+cfile() {
+  case "$1" in
+    custom-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) python3 "$ROOT/bin/compose-shader" --custom "$STATE_DIR" "$1" ;;
+    *) echo "$CDIR/$1.frag" ;;
+  esac
+}
 color_names() { for f in "$CDIR"/*.frag; do [ -e "$f" ] && basename "$f" .frag; done; }
 is_animated() { grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$1"; }
 # "animated" is a persisted on/off switch for the picker and the cycle; prints 1 or 0 (empty = never set)
@@ -73,18 +80,20 @@ apply() {
   local fx col file="" out args=()
   fx=$(current); col=$(current_color)
   [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
-  [ -n "$col" ] && [ ! -f "$CDIR/$col.frag" ] && col=""
+  [ -n "$col" ] && [ ! -f "$(cfile "$col")" ] && col=""
   if ! is_disabled && { [ -n "$fx" ] || [ -n "$col" ]; }; then
-    local sf sc
+    local sf sc cf=""
+    [ -n "$col" ] && cf=$(cfile "$col")
     sf=$(cur_strength effect); sc=$(cur_strength color)
     out="$STATE_DIR/built/${fx:--}@${sf}+${col:--}@${sc}.frag"
     [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
-    [ -n "$col" ] && args+=(--col "$CDIR/$col.frag" "$sc")
-    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$DIR/$fx.frag" ] || [ -n "$col" -a "$out" -ot "$CDIR/$col.frag" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
+    [ -n "$col" ] && args+=(--col "$cf" "$sc")
+    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$DIR/$fx.frag" ] || [ -n "$col" -a "$out" -ot "$cf" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
       mkdir -p "$STATE_DIR/built"
       python3 "$ROOT/bin/compose-shader" "$out.tmp" "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build $fx + $col" >&2; exit 1; }
     fi
     find "$STATE_DIR/built" -type f -mmin +60 ! -path "$out" -delete 2>/dev/null
+    find "$STATE_DIR/custom-colors" -type f -mtime +30 ! -path "$cf" -delete 2>/dev/null
     file="$out"
   fi
   bend_running && return 0
@@ -94,20 +103,21 @@ apply() {
 lock() { mkdir -p "$STATE_DIR"; exec 9>"$STATE_DIR/lock"; flock 9; }
 set_shader() {
   lock
-  if [ ! -f "$DIR/$1.frag" ] && [ -f "$CDIR/$1.frag" ]; then set_color "$1"; return; fi
+  if [ ! -f "$DIR/$1.frag" ] && { [ -f "$CDIR/$1.frag" ] || [[ "$1" == custom-* ]]; }; then set_color "$1"; return; fi
   [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
   mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; echo "$(remembered_strength fx "$1" "$DIR/$1.frag")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
 }
 set_color() {
   lock
-  [ -f "$CDIR/$1.frag" ] || { echo "unknown colour: $1" >&2; exit 1; }
-  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; echo "$(remembered_strength col "$1" "$CDIR/$1.frag")" > "$STATE_DIR/strength-color"; : > "$DISABLED"; apply
+  local cf; cf=$(cfile "$1")
+  [ -f "$cf" ] || { echo "unknown colour: $1" >&2; exit 1; }
+  mkdir -p "$STATE_DIR"; echo "$1" > "$COLOR_STATE"; echo "$(remembered_strength col "$1" "$cf")" > "$STATE_DIR/strength-color"; : > "$DISABLED"; apply
 }
 # strength KIND(effect|color) VALUE: VALUE is a percent, +N, -N or reset; remembered for that effect/colour
 set_strength() {
   lock
   local kind="$1" val="$2" name file k cur
-  if [ "$kind" = effect ]; then name=$(current); file="$DIR/$name.frag"; k=fx; else name=$(current_color); file="$CDIR/$name.frag"; k=col; fi
+  if [ "$kind" = effect ]; then name=$(current); file="$DIR/$name.frag"; k=fx; else name=$(current_color); file=$(cfile "$name"); k=col; fi
   [ -n "$name" ] && [ -f "$file" ] || { echo "no $kind set" >&2; exit 1; }
   cur=$(cur_strength "$kind")
   case "$val" in
@@ -118,6 +128,18 @@ set_strength() {
   [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
   mkdir -p "$SDIR"; echo "$val" > "$STATE_DIR/strength-$kind"; echo "$val" > "$SDIR/$k-$name"
   apply
+}
+set_overlay_strength() { # wall|mouse [PERCENT|+N|-N|reset]: opacity of the wallpaper / cursor effect (read by the bar widget and cursor-bend)
+  local f="$STATE_DIR/strength-$1" val="$2" cur
+  cur=$(cat "$f" 2>/dev/null); case "$cur" in ''|*[!0-9]*) cur=100 ;; esac
+  case "$val" in
+    '') echo "$cur"; return ;;
+    reset) val=100 ;;
+    +*|-*) val=$(( cur + val )) ;;
+    *[!0-9]*) echo "usage: omashaders strength wall|mouse PERCENT|+N|-N|reset" >&2; exit 1 ;;
+  esac
+  [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
+  mkdir -p "$STATE_DIR"; echo "$val" > "$f"
 }
 power() { # [status|on|off|toggle] ; "on" = shaders enabled
   lock
@@ -225,7 +247,8 @@ case "${1:-}" in
     case "${2:-}" in
       '') echo "effect $(cur_strength effect) color $(cur_strength color)" ;;
       effect|color) if [ -z "$3" ]; then cur_strength "$2"; else set_strength "$2" "$3"; fi ;;
-      *) echo "usage: omashaders strength [effect|color [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
+      wall|mouse) set_overlay_strength "$2" "$3" ;;
+      *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
   power) power "$2" "$3" ;;
   status) current | grep . || echo off ;;

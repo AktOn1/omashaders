@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 38 screen effects (CRT, pixel art, e-ink, Game Boy, halation, oil paint, matrix rain ...), 44 colour grades, 42 animated wallpaper effects and 24 cursor effects (12 overlays, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on each effect that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 45 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 44 colour grades plus your own custom colour, 42 animated wallpaper effects and 25 cursor effects (13 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -35,7 +35,7 @@ Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy she
 
 ## Usage
 
-Bar icon: **left click** menu, **right click** all effects off, **middle click** next wallpaper, **scroll** steps the screen effect.
+Bar icon: **left click** menu, **right click** pause / resume all effects (they come back exactly as they were), **middle click** next wallpaper, **scroll** steps the screen effect.
 
 | Key | Action |
 | --- | --- |
@@ -44,7 +44,8 @@ Bar icon: **left click** menu, **right click** all effects off, **middle click**
 | `Enter` / `Space` | keep (and close) / keep and stay open |
 | `/` | filter every column at once: type to narrow (name, description, category; several words must all match), `Enter` keeps the filter and returns to `h j k l`, `Esc` clears it |
 | `Esc`, `q` | clear the filter, or undo and close |
-| `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen or Color menu) |
+| `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen, Color, Wallpaper or Cursor menu; wallpaper and cursor strength is how visible the effect is over the real wallpaper / screen) |
+| `u`, `U` | custom colour: focus the hex field (`Enter` applies it) / save the custom colour as a favourite (the star next to the field does the same). The H, S and V rails under the Color menu pick it by mouse |
 | `p` | pause or resume every effect; they come back exactly as they were |
 | `f` | favourite (each menu has its own list) |
 | `F` | save the current Screen + Color + Wallpaper + Cursor combination as a combo (`m` shows the Combos menu) |
