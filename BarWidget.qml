@@ -33,6 +33,8 @@ BarWidget {
   readonly property string mouseFile: stateDir + "/mouse"
   readonly property string screenFavFile: stateDir + "/screen-favorites"
   readonly property string wallEffectFile: stateDir + "/wp-effect"
+  readonly property string wall2File: stateDir + "/wp-effect2"
+  readonly property string wallMixFile: stateDir + "/wp-mix"
   readonly property string wallPreviewFile: stateDir + "/wp-preview"
   readonly property string wallFavFile: stateDir + "/wp-favorites"
   readonly property string mouseFavFile: stateDir + "/mouse-favorites"
@@ -56,6 +58,7 @@ BarWidget {
   readonly property string winFrameFile: stateDir + "/window-frame"
   readonly property string winTargetFile: stateDir + "/window-target"
   readonly property string winAppsFile: stateDir + "/window-apps"
+  readonly property string winMixFile: stateDir + "/window-mix"
   readonly property string winFxStrengthFile: stateDir + "/window-strength-effect"
   readonly property string winColStrengthFile: stateDir + "/window-strength-color"
   readonly property int fps: Number(setting("fps", 30)) || 30
@@ -407,13 +410,57 @@ BarWidget {
   property string mixColorMode: "stack"
   property int mixEffectAmt: 100
   property int mixColorAmt: 100
-  function mixKindOf(k) { return k === "screen" ? "effect" : (k === "color" ? "color" : "") }
-  function mixSecondOf(k) { return k === "screen" ? (shaderOn ? effect2 : "") : (k === "color" ? (colorOn ? color2 : "") : "") }
-  function mixModeOf(k) { return k === "screen" ? mixEffectMode : mixColorMode }
-  function mixAmtOf(k) { return k === "screen" ? mixEffectAmt : mixColorAmt }
+  // The Windows column mixes per scope (All windows or one app) the same way; bin/omashaders window [-a CLASS] mix ...
+  // keeps it per scope and lists every scope in window-mix, which winMix mirrors.
+  property var winMix: ({})
+  readonly property var winMixEntry: winMix[winApp ? winScope : "*"] || { fx2: "", col2: "", fxMode: "stack", fxAmt: 100, colMode: "stack", colAmt: 100 }
+  function setWinMixValue(part, v) {
+    var m = Object.assign({}, winMix), key = winApp ? winScope : "*"
+    var e = Object.assign({ fx2: "", col2: "", fxMode: "stack", fxAmt: 100, colMode: "stack", colAmt: 100 }, m[key] || {})
+    e[part === "color" ? "colAmt" : "fxAmt"] = v
+    m[key] = e
+    winMix = m
+  }
+  // Wallpaper effects mix inside the shell (no CLI): wp-effect2 and wp-mix ("stack|blend AMOUNT") next to wp-effect.
+  property string wall2: ""
+  property string wallMixMode: "stack"
+  property int wallMixAmt: 100
+  property int pendingWallMix: -1
+  Timer { id: wallMixTimer; interval: 80; onTriggered: { root.writeWallMix(); root.pendingWallMix = -1 } }
+  function writeWallMix() { writeFile(wallMixFile, wallMixMode + " " + wallMixAmt) }
+  function wallMixSet(name) {
+    if (name === "" || name === wallSaved) { wall2 = ""; writeFile(wall2File, ""); return }
+    wall2 = name
+    wallMixAmt = wallMixMode === "blend" ? 50 : 100
+    writeFile(wall2File, name)
+    writeWallMix()
+  }
+  function wallMixSetMode(m) {
+    wallMixMode = m
+    wallMixAmt = m === "blend" ? 50 : 100
+    writeWallMix()
+  }
+  function wallMixSetAmount(v) { wallMixAmt = clamp(Math.round(v), 0, 100); pendingWallMix = wallMixAmt; wallMixTimer.restart() }
+  function mixKindOf(k) { return k === "screen" ? "effect" : (k === "color" ? "color" : (k === "wall" ? "wall" : (k === "win" ? (winPart === "frame" ? "" : winPart) : ""))) }
+  function mixSecondOf(k) {
+    if (k === "win") {
+      if (winPart === "effect") return winEffectOnS ? winMixEntry.fx2 : ""
+      if (winPart === "color") return winColorOnS ? winMixEntry.col2 : ""
+      return ""
+    }
+    if (k === "wall") return wallSaved !== "" ? wall2 : ""
+    return k === "screen" ? (shaderOn ? effect2 : "") : (k === "color" ? (colorOn ? color2 : "") : "")
+  }
+  function mixModeOf(k) { return k === "wall" ? wallMixMode : (k === "win" ? (winPart === "color" ? winMixEntry.colMode : winMixEntry.fxMode) : (k === "screen" ? mixEffectMode : mixColorMode)) }
+  function mixAmtOf(k) { return k === "wall" ? wallMixAmt : (k === "win" ? (winPart === "color" ? winMixEntry.colAmt : winMixEntry.fxAmt) : (k === "screen" ? mixEffectAmt : mixColorAmt)) }
   function mixDefaultOf(k) {
     if (mixModeOf(k) === "blend") return 50
-    return defaultStrengthOf(k, mixSecondOf(k))
+    if (k === "wall") return 100
+    return defaultStrengthOf(k === "win" ? (winPart === "color" ? "color" : "screen") : k, mixSecondOf(k))
+  }
+  function mixCmd(k, tail) {
+    if (k === "win") return [script, "window"].concat(winScope === "*" ? [] : ["-a", winScope], ["mix", mixKindOf(k)], tail)
+    return [script, "mix", mixKindOf(k)].concat(tail)
   }
   function parseMix(t, kind) {
     var p = String(t || "").trim().split(/\s+/)
@@ -425,6 +472,7 @@ BarWidget {
   }
   component MixSender: Process {
     property string kind: "effect"
+    property bool win: false
     property int pending: -1
     readonly property bool busy: running || pending >= 0
     function send(v) { pending = v; if (!running) kick() }
@@ -432,17 +480,22 @@ BarWidget {
       if (pending < 0) return
       var v = pending
       pending = -1
-      command = [root.script, "mix", kind, "amount", String(v)]
+      command = win ? [root.script, "window"].concat(root.winScope === "*" ? [] : ["-a", root.winScope], ["mix", kind, "amount", String(v)])
+                    : [root.script, "mix", kind, "amount", String(v)]
       running = true
     }
     onRunningChanged: if (!running && pending >= 0) kick()
   }
   MixSender { id: mixFxSender; kind: "effect" }
   MixSender { id: mixColSender; kind: "color" }
+  MixSender { id: winMixFxSender; kind: "effect"; win: true }
+  MixSender { id: winMixColSender; kind: "color"; win: true }
   function setMixAmount(k, v) {
     v = clamp(Math.round(v), 0, 100)
     if (mixSecondOf(k) === "") return
-    if (k === "screen") { mixEffectAmt = v; mixFxSender.send(v) }
+    if (k === "wall") wallMixSetAmount(v)
+    else if (k === "win") { setWinMixValue(winPart, v); (winPart === "color" ? winMixColSender : winMixFxSender).send(v) }
+    else if (k === "screen") { mixEffectAmt = v; mixFxSender.send(v) }
     else { mixColorAmt = v; mixColSender.send(v) }
   }
   function nudgeMix(delta) {
@@ -451,26 +504,58 @@ BarWidget {
   }
   function resetMix() {
     if (mixSecondOf(focusKind) === "") return
-    Quickshell.execDetached([script, "mix", mixKindOf(focusKind), "amount", "reset"])
+    if (focusKind === "wall") { wallMixSetAmount(mixDefaultOf("wall")); return }
+    Quickshell.execDetached(mixCmd(focusKind, ["amount", "reset"]))
   }
   function toggleMixMode() {
     if (mixSecondOf(focusKind) === "") return
-    Quickshell.execDetached([script, "mix", mixKindOf(focusKind), "mode", "toggle"])
+    if (focusKind === "wall") { wallMixSetMode(wallMixMode === "stack" ? "blend" : "stack"); return }
+    Quickshell.execDetached(mixCmd(focusKind, ["mode", "toggle"]))
   }
   function clearMix() {
     if (mixSecondOf(focusKind) === "") return
-    Quickshell.execDetached([script, "mix", mixKindOf(focusKind), "off"])
+    if (focusKind === "wall") { wallMixSet(""); return }
+    Quickshell.execDetached(mixCmd(focusKind, ["off"]))
   }
   function pickSecond(k, it, keep) {
     var mk = mixKindOf(k)
     if (mk === "" || !it || it.id.charAt(0) === "@") return
-    screenTimer.stop(); colorTimer.stop()
-    var primary = k === "screen" ? current : colorCurrent
+    screenTimer.stop(); colorTimer.stop(); winTimer.stop()
+    if (k === "wall") {
+      wallHoverTimer.stop()
+      if (wallSaved === "") { flash("Pick a first wallpaper effect before mixing a second one"); return }
+      if (it.id === wallSaved) { flash("The second one has to differ from the first"); return }
+      wallMixSet(it.id === wall2 ? "" : it.id)
+      if (!keep) popupOpen = false
+      return
+    }
+    var id = k === "win" ? it.id.slice(2) : it.id
+    if (k === "win" && it.id.charAt(0) !== (mk === "effect" ? "e" : "c")) return
+    var primary = k === "win" ? (mk === "effect" ? winEffectS : winColorS) : (k === "screen" ? current : colorCurrent)
     if (primary === "") { flash("Pick a first " + (k === "screen" ? "effect" : "colour grade") + " before mixing a second one"); return }
-    if (it.id === primary) { flash("The second one has to differ from the first"); return }
-    if (it.id === mixSecondOf(k)) Quickshell.execDetached([script, "mix", mk, "off"])
-    else Quickshell.execDetached([script, "mix", mk, "set", it.id])
+    if (id === primary) { flash("The second one has to differ from the first"); return }
+    if (id === mixSecondOf(k)) Quickshell.execDetached(mixCmd(k, ["off"]))
+    else Quickshell.execDetached(mixCmd(k, ["set", id]))
     if (!keep) popupOpen = false
+  }
+  FileView {
+    path: root.wall2File
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.wall2 = String(text() || "").trim()
+    onLoadFailed: root.wall2 = ""
+  }
+  FileView {
+    path: root.wallMixFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var p = String(text() || "").trim().split(/\s+/), v = parseInt(p[1])
+      root.wallMixMode = p[0] === "blend" ? "blend" : "stack"
+      if (root.pendingWallMix < 0) root.wallMixAmt = isNaN(v) ? 100 : root.clamp(v, 0, 100)
+    }
   }
   readonly property var screenMarks: mixSecondOf("screen") !== "" ? [effect2] : []
   readonly property var colorMarks: mixSecondOf("color") !== "" ? [color2] : []
@@ -788,7 +873,7 @@ BarWidget {
   readonly property var winEffectItems: screenEntries.filter(winShownFx).map(winFxItem)
   readonly property var winAppItems: {
     var gsum = [winEffect, winColor].filter(function(x) { return x !== "" }).join(" + ")
-    var out = [{ id: "t:*", label: "All windows", desc: "The setting for every window. Apps that have their own setting (listed below) keep it.", hint: gsum }]
+    var out = [{ id: "t:*", label: "All windows", desc: "The setting for every window. Apps that have their own setting keep it.", hint: gsum }]
     var seen = {}
     winClasses.concat(Object.keys(winApps), winTargets.filter(function(t) { return t !== "*" })).forEach(function(c) {
       if (!c || seen[c]) return
@@ -806,7 +891,7 @@ BarWidget {
       { id: "setup", label: "Setup needed", items: [], note: "Window shaders need the HyprWindowShade plugin, which is not installed. In a terminal run:\n\nhyprpm update\nhyprpm add https://github.com/ManofJELLO/HyprWindowShade\nhyprpm enable HyprWindowShade\n\nThen reopen this menu. Pick the next row to copy the commands." },
       { id: "@copy", label: "Copy install commands", action: true }
     ].concat(winFrameCats).concat([{ id: "@off", label: "Off", action: true }])
-    var out = [{ id: "apps", label: "Apps", items: winAppItems, note: "" }]
+    var out = []
     catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
       var items = screenEntries.filter(function(e) { return e.cat === c && winShownFx(e) }).map(winFxItem)
       if (items.length > 0) out.push({ id: "e:" + c, label: c, items: items, note: "" })
@@ -816,13 +901,16 @@ BarWidget {
     })
     if (winScope === "*") winFrameCats.forEach(function(c) { out.push(c) })
     else out.push({ id: "@inherit", label: "Follow All windows", action: true })
+    out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
   }
   readonly property var winMarks: {
-    var out = ["t:" + winScope]
+    var out = []
     if (winEffectOnS) out.push("e:" + winEffectS)
     if (winColorOnS) out.push("c:" + winColorS)
+    if (winEffectOnS && winMixEntry.fx2 !== "") out.push("e:" + winMixEntry.fx2)
+    if (winColorOnS && winMixEntry.col2 !== "") out.push("c:" + winMixEntry.col2)
     if (winFrameOn && winScope === "*") out.push("f:" + winFrame)
     return out
   }
@@ -838,12 +926,25 @@ BarWidget {
   function previewWin(it) {
     if (!it || it.id.charAt(1) !== ":" || it.id.charAt(0) === "t") { winTimer.stop(); return }
     if (it.id === "e:" + winEffectS || it.id === "c:" + winColorS || it.id === "f:" + winFrame) { winTimer.stop(); return }
+    if (mixSecondOf("win") !== "" && it.id.charAt(0) === (winPart === "color" ? "c" : "e")) { winTimer.stop(); return }
     if (!winPreviewed) winOriginInherit = winScope !== "*" && winApp === null
     winPending = it.id
     winPreviewed = true
     winTimer.restart()
   }
   Timer { id: winTimer; interval: 140; onTriggered: root.applyWin(root.winPending) }
+  property bool winPickOpen: false
+  function toggleWinPicker() {
+    winPickOpen = !winPickOpen
+    if (winPickOpen) {
+      winSec.pickerIdx = Math.max(0, winAppItems.findIndex(function(it) { return it.id === "t:" + winScope }))
+      activeKind = "win"
+    }
+  }
+  function pickWinApp(it) {
+    winPickOpen = false
+    if (it) chooseWin(it, true)
+  }
   function setWinScope(cls) {
     revertWinPreview()
     winScope = cls
@@ -931,6 +1032,24 @@ BarWidget {
       root.winApps = m
     }
     onLoadFailed: root.winApps = ({})
+  }
+  FileView {
+    path: root.winMixFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      if (winMixFxSender.busy || winMixColSender.busy) return
+      var m = {}
+      String(text() || "").split("\n").forEach(function(l) {
+        if (l === "") return
+        var q = l.split("\t"), fa = parseInt(q[4]), ca = parseInt(q[6])
+        m[q[0]] = { fx2: q[1] || "", col2: q[2] || "", fxMode: q[3] === "blend" ? "blend" : "stack", fxAmt: isNaN(fa) ? 100 : fa,
+                    colMode: q[5] === "blend" ? "blend" : "stack", colAmt: isNaN(ca) ? 100 : ca }
+      })
+      root.winMix = m
+    }
+    onLoadFailed: root.winMix = ({})
   }
   FileView {
     path: root.winTargetFile
@@ -1114,7 +1233,7 @@ BarWidget {
   onWallShownChanged: if (wallShown !== "") resolver.running = true
 
   function previewWall(it) {
-    if (!it || it.id.charAt(0) === "@" || it.id === wallShown) { wallHoverTimer.stop(); return }
+    if (!it || it.id.charAt(0) === "@" || it.id === wallShown || mixSecondOf("wall") !== "") { wallHoverTimer.stop(); return }
     wallHoverId = it.id
     wallHoverTimer.restart()
   }
@@ -1133,6 +1252,7 @@ BarWidget {
   }
   function setWall(id, keep) {
     if (id !== "" && paused) setPower("on")
+    if (id !== wallSaved) { wall2 = ""; writeFile(wall2File, "") }
     wallSaved = id
     clearWallPreview()
     writeFile(wallEffectFile, id)
@@ -1229,6 +1349,9 @@ BarWidget {
     range: root.wallRange / 100
     targetColor: "#" + root.wallTarget
     effect: root.fxHost && !root.paused ? root.wallShown : ""
+    effect2: root.fxHost && !root.paused && root.wallPreview === "" ? root.mixSecondOf("wall") : ""
+    mixMode: root.wallMixMode
+    mixAmount: root.wallMixAmt / 100
     wallpaper: root.wallpaperPath
     mouse: root.cursorLive ? root.cursor : Qt.point(-10000, -10000)
     fps: root.fps
@@ -1439,8 +1562,11 @@ BarWidget {
     }
     if (wallOn) add("wall", "Wallpaper " + wallLabel(wallShown) + costTag("wall", wallShown))
     if (mouseOn) add("mouse", "Cursor " + mouseCurrent + costTag("cursor", mouseCurrent))
+    var gm = winMix["*"] || { fx2: "", col2: "", fxMode: "stack", fxAmt: 100, colMode: "stack", colAmt: 100 }
     if (winEffectOn) add("winfx", "Windows " + winEffect + costTag("win", winEffect))
+    if (winEffectOn && gm.fx2 !== "") add("winfx2", "Windows " + (gm.fxMode === "blend" ? "~ " : "+ ") + gm.fx2 + " " + gm.fxAmt + "%")
     if (winColorOn) add("wincol", "Windows " + winColor + costTag("wincolor", perfName(winColor)))
+    if (winColorOn && gm.col2 !== "") add("wincol2", "Windows " + (gm.colMode === "blend" ? "~ " : "+ ") + gm.col2 + " " + gm.colAmt + "%")
     if (winFrameOn) add("winframe", "Frame " + winFrame)
     Object.keys(winApps).forEach(function(c) { add("app:" + c, (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c)) })
     return a
@@ -1454,6 +1580,8 @@ BarWidget {
     else if (key === "mouse") offIn("mouse")
     else if (key === "winfx") winRun(["effect", "off"])
     else if (key === "wincol") winRun(["color", "off"])
+    else if (key === "winfx2") winRun(["mix", "effect", "off"])
+    else if (key === "wincol2") winRun(["mix", "color", "off"])
     else if (key === "winframe") winRun(["frame", "off"])
     else if (key.indexOf("app:") === 0) winRun(["-a", key.slice(4), "inherit"])
   }
@@ -1511,6 +1639,7 @@ BarWidget {
     return n
   }
   function cycleKind(dir) {
+    winPickOpen = false
     var i = visibleKinds.indexOf(focusKind) + dir
     activeKind = visibleKinds[(i + nVis) % nVis]
   }
@@ -1537,6 +1666,7 @@ BarWidget {
       wallPreviewed = false
       winPreviewed = false
       winScope = "*"
+      winPickOpen = false
       winOriginFx = winEffect
       winOriginCol = winColor
       winOriginFrame = winFrame
@@ -1578,7 +1708,7 @@ BarWidget {
   function offIn(k) {
     if (k === "combo") offAll()
     else if (k === "wall") setWall("", true)
-    else if (k === "win") winRun(["off"])
+    else if (k === "win") { if (winScope === "*") winRun(["off"]); else winRunS(["off"]) }
     else chooseIn(k, { id: "" }, true)
   }
   function randomIn(k) {
@@ -1619,6 +1749,12 @@ BarWidget {
   }
   function moveKeys(dx, dy) {
     hoverPreviewing = false
+    if (winPickOpen) {
+      if (dy !== 0) winSec.pickerIdx = clamp(winSec.pickerIdx + dy, 0, winAppItems.length - 1)
+      else if (dx < 0) winPickOpen = false
+      else pickWinApp(winAppItems[winSec.pickerIdx])
+      return
+    }
     var s = secOf(focusKind)
     var r = s.move(dx, dy)
     if (r === 1) {
@@ -1630,7 +1766,9 @@ BarWidget {
   }
   function handleText(t) {
     var k = focusKind, s = secOf(k)
-    if (t === "/") focusSearch()
+    if (t === "A") { if (showWin && winPlugin !== "missing") { activeKind = "win"; toggleWinPicker() } }
+    else if (winPickOpen) { if (t === "q") close(); else if (t === "g") winSec.pickerIdx = 0; else if (t === "G") winSec.pickerIdx = winAppItems.length - 1 }
+    else if (t === "/") focusSearch()
     else if (t === "q") close()
     else if (t === "a") setAnimated()
     else if (t === "o" || t === "0") offIn(k)
@@ -1740,11 +1878,17 @@ BarWidget {
     id: row
     property string label: ""
     property bool dim: false
+    // toggles (menu filters) are outlined and fill in when on; actions are solid, bold and centred
+    property bool toggle: false
+    property bool checked: false
     signal clicked()
     width: parent ? parent.width : 0
     height: Style.space(28)
     radius: Style.space(6)
-    color: mouse.containsMouse && !dim ? root.fgA(0.14) : root.fgA(0.06)
+    color: toggle ? root.fgA(checked ? (mouse.containsMouse && !dim ? 0.24 : 0.17) : (mouse.containsMouse && !dim ? 0.1 : 0.03))
+                  : root.fgA(mouse.containsMouse && !dim ? 0.32 : 0.22)
+    border.width: toggle ? 1 : 0
+    border.color: root.fgA(checked ? 0.5 : 0.22)
     opacity: dim ? 0.4 : 1
 
     Text {
@@ -1753,12 +1897,15 @@ BarWidget {
       anchors.right: parent.right
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
+      horizontalAlignment: row.toggle ? Text.AlignLeft : Text.AlignHCenter
       elide: Text.ElideRight
       textFormat: Text.PlainText
       text: row.label
       color: root.fg
+      opacity: row.toggle && !row.checked ? 0.75 : 1
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.body
+      font.bold: !row.toggle
     }
     MouseArea {
       id: mouse
@@ -1918,6 +2065,15 @@ BarWidget {
     property int mixValue: 100
     property int mixDefault: 100
     property string mixNoun: "effect"
+    // optional combobox next to the title (the Windows column uses it to pick which app is edited)
+    property bool hasPicker: false
+    property string pickerText: ""
+    property var pickerItems: []
+    property string pickerCurrent: ""
+    property bool pickerOpen: false
+    property int pickerIdx: 0
+    signal pickerToggled()
+    signal pickerChosen(var item)
     signal strengthPicked(int value)
     signal mixPicked(int value)
     signal mixModeToggled()
@@ -2043,6 +2199,12 @@ BarWidget {
     function showSelected() {
       if (curItems.length > 0) list.positionViewAtIndex(root.clamp(itemIdx, 0, curItems.length - 1), ListView.Contain)
     }
+    function showCat() {
+      var y = catIdx * (rowH + rowGap)
+      if (y < catFlick.contentY) catFlick.contentY = y
+      else if (y + rowH > catFlick.contentY + catFlick.height) catFlick.contentY = y + rowH - catFlick.height
+    }
+    onCatIdxChanged: showCat()
     onItemIdxChanged: showSelected()
     onCurItemsChanged: Qt.callLater(showSelected)
 
@@ -2061,6 +2223,110 @@ BarWidget {
       font.letterSpacing: 1
     }
 
+    Rectangle {
+      id: pickerBtn
+      visible: sec.hasPicker
+      x: titleText.implicitWidth + Style.space(6)
+      y: Style.space(2)
+      height: titleText.height - Style.space(4)
+      width: Math.min(sec.width - x - Style.space(4), pickerLabel.implicitWidth + Style.space(20))
+      radius: Style.space(5)
+      color: root.fgA(sec.pickerOpen ? 0.2 : (pickerHover.containsMouse ? 0.16 : 0.08))
+      border.width: 1
+      border.color: root.fgA(sec.focused ? 0.35 : 0.2)
+      Text {
+        id: pickerLabel
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(8)
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(8)
+        elide: Text.ElideRight
+        textFormat: Text.PlainText
+        text: sec.pickerText + "  " + (sec.pickerOpen ? "\u25B4" : "\u25BE")
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body * 0.85
+      }
+      MouseArea {
+        id: pickerHover
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: { sec.focusRequested(); sec.pickerToggled() }
+      }
+    }
+
+    Rectangle {
+      id: pickerList
+      visible: sec.hasPicker && sec.pickerOpen
+      z: 30
+      x: pickerBtn.x
+      y: pickerBtn.y + pickerBtn.height + Style.space(2)
+      width: Math.min(sec.width - x, Math.round(sec.width * 0.8))
+      height: Math.min(sec.pickerItems.length, 11) * (sec.rowH + sec.rowGap) + Style.space(8)
+      radius: Style.space(8)
+      color: Qt.rgba(1 - root.fg.r, 1 - root.fg.g, 1 - root.fg.b, 0.97)
+      border.width: 1
+      border.color: root.fgA(0.3)
+      ListView {
+        id: pickerView
+        anchors.fill: parent
+        anchors.margins: Style.space(4)
+        spacing: sec.rowGap
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: sec.pickerItems
+        currentIndex: sec.pickerIdx
+        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
+        delegate: Rectangle {
+          id: pickRow
+          required property var modelData
+          required property int index
+          readonly property bool cur: modelData.id === sec.pickerCurrent
+          width: pickerView.width
+          height: sec.rowH
+          radius: Style.space(6)
+          color: index === sec.pickerIdx ? root.fgA(0.2) : (pickMouse.containsMouse ? root.fgA(0.12) : "transparent")
+          Text {
+            id: pickLabel
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, parent.width - Style.space(60))
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: (pickRow.cur ? "● " : "") + pickRow.modelData.label
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          Text {
+            anchors.left: pickLabel.right
+            anchors.leftMargin: Style.space(8)
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            horizontalAlignment: Text.AlignRight
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: pickRow.modelData.hint || ""
+            opacity: 0.55
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.85
+          }
+          MouseArea {
+            id: pickMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sec.pickerChosen(pickRow.modelData)
+          }
+        }
+      }
+    }
+
     Row {
       id: panes
       anchors.top: titleText.bottom
@@ -2068,9 +2334,18 @@ BarWidget {
       anchors.right: parent.right
       spacing: Style.space(8)
 
+      Flickable {
+        id: catFlick
+        width: Math.round(sec.width * 0.34)
+        height: sec.visibleRows * (sec.rowH + sec.rowGap)
+        contentHeight: catCol.height
+        clip: true
+        interactive: contentHeight > height
+        boundsBehavior: Flickable.StopAtBounds
+
       Column {
         id: catCol
-        width: Math.round(sec.width * 0.34)
+        width: catFlick.width
         spacing: sec.rowGap
 
         Repeater {
@@ -2126,10 +2401,11 @@ BarWidget {
           }
         }
       }
+      }
 
       ListView {
         id: list
-        width: panes.width - catCol.width - panes.spacing
+        width: panes.width - catFlick.width - panes.spacing
         height: sec.visibleRows * (sec.rowH + sec.rowGap)
         spacing: sec.rowGap
         clip: true
@@ -2435,7 +2711,7 @@ BarWidget {
     PctRow {
       id: reactRow
       visible: sec.hasWallOpts
-      y: strengthRow.y + sec.rowH + Style.space(4)
+      y: (sec.hasMix ? mixRow.y : strengthRow.y) + sec.rowH + Style.space(4)
       width: sec.width
       height: sec.rowH
       label: "Mouse reaction"
@@ -2682,8 +2958,12 @@ BarWidget {
       onTabRequested: function(dir) { root.cycleKind(dir) }
       onDeleteRequested: root.handleText("x")
       onReturnRequested: root.viaEnter = true
-      onActivateRequested: { root.activeSec.activate(!root.viaEnter, root.ctrlDown); root.viaEnter = false }
-      onCloseRequested: { if (root.query !== "") root.clearSearch(); else root.close() }
+      onActivateRequested: {
+        if (root.winPickOpen) root.pickWinApp(root.winAppItems[winSec.pickerIdx])
+        else root.activeSec.activate(!root.viaEnter, root.ctrlDown)
+        root.viaEnter = false
+      }
+      onCloseRequested: { if (root.winPickOpen) root.winPickOpen = false; else if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
       Keys.forwardTo: [shiftWatcher]
       Item {
@@ -2708,48 +2988,69 @@ BarWidget {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 9) / 10
+          readonly property real cell: (width - spacing * 10 - 1) / 10
 
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: !root.paused
             label: (root.paused ? root.boxOff : root.boxOn) + " 󰐥 Enabled (p)"
             onClicked: root.togglePause()
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.showScreen
             label: (root.showScreen ? root.boxOn : root.boxOff) + " " + root.kindIcon("screen") + " Screen (s)"
             onClicked: root.toggleSection("screen")
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.showColor
             label: (root.showColor ? root.boxOn : root.boxOff) + " " + root.kindIcon("color") + " Color (C)"
             onClicked: root.toggleSection("color")
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.showWall
             label: (root.showWall ? root.boxOn : root.boxOff) + " " + root.kindIcon("wall") + " Wallpaper (w)"
             onClicked: root.toggleSection("wall")
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.showMouse
             label: (root.showMouse ? root.boxOn : root.boxOff) + " " + root.kindIcon("mouse") + " Cursor (c)"
             onClicked: root.toggleSection("mouse")
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.showWin
             label: (root.showWin ? root.boxOn : root.boxOff) + " " + root.kindIcon("win") + " Windows (W)"
             onClicked: root.toggleSection("win")
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.showCombo
             label: (root.showCombo ? root.boxOn : root.boxOff) + " " + root.kindIcon("combo") + " Combos (m)"
             onClicked: root.toggleSection("combo")
           }
           MenuRow {
             width: header.cell
+            toggle: true
+            checked: root.includeAnimated
             dim: !root.showScreen
             label: (root.includeAnimated ? root.boxOn : root.boxOff) + " 󰙴 Animated (a)"
             onClicked: root.setAnimated()
+          }
+          Rectangle {
+            width: 1
+            height: header.height
+            color: root.fgA(0.3)
           }
           MenuRow {
             width: header.cell
@@ -2927,6 +3228,17 @@ BarWidget {
             onTargetHexEntered: function(t) { root.setWallTarget(t) }
             onTargetPickRequested: root.pickWallTarget()
             onStrengthPicked: function(v) { root.setStrength("wall", v) }
+            hasMix: true
+            mixNoun: "effect"
+            mixLive: root.mixSecondOf("wall") !== ""
+            mixName: root.mixSecondOf("wall")
+            mixMode: root.wallMixMode
+            mixValue: root.wallMixAmt
+            mixDefault: root.mixDefaultOf("wall")
+            alsoSaved: root.mixSecondOf("wall") !== "" ? [root.wall2] : []
+            onMixPicked: function(v) { root.setMixAmount("wall", v) }
+            onMixModeToggled: { root.activeKind = "wall"; root.toggleMixMode() }
+            onMixChosen: function(item, keep) { root.pickSecond("wall", item, keep) }
             onPointed: function(item) { root.previewWall(item) }
             onChosen: function(item, keep) { root.chooseWall(item, keep) }
             onActed: function(id) { root.runAction("wall", id) }
@@ -2973,8 +3285,15 @@ BarWidget {
             id: winSec
             visible: root.showWin
             width: secRow.secWidth
-            title: root.winScope === "*" ? "Windows" : "Windows · " + root.winScopeLabel
+            title: "Windows"
             icon: root.kindIcon("win")
+            hasPicker: root.winPlugin !== "missing"
+            pickerText: root.winScope === "*" ? "All windows" : root.winScopeLabel
+            pickerItems: root.winAppItems
+            pickerCurrent: "t:" + root.winScope
+            pickerOpen: root.winPickOpen
+            onPickerToggled: root.toggleWinPicker()
+            onPickerChosen: function(item) { root.pickWinApp(item) }
             rawCats: root.winCats
             saved: root.savedOf("win")
             alsoSaved: root.winMarks
@@ -2987,6 +3306,16 @@ BarWidget {
             strength: root.winPart === "color" ? root.winColStrengthS : root.winFxStrengthS
             strengthDefault: root.winPart === "color" ? root.defaultStrengthOf("color", root.winColorS) : root.defaultStrengthOf("screen", root.winEffectS)
             onStrengthPicked: function(v) { root.setStrength(root.winPart === "color" ? "wincol" : "winfx", v) }
+            hasMix: root.winPart !== "frame"
+            mixNoun: root.winPart === "color" ? "color" : "effect"
+            mixLive: root.mixSecondOf("win") !== ""
+            mixName: root.mixSecondOf("win") === "" ? "" : (root.winPart === "color" ? "c:" : "e:") + root.mixSecondOf("win")
+            mixMode: root.mixModeOf("win")
+            mixValue: root.mixAmtOf("win")
+            mixDefault: root.mixDefaultOf("win")
+            onMixPicked: function(v) { root.setMixAmount("win", v) }
+            onMixModeToggled: { root.activeKind = "win"; root.toggleMixMode() }
+            onMixChosen: function(item, keep) { root.pickSecond("win", item, keep) }
             onPointed: function(item) { root.previewWin(item) }
             onChosen: function(item, keep) { root.chooseWin(item, keep) }
             onActed: function(id) { root.runAction("win", id) }
@@ -3109,7 +3438,7 @@ BarWidget {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · P cost report · s C w c W m menus · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · r/R surprise · o/O off · P cost report · s C w c W m menus · A pick the app (Windows) · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

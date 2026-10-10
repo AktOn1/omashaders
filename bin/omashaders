@@ -84,13 +84,15 @@ is_disabled() { [ -s "$DISABLED" ]; }
 # Mixing: a second effect (effect2) or colour (color2) can be mixed into the first one. State: mix-effect / mix-color = "MODE VALUE",
 # MODE stack (the second runs on the first one's result; VALUE is how much of it, percent) or blend (both run on the original picture;
 # VALUE is the share of the second, percent).
+# MIXWIN=1 reads and writes the mix state of the window scope in WSCOPE instead of the screen's
+mixstate() { if [ -n "$MIXWIN" ]; then wpath "$1"; else echo "$STATE_DIR/$1"; fi; }
 mix_second() { # effect|color PRIMARY_NAME: the name of the second layer when it is valid, else nothing
-  local n f; n=$(cat "$STATE_DIR/${1}2" 2>/dev/null)
+  local n f; n=$(cat "$(mixstate "${1}2")" 2>/dev/null)
   [ -n "$2" ] && [ -n "$n" ] && [ "$n" != "$2" ] || return 0
   if [ "$1" = effect ]; then f="$DIR/$n.frag"; else f=$(cfile "$n"); fi
   [ -f "$f" ] && echo "$n"
 }
-mix_spec() { local s; s=$(cat "$STATE_DIR/mix-$1" 2>/dev/null); echo "${s:-stack 100}"; }
+mix_spec() { local s; s=$(cat "$(mixstate "mix-$1")" 2>/dev/null); echo "${s:-stack 100}"; }
 mix_default() { # effect|color MODE FILE_OF_SECOND: the start value for a mode
   if [ "$2" = blend ]; then echo 50; else default_strength "$3"; fi
 }
@@ -196,11 +198,12 @@ effect_off() { lock; : > "$STATE"; : > "$STATE_DIR/effect2"; apply; }
 color_off() { lock; : > "$COLOR_STATE"; : > "$STATE_DIR/color2"; apply; }
 turn_off() { lock; : > "$STATE"; : > "$COLOR_STATE"; : > "$STATE_DIR/effect2"; : > "$STATE_DIR/color2"; apply; }
 # mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount N|+N|-N|reset]: a second effect (colour) mixed into the first
-mix_cmd() {
-  lock
+mix_cmd() { lock; mix_run "$@"; }
+mix_run() {
   local kind="$1" cmd="${2:-status}" arg="$3" prim second file k=fx mode val
-  if [ "$kind" = effect ]; then prim=$(current); else prim=$(current_color); k=col; fi
-  second=$(cat "$STATE_DIR/${kind}2" 2>/dev/null)
+  if [ -n "$MIXWIN" ]; then prim=$(wcur "$kind"); [ "$kind" = effect ] || k=col
+  elif [ "$kind" = effect ]; then prim=$(current); else prim=$(current_color); k=col; fi
+  second=$(cat "$(mixstate "${kind}2")" 2>/dev/null)
   read -r mode val <<<"$(mix_spec "$kind")"
   mkdir -p "$STATE_DIR"
   mixfile() { if [ "$kind" = effect ]; then echo "$DIR/$1.frag"; else cfile "$1"; fi; }
@@ -210,12 +213,12 @@ mix_cmd() {
       [ -n "$prim" ] || { echo "set a first $kind before mixing a second one" >&2; return 1; }
       [ "$arg" != "$prim" ] || { echo "the second $kind must differ from the first" >&2; return 1; }
       file=$(mixfile "$arg"); [ -f "$file" ] || { echo "unknown $kind: $arg" >&2; return 1; }
-      echo "$arg" > "$STATE_DIR/${kind}2"; echo "$mode $(mix_default "$kind" "$mode" "$file")" > "$STATE_DIR/mix-$kind"; : > "$DISABLED" ;;
-    off) : > "$STATE_DIR/${kind}2" ;;
+      echo "$arg" > "$(mixstate "${kind}2")"; echo "$mode $(mix_default "$kind" "$mode" "$file")" > "$(mixstate "mix-$kind")"; : > "$DISABLED" ;;
+    off) : > "$(mixstate "${kind}2")" ;;
     mode)
       [ -n "$second" ] || { echo "no second $kind to mix" >&2; return 1; }
       case "$arg" in toggle) [ "$mode" = stack ] && arg=blend || arg=stack ;; stack|blend) ;; *) echo "usage: omashaders mix $kind mode stack|blend|toggle" >&2; return 1 ;; esac
-      echo "$arg $(mix_default "$kind" "$arg" "$(mixfile "$second")")" > "$STATE_DIR/mix-$kind" ;;
+      echo "$arg $(mix_default "$kind" "$arg" "$(mixfile "$second")")" > "$(mixstate "mix-$kind")" ;;
     amount)
       [ -n "$second" ] || { echo "no second $kind to mix" >&2; return 1; }
       [ -n "$arg" ] || { echo "$val"; return; }
@@ -226,10 +229,10 @@ mix_cmd() {
         *) val=$arg ;;
       esac
       [ "$val" -lt 0 ] && val=0; [ "$val" -gt 100 ] && val=100
-      echo "$mode $val" > "$STATE_DIR/mix-$kind" ;;
+      echo "$mode $val" > "$(mixstate "mix-$kind")" ;;
     *) echo "usage: omashaders mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset]" >&2; return 1 ;;
   esac
-  apply
+  if [ -n "$MIXWIN" ]; then window_apply; else apply; fi
 }
 # ---- window shaders: the same effect and colour lists, drawn on windows only (needs the HyprWindowShade Hyprland plugin) ----
 # State: window-effect, window-color, window-target (one line per app class, or "*" for all windows), window-applied (classes we set).
@@ -247,7 +250,7 @@ app_seed() {
   local d="$WAPP/$1" k
   [ -d "$d" ] && return 0
   mkdir -p "$d"
-  for k in effect color strength-effect strength-color; do cp "$STATE_DIR/window-$k" "$d/$k" 2>/dev/null || : > "$d/$k"; done
+  for k in effect color strength-effect strength-color effect2 color2 mix-effect mix-color; do cp "$STATE_DIR/window-$k" "$d/$k" 2>/dev/null || : > "$d/$k"; done
 }
 # one line per app override for the menu: CLASS<TAB>effect<TAB>color<TAB>effect%<TAB>color%
 apps_summary() {
@@ -256,6 +259,21 @@ apps_summary() {
     [ -d "$d" ] || continue
     c=$(basename "$d"); WSCOPE=$c
     out+=$(printf '%s\t%s\t%s\t%s\t%s' "$c" "$(wcur effect)" "$(wcur color)" "$(wcur_strength effect)" "$(wcur_strength color)")$'\n'
+  done
+  WSCOPE=$sc
+  mix_summary
+  [ -f "$f" ] && [ "$(cat "$f")" = "${out%$'\n'}" ] && return 0
+  mkdir -p "$STATE_DIR"; printf '%s' "$out" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+# one line per scope for the menu's mixing rows: SCOPE<TAB>effect2<TAB>color2<TAB>effect mode<TAB>effect amount<TAB>color mode<TAB>color amount
+mix_summary() {
+  local out="" f="$STATE_DIR/window-mix" sc="$WSCOPE" c fm fv cm cv d
+  for d in "$STATE_DIR/" "$WAPP"/*/; do
+    [ -d "$d" ] || continue
+    if [ "$d" = "$STATE_DIR/" ]; then c='*'; else c=$(basename "$d"); fi
+    WSCOPE=$c
+    read -r fm fv <<<"$(MIXWIN=1 mix_spec effect)"; read -r cm cv <<<"$(MIXWIN=1 mix_spec color)"
+    out+=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' "$c" "$(wcur effect2)" "$(wcur color2)" "$fm" "$fv" "$cm" "$cv")$'\n'
   done
   WSCOPE=$sc
   [ -f "$f" ] && [ "$(cat "$f")" = "${out%$'\n'}" ] && return 0
@@ -285,7 +303,7 @@ for c in json.load(sys.stdin):
 print("\n".join(seen))'; }
 # shell surfaces (bars, panels, overlays like the Companion pill) are layers, not windows; the plugin shades them by namespace
 open_layers() { hyprctl layers -j 2>/dev/null | python3 -c 'import json,sys
-skip={"omarchy-background","wallpaper-fx","omashaders-mouse"}
+skip={"omarchy-background","wallpaper-fx","omashaders-mouse","omashaders-bend-marker"}
 seen=[]
 for m in json.load(sys.stdin).values():
     for lv in m.get("levels",{}).values():
@@ -295,10 +313,10 @@ for m in json.load(sys.stdin).values():
 print("\n".join("layer:"+k for k in seen))'; }
 # "All windows" also covers shell panels and flyouts: every open layer plus the known ones (so a flyout is shaded from its first
 # frame) plus layers shaded before; not the bar, wallpaper, mouse overlay or invisible click-catchers
-ALL_LAYERS_KNOWN="aktlabs-companion-pill agent-mascots omarchy-keyboard-panel omarchy-menu omarchy-image-selector omarchy-emojis omarchy-clipboard omarchy-notifications omarchy-osd omarchy-reminders omarchy-polkit omarchy-network-qr scratchpad-frame"
+ALL_LAYERS_KNOWN="aktlabs-companion-pill agent-mascots aktlabs-companion omarchy-keyboard-panel omarchy-menu omarchy-image-selector omarchy-emojis omarchy-clipboard omarchy-notifications omarchy-osd omarchy-reminders omarchy-polkit omarchy-network-qr scratchpad-frame"
 all_layers() {
   { open_layers | sed 's/^layer://'; printf '%s\n' $ALL_LAYERS_KNOWN; grep '^layer:' "$STATE_DIR/window-applied" 2>/dev/null | sed 's/^layer://'; } |
-    grep -vE '^(omarchy-bar|omarchy-background|wallpaper-fx|omashaders-mouse|omarchy-lock-preview|.*-dismiss|.*-ghost)$' | sort -u | sed 's/^/layer:/'
+    grep . | grep -vE '^(omarchy-bar|omarchy-background|wallpaper-fx|omashaders-mouse|omashaders-bend-marker|omarchy-lock-preview|.*-dismiss|.*-ghost)$' | sort -u | sed 's/^/layer:/'
 }
 # the built window shader for the current window effect + colour (empty when none)
 window_file() {
@@ -309,10 +327,14 @@ window_file() {
   [ -z "$fx$col" ] && return 0
   [ -n "$col" ] && cf=$(cfile "$col")
   sf=$(wcur_strength effect); sc=$(wcur_strength color)
-  out="$WDIR/${fx:--}@${sf}+${col:--}@${sc}.frag"
+  local MIXWIN=1 fx2 col2 sig1="" sig2="" f2="" c2=""
+  fx2=$(mix_second effect "$fx"); col2=$(mix_second color "$col")
   [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
+  if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$DIR/$fx2.frag"; fi
   [ -n "$col" ] && args+=(--col "$cf" "$sc")
-  if [ ! -s "$out" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ] || { [ -n "$fx" ] && [ "$out" -ot "$DIR/$fx.frag" ]; } || { [ -n "$col" ] && [ "$out" -ot "$cf" ]; }; then
+  if [ -n "$col2" ]; then mix_args color --col2 "$col2"; args+=("${MARGS[@]}"); sig2="$MIXSIG"; c2=$(cfile "$col2"); fi
+  out="$WDIR/${fx:--}@${sf}${sig1}+${col:--}@${sc}${sig2}.frag"
+  if [ ! -s "$out" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ] || { [ -n "$fx" ] && [ "$out" -ot "$DIR/$fx.frag" ]; } || { [ -n "$col" ] && [ "$out" -ot "$cf" ]; } || { [ -n "$f2" ] && [ "$out" -ot "$f2" ]; } || { [ -n "$c2" ] && [ "$out" -ot "$c2" ]; }; then
     mkdir -p "$WDIR"
     python3 "$ROOT/bin/compose-shader" "$out.tmp" --window "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build window shader $fx + $col" >&2; return 1; }
   fi
@@ -390,6 +412,7 @@ window_set() { # effect|color NAME|off
   local kind="$1" name="$2" dir="$DIR" k=fx file
   [ "$kind" = color ] && { dir="$CDIR"; k=col; }
   mkdir -p "$STATE_DIR"
+  : > "$(wpath "${kind}2")"
   if [ "$name" = off ] || [ -z "$name" ]; then : > "$(wpath "$kind")"
   else
     if [ "$kind" = color ]; then file=$(cfile "$name"); else file="$dir/$name.frag"; fi
@@ -443,7 +466,7 @@ window_cmd() {
       inherit) rm -rf -- "${WAPP:?}/$WSCOPE"; window_apply; apps_summary; return ;;
       status) if [ -d "$WAPP/$WSCOPE" ]; then printf 'own effect=%s color=%s strength=%s/%s\n' "$(wcur effect | grep . || echo off)" "$(wcur color | grep . || echo off)" "$(wcur_strength effect)" "$(wcur_strength color)"; else echo inherits; fi; return ;;
       off) app_seed "$WSCOPE"; : > "$(wpath effect)"; : > "$(wpath color)"; window_apply; apps_summary; return ;;
-      effect|color|strength) app_seed "$WSCOPE" ;;
+      effect|color|strength|mix) app_seed "$WSCOPE" ;;
     esac
   fi
   window_cmd_run "$@"; local rc=$?
@@ -462,16 +485,17 @@ window_cmd_run() {
         *) echo "usage: omashaders window [-a CLASS] $1 [status|list|set NAME|off]" >&2; return 1 ;;
       esac ;;
     strength) window_strength "$2" "$3" && window_apply ;;
+    mix) case "$2" in effect|color) MIXWIN=1 mix_run "$2" "$3" "$4" ;; *) echo "usage: omashaders window [-a CLASS] mix effect|color [status|set NAME|off|mode stack|blend|toggle|amount PERCENT|+N|-N|reset]" >&2; return 1 ;; esac ;;
     target) case "$2" in
         '') cat "$STATE_DIR/window-target" 2>/dev/null ;;
         *) window_target "$2" "$3" && window_apply ;;
       esac ;;
-    classes) open_classes; open_layers ;;
+    classes) open_classes; all_layers ;;
     apps) cat "$STATE_DIR/window-apps" 2>/dev/null ;;
     apply|sync) window_apply ;;
     load) window_load ;;
     frame) frame_cmd "$2" "$3" ;;
-    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; rm -rf -- "${WAPP:?}"; window_apply; frame_cmd off ;;
+    off) : > "$STATE_DIR/window-effect"; : > "$STATE_DIR/window-color"; rm -rf -- "${WAPP:?}"; for k in effect2 color2 mix-effect mix-color; do : > "$STATE_DIR/window-$k"; done; window_apply; frame_cmd off ;;
     *) echo "usage: omashaders window [-a CLASS inherit|off|status|effect|color|strength ...] [status|effect|color|strength|target|classes|apps|apply|load|off|frame]" >&2; return 1 ;;
   esac
 }

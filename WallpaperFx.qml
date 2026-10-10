@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
@@ -8,6 +9,10 @@ Scope {
   id: fx
 
   property string effect: ""
+  // optional second effect: "stack" runs it on the first one's result, "blend" runs both on the wallpaper; mixAmount is its share (0..1)
+  property string effect2: ""
+  property string mixMode: "stack"
+  property real mixAmount: 1.0
   property string wallpaper: ""
   property point mouse: Qt.point(0, 0)
   property color cBg: "#050318"
@@ -49,7 +54,33 @@ Scope {
     interval: Math.round(1000 / fx.fps)
     repeat: true
     running: fx.effect !== ""
-    onTriggered: { fx.time = (Date.now() - fx.startMs) / 1000; if (fx.effect === "smoke") fx.sampleTrail(fx.time) }
+    onTriggered: { fx.time = (Date.now() - fx.startMs) / 1000; if (fx.effect === "smoke" || fx.effect2 === "smoke") fx.sampleTrail(fx.time) }
+  }
+
+  component FxLayer: ShaderEffect {
+    required property var scr
+    required property var image
+    property string name: ""
+    property variant source
+    anchors.fill: parent
+    property variant src: source
+    property real time: fx.time
+    property vector2d mouse: Qt.vector2d(fx.mouse.x - scr.x, fx.mouse.y - scr.y)
+    property vector2d res: Qt.vector2d(width, height)
+    property vector2d imgSize: image.implicitWidth > 0 ? Qt.vector2d(image.implicitWidth, image.implicitHeight) : Qt.vector2d(width, height)
+    property vector4d tr0: fx.trailVec(0, 1, scr.x, scr.y)
+    property vector4d tr1: fx.trailVec(2, 3, scr.x, scr.y)
+    property vector4d tr2: fx.trailVec(4, 5, scr.x, scr.y)
+    property vector4d tr3: fx.trailVec(6, 7, scr.x, scr.y)
+    property color cBg: fx.cBg
+    property color cBlue: fx.cBlue
+    property color cMagenta: fx.cMagenta
+    property color cPink: fx.cPink
+    property color cCream: fx.cCream
+    property color cTarget: fx.targetColor
+    property real react: fx.react
+    property real range: fx.range
+    fragmentShader: name !== "" ? Qt.resolvedUrl("wallpaper-effects/" + name + ".frag.qsb") : ""
   }
 
   Variants {
@@ -74,27 +105,26 @@ Scope {
         cache: false
       }
 
-      ShaderEffect {
+      Item {
         anchors.fill: parent
         opacity: fx.strength
-        property variant src: img
-        property real time: fx.time
-        property vector2d mouse: Qt.vector2d(fx.mouse.x - win.screen.x, fx.mouse.y - win.screen.y)
-        property vector2d res: Qt.vector2d(width, height)
-        property vector2d imgSize: img.implicitWidth > 0 ? Qt.vector2d(img.implicitWidth, img.implicitHeight) : Qt.vector2d(width, height)
-        property vector4d tr0: fx.trailVec(0, 1, win.screen.x, win.screen.y)
-        property vector4d tr1: fx.trailVec(2, 3, win.screen.x, win.screen.y)
-        property vector4d tr2: fx.trailVec(4, 5, win.screen.x, win.screen.y)
-        property vector4d tr3: fx.trailVec(6, 7, win.screen.x, win.screen.y)
-        property color cBg: fx.cBg
-        property color cBlue: fx.cBlue
-        property color cMagenta: fx.cMagenta
-        property color cPink: fx.cPink
-        property color cCream: fx.cCream
-        property color cTarget: fx.targetColor
-        property real react: fx.react
-        property real range: fx.range
-        fragmentShader: fx.effect !== "" ? Qt.resolvedUrl("wallpaper-effects/" + fx.effect + ".frag.qsb") : ""
+        layer.enabled: fx.effect2 !== ""
+
+        FxLayer { id: first; scr: win.screen; image: img; name: fx.effect; source: img }
+        ShaderEffectSource {
+          id: firstOut
+          visible: false
+          live: fx.effect2 !== "" && fx.mixMode === "stack"
+          sourceItem: fx.effect2 !== "" ? first : null
+        }
+        FxLayer {
+          scr: win.screen
+          image: img
+          name: fx.effect2
+          source: fx.mixMode === "stack" ? firstOut : img
+          visible: fx.effect2 !== ""
+          opacity: fx.mixAmount
+        }
       }
     }
   }
