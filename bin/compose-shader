@@ -13,13 +13,16 @@ STRENGTH (0.0-1.0) itself; every other shader is blended with its input: mix(inp
 import os, re, sys
 
 HEADER = re.compile(r'^\s*(#version\b|precision\b|in\s+vec2\s+v_texcoord|uniform\s+sampler2D\s+tex\b|uniform\s+float\s+time\b|layout\s*\(location\s*=\s*0\)\s*out\s+vec4\s+fragColor)')
+PLUGIN_UNIFORMS = {"surface_size": "vec2", "is_active": "float", "is_floating": "float", "is_fullscreen": "float", "seed": "float",
+                   "mouse": "vec2", "window_box": "vec4", "resolution": "vec2", "velocity": "vec2", "is_moving": "float"}
+PU_DECL = re.compile(r'^\s*uniform\s+(?:float|vec[24])\s+(?:%s)\s*;' % "|".join(PLUGIN_UNIFORMS))
 TYPES = r'(?:const\s+)?(?:float|int|uint|bool|[iu]?vec[234]|mat[234]|void)'
 
 
 def layer(path, percent, prefix, sample=None, evalable=False):
     src = open(path).read()
     native = re.search(r'^//\s*strength-mode:\s*native\b', src, re.M) is not None
-    text = "\n".join(l for l in src.splitlines() if not HEADER.match(l))
+    text = "\n".join(l for l in src.splitlines() if not HEADER.match(l) and not PU_DECL.match(l))
     for name in set(re.findall(r'^%s\s+(\w+)\s*[(\[=;]' % TYPES, text, re.M)):
         if name != "main":
             text = re.sub(r'\b%s\b' % re.escape(name), prefix + name, text)
@@ -159,6 +162,11 @@ def compose(fx=None, col=None, cur=None, window=False, fx2=None, col2=None):
             fy_text = re.sub(r'\btexture\s*\(\s*tex\s*,', 'cur_tex(', fy_text)
     if re.search(r'^\s*uniform\s+float\s+time\b', fx_src + "\n" + fy_src, re.M):
         out.append("uniform float time;")
+    if window:  # per-window values HyprWindowShade feeds a window-native shader; declared once, never renamed
+        used = fx_src + "\n" + fy_src
+        for u, t in PLUGIN_UNIFORMS.items():
+            if re.search(r'^\s*uniform\s+\w+\s+%s\s*;' % u, used, re.M):
+                out.append("uniform %s %s;" % (t, u))
     out.append("layout(location = 0) out vec4 fragColor;")
     body = ["void main() {"]
     first = "texture(tex, v_texcoord)"

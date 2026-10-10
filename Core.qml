@@ -944,10 +944,11 @@ Item {
   readonly property string winPart: (winSec.curCat && String(winSec.curCat.id).indexOf("f:") === 0) ? "frame" : ((winSec.curCat && String(winSec.curCat.id).indexOf("c:") === 0) ? "color" : "effect")
   readonly property string installCmd: "hyprpm update && hyprpm add https://github.com/ManofJELLO/HyprWindowShade && hyprpm enable HyprWindowShade"
 
-  function winFxItem(e) { return { id: "e:" + e.name, label: e.name, desc: e.desc, hint: e.animated ? "heavy" : "" } }
+  function winFxItem(e) { return { id: "e:" + e.name, label: e.name, desc: e.desc, hint: e.section === "winfx" ? "window" : (e.animated ? "heavy" : "") } }
   function winColItem(e) { return { id: "c:" + e.name, label: e.name, desc: e.desc, hint: "" } }
-  function winShownFx(e) { return includeAnimated || !e.animated }
-  readonly property var winEffectItems: screenEntries.filter(winShownFx).map(winFxItem)
+  function winShownFx(e) { return e.section === "winfx" || includeAnimated || !e.animated }
+  readonly property var winfxEntries: allEntries.filter(function(e) { return e.section === "winfx" })
+  readonly property var winEffectItems: winfxEntries.concat(screenEntries).filter(winShownFx).map(winFxItem)
   readonly property var winAppItems: {
     var gsum = [winEffect, winColor].filter(function(x) { return x !== "" }).join(" + ")
     var out = [{ id: "t:*", label: "All windows", desc: "The setting for every window. Apps that have their own setting keep it.", hint: gsum }]
@@ -969,6 +970,10 @@ Item {
       { id: "@copy", label: "Copy install commands", action: true }
     ].concat(winFrameCats).concat([{ id: "@off", label: "Off", action: true }])
     var out = []
+    catList(winfxEntries, ["Glass", "Light", "Living"]).forEach(function(c) {
+      var items = winfxEntries.filter(function(e) { return e.cat === c }).map(winFxItem)
+      if (items.length > 0) out.push({ id: "e:" + c, label: c, items: items, note: "Made for windows: they react to focus, the pointer and each window's own size." })
+    })
     catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
       var items = screenEntries.filter(function(e) { return e.cat === c && winShownFx(e) }).map(winFxItem)
       if (items.length > 0) out.push({ id: "e:" + c, label: c, items: items, note: "" })

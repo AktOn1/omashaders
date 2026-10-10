@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# window-preview IN.png SHADER_NAME OUT.png [TIME] [STRENGTH] [COLOR_NAME]
+# Build the window shader (shaders/NAME.frag, optional colour grade) the way the plugin does and render it over IN.png
+# (the stand-in for the window) with shader-preview. Plugin uniforms can be set with U_name=... (see shader-preview).
+R=$(cd "$(dirname "$0")/.." && pwd); T=$(mktemp -d)
+in=$1; name=$2; out=$3; t=${4:-2}; st=${5:-100}; col=$6
+args=(--window --fx "$R/shaders/$name.frag" "$st"); [ -n "$col" ] && args+=(--col "$R/colors/$col.frag" 60)
+python3 "$R/bin/compose-shader" "$T/w.frag" "${args[@]}" && python3 "$R/bin/shader-preview" "$in" "$T/w.frag" "$out" "$t"; rc=$?
+rm -rf "$T"; exit $rc

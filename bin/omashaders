@@ -28,10 +28,12 @@ BDIR="$ROOT/cursor-shaders"
 FRDIR="$ROOT/frames"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
 STATE="$STATE_DIR/current"
+is_winfx() { grep -q '^// target: window' "$1"; } # window-native shader: only offered in the Windows column
 names() {
   for f in "$DIR"/*.frag; do
     [ -e "$f" ] || continue
-    [ "$1" = "-a" ] || ! grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$f" || continue
+    [ "$1" = "-w" ] || ! is_winfx "$f" || continue
+    [ "$1" = "-a" ] || [ "$1" = "-w" ] || ! grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$f" || continue
     basename "$f" .frag
   done
 }
@@ -142,6 +144,7 @@ set_shader() {
   lock
   if [ ! -f "$DIR/$1.frag" ] && { [ -f "$CDIR/$1.frag" ] || [[ "$1" == custom-* ]]; }; then set_color "$1"; return; fi
   [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
+  ! is_winfx "$DIR/$1.frag" || { echo "$1 is a window shader (use it in the Windows column)" >&2; exit 1; }
   mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; : > "$STATE_DIR/effect2"; echo "$(remembered_strength fx "$1" "$DIR/$1.frag")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
 }
 set_color() {
@@ -484,7 +487,7 @@ window_cmd_run() {
         set) window_set "$1" "$3" && window_apply ;;
         off) window_set "$1" off && window_apply ;;
         status) wcur "$1" | grep . || echo off ;;
-        list) if [ "$1" = effect ]; then names -a; else color_names; fi ;;
+        list) if [ "$1" = effect ]; then names -w; else color_names; fi ;;
         *) echo "usage: omashaders window [-a CLASS] $1 [status|list|set NAME|off]" >&2; return 1 ;;
       esac ;;
     strength) window_strength "$2" "$3" && window_apply ;;
@@ -521,7 +524,8 @@ case "${1:-}" in
     for f in "$DIR"/*.frag; do
       n=$(basename "$f" .frag); kind=static; is_animated "$f" && kind=animated
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\tscreen\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[screen:$n]}" "$(default_strength "$f")"
+      sec=screen; is_winfx "$f" && sec=winfx
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[screen:$n]}" "$sec" "$(default_strength "$f")"
     done
     for f in "$CDIR"/*.frag; do
       [ -e "$f" ] || continue

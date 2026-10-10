@@ -3,6 +3,9 @@
 
 Render a Hyprland screen shader (GLSL ES 3.00) over an image on the CPU (Mesa llvmpipe, surfaceless EGL),
 without touching the live desktop. Needs python-pillow and Mesa. Prints compile errors.
+Window shaders (#version 320 es, from compose-shader --window) get the HyprWindowShade uniforms with test values
+(surface_size = image size, is_active 1, seed 0.37, mouse = image centre, window_box = the whole image at 100,100);
+override one with an environment variable, e.g. U_is_active=0 U_mouse=300,200 U_seed=0.8.
 """
 import ctypes as C, os, sys
 
@@ -69,8 +72,11 @@ void main() {
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }"""
 prog = gl.glCreateProgram()
+FS = open(frag_path).read()
+if FS.lstrip().startswith("#version 320 es"):
+    VS = VS.replace("#version 300 es", "#version 320 es")
 gl.glAttachShader(prog, compile_shader(0x8B31, VS))
-gl.glAttachShader(prog, compile_shader(0x8B30, open(frag_path).read()))
+gl.glAttachShader(prog, compile_shader(0x8B30, FS))
 gl.glLinkProgram(prog)
 ok = C.c_int()
 gl.glGetProgramiv(prog, 0x8B82, C.byref(ok))
@@ -88,6 +94,17 @@ gl.glUniform1i(gl.glGetUniformLocation(prog, b"tex"), 0)
 loc = gl.glGetUniformLocation(prog, b"time")
 if loc >= 0:
     gl.glUniform1f(loc, t)
+
+PU = {"surface_size": (W, H), "is_active": (1.0,), "is_floating": (0.0,), "is_fullscreen": (0.0,), "seed": (0.37,),
+      "mouse": (100 + W / 2, 100 + H / 2), "window_box": (100, 100, W, H), "resolution": (1920, 1080), "velocity": (0.0, 0.0), "is_moving": (0.0,)}
+gl.glUniform2f.argtypes = [C.c_int, C.c_float, C.c_float]
+gl.glUniform4f.argtypes = [C.c_int, C.c_float, C.c_float, C.c_float, C.c_float]
+for name, dflt in PU.items():
+    loc = gl.glGetUniformLocation(prog, name.encode())
+    if loc < 0:
+        continue
+    v = [float(x) for x in os.environ.get("U_" + name, ",".join(map(str, dflt))).split(",")]
+    {1: gl.glUniform1f, 2: gl.glUniform2f, 4: gl.glUniform4f}[len(v)](loc, *v)
 
 fbtex, fbo = C.c_uint(), C.c_uint()
 gl.glGenTextures(1, C.byref(fbtex))

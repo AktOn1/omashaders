@@ -5,6 +5,7 @@ R=$(cd "$(dirname "$0")/.." && pwd); T=$(mktemp -d); rc=0
 for f in "$@"; do
   case "$f" in */colors/*) k=--col;; */cursor-shaders/*) k=--cur;; *) k=--fx;; esac
   if [ $k = --cur ]; then a=(--cur "$f"); else a=($k "$f" 50); fi
+  grep -q '^// target: window' "$f" && a=(--window "${a[@]}")
   python3 "$R/bin/compose-shader" "$T/c.frag" "${a[@]}" && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL $f"; echo "$out" | head -8; rc=1; continue; }
   grep -q '^ERROR' <<<"$out" && { echo "FAIL $f"; echo "$out" | head -8; rc=1; }
   grep -q '^\s*// \(category\|desc\):' "$f" || { echo "FAIL $f: missing category/desc header"; rc=1; }
@@ -12,6 +13,7 @@ done
 # every screen effect through the bend layer too (its texture() calls are rewritten)
 if [ $# -ge 3 ] && [ -z "$BEND_SKIP" ]; then
   for f in "$R"/shaders/*.frag; do
+    grep -q '^// target: window' "$f" && continue
     python3 "$R/bin/compose-shader" "$T/c.frag" --fx "$f" 50 --col "$R/colors/vivid.frag" 50 --cur "$R/cursor-shaders/swirl.frag" && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL bend+$f"; echo "$out" | head -8; rc=1; continue; }
     grep -q '^ERROR' <<<"$out" && { echo "FAIL bend+$f"; echo "$out" | head -8; rc=1; }
   done
@@ -30,6 +32,7 @@ fi
 # mixing: every effect as the second (stack and blend) and as the first layer, every colour as the second one
 if [ $# -ge 3 ]; then
   for f in "$R"/shaders/*.frag; do
+    grep -q '^// target: window' "$f" && continue
     for m in stack blend; do
       python3 "$R/bin/compose-shader" "$T/c.frag" --fx "$R/shaders/crt.frag" 50 --fx2 "$f" 50 $m 50 --col "$R/colors/sepia.frag" 50 --col2 "$R/colors/vivid.frag" 50 $m 50 && out=$(glslangValidator -S frag "$T/c.frag" 2>&1) || { echo "FAIL mix $m 2nd $f"; echo "$out" | head -8; rc=1; continue; }
       grep -q '^ERROR' <<<"$out" && { echo "FAIL mix $m 2nd $f"; echo "$out" | head -8; rc=1; }
