@@ -13,6 +13,9 @@ layout(std140, binding = 0) uniform buf {
   vec4 cMagenta;
   vec4 cPink;
   vec4 cCream;
+  vec4 cTarget;
+  float react;
+  float range;
 };
 layout(binding = 1) uniform sampler2D src;
 
@@ -44,10 +47,11 @@ vec2 blobPos(int i, float asp, float t) {
 }
 float blobRad(int i) { return 0.095 + 0.03 * sin(float(i) * 4.7); }
 
-void main() {
+vec4 fxMain(vec2 mpx) {
+  vec4 fragColor;
   vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
-  vec2 m = mouse / res;
+  vec2 m = mpx / res;
   vec2 p = vec2(uv.x * asp, uv.y);
   vec3 f = vec3(0.0);
   for (int i = 0; i < NB; i++) {
@@ -73,4 +77,15 @@ void main() {
         + cb * smoothstep(0.35, 0.9, f.y) * (1.0 - body.y)
         + cc * smoothstep(0.35, 0.9, f.z) * (1.0 - body.z)) * 0.12;
   fragColor = vec4(col, 1.0) * qt_Opacity;
+  return fragColor;
+}
+
+// mouse reaction slider: 1 = as designed, 0 = the pointer is ignored, above 1 = exaggerated (extrapolated from the no-pointer look)
+void main() {
+  vec2 away = vec2(-10000.0);
+  vec4 c;
+  if (react >= 0.995 && react <= 1.005) c = fxMain(mouse);
+  else if (react <= 0.005) c = fxMain(away);
+  else c = mix(fxMain(away), fxMain(mouse), react);
+  fragColor = clamp(c, 0.0, 1.0);
 }

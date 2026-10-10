@@ -13,6 +13,9 @@ layout(std140, binding = 0) uniform buf {
   vec4 cMagenta;
   vec4 cPink;
   vec4 cCream;
+  vec4 cTarget;
+  float react;
+  float range;
   vec4 tr0;
   vec4 tr1;
   vec4 tr2;
@@ -48,7 +51,8 @@ float segDist(vec2 p, vec2 a, vec2 b) {
   return length(p - (a + ab * h));
 }
 
-void main() {
+vec4 fxMain(vec2 mpx) {
+  vec4 fragColor;
   vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
   vec2 A = vec2(asp, 1.0);
@@ -59,6 +63,7 @@ void main() {
   t[0] = tr0.xy; t[1] = tr0.zw; t[2] = tr1.xy; t[3] = tr1.zw;
   t[4] = tr2.xy; t[5] = tr2.zw; t[6] = tr3.xy; t[7] = tr3.zw;
   for (int i = 0; i < 8; i++) t[i] = t[i] / res * A;
+  if (mpx.x < -5000.0) { for (int i = 1; i < 8; i++) t[i] = t[0]; }
 
   // every path segment drags the smoke along with it (stronger for newer segments)
   vec2 pull = vec2(0.0);
@@ -93,4 +98,15 @@ void main() {
   smokeCol *= 1.0 + clamp((dens2 - dens) * 2.5, -0.25, 0.25);
   vec3 col = mix(base, smokeCol, dens * 0.8);
   fragColor = vec4(col, 1.0) * qt_Opacity;
+  return fragColor;
+}
+
+// mouse reaction slider: 1 = as designed, 0 = the pointer is ignored, above 1 = exaggerated (extrapolated from the no-pointer look)
+void main() {
+  vec2 away = vec2(-10000.0);
+  vec4 c;
+  if (react >= 0.995 && react <= 1.005) c = fxMain(mouse);
+  else if (react <= 0.005) c = fxMain(away);
+  else c = mix(fxMain(away), fxMain(mouse), react);
+  fragColor = clamp(c, 0.0, 1.0);
 }

@@ -17,6 +17,9 @@ Scope {
   property color cCream: "#FAF0BF"
   property int fps: 30
   property real strength: 1.0
+  property real react: 1.0 // how much the effect follows the pointer: 0 = not at all, 1 = as designed, 2 = exaggerated
+  property color targetColor: "#e8a33d" // colour the colour-reactor effect looks for
+  property real range: 0.5 // how far from targetColor still counts (0..1)
 
   property real time: 0
   readonly property real startMs: Date.now()
@@ -88,6 +91,9 @@ Scope {
         property color cMagenta: fx.cMagenta
         property color cPink: fx.cPink
         property color cCream: fx.cCream
+        property color cTarget: fx.targetColor
+        property real react: fx.react
+        property real range: fx.range
         fragmentShader: fx.effect !== "" ? Qt.resolvedUrl("wallpaper-effects/" + fx.effect + ".frag.qsb") : ""
       }
     }

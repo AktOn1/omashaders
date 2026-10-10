@@ -44,6 +44,9 @@ BarWidget {
   readonly property string colStrengthFile: stateDir + "/strength-color"
   readonly property string wallStrengthFile: stateDir + "/strength-wall"
   readonly property string mouseStrengthFile: stateDir + "/strength-mouse"
+  readonly property string wallReactFile: stateDir + "/react-wall"
+  readonly property string wallRangeFile: stateDir + "/wall-range"
+  readonly property string wallTargetFile: stateDir + "/wall-target"
   readonly property string effect2File: stateDir + "/effect2"
   readonly property string color2File: stateDir + "/color2"
   readonly property string mixEffectFile: stateDir + "/mix-effect"
@@ -267,6 +270,32 @@ BarWidget {
   property int pendingMouseStrength: -1
   Timer { id: wallStrengthTimer; interval: 80; onTriggered: { root.writeFile(root.wallStrengthFile, String(root.wallStrength)); root.pendingWallStrength = -1 } }
   Timer { id: mouseStrengthTimer; interval: 80; onTriggered: { root.writeFile(root.mouseStrengthFile, String(root.mouseStrength)); root.pendingMouseStrength = -1 } }
+  // Wallpaper effect options: how much the effect follows the pointer (0-200, 100 = as designed) and, for the Colour reactor, the colour it looks for and how far from it still counts.
+  property int wallReact: 100
+  property int wallRange: 50
+  property string wallTarget: "e8a33d"
+  property int pendingWallReact: -1
+  property int pendingWallRange: -1
+  Timer { id: wallReactTimer; interval: 80; onTriggered: { root.writeFile(root.wallReactFile, String(root.wallReact)); root.pendingWallReact = -1 } }
+  Timer { id: wallRangeTimer; interval: 80; onTriggered: { root.writeFile(root.wallRangeFile, String(root.wallRange)); root.pendingWallRange = -1 } }
+  function setWallReact(v) { v = clamp(Math.round(v), 0, 200); wallReact = v; pendingWallReact = v; wallReactTimer.restart() }
+  function setWallRange(v) { v = clamp(Math.round(v), 0, 100); wallRange = v; pendingWallRange = v; wallRangeTimer.restart() }
+  function setWallTarget(t) {
+    t = String(t).replace(/^#/, "").toLowerCase()
+    if (!/^[0-9a-f]{6}$/.test(t)) return false
+    wallTarget = t
+    writeFile(wallTargetFile, t)
+    return true
+  }
+  Process {
+    id: eyedropper
+    command: ["hyprpicker", "-n", "-b", "-q", "-f", "hex", "-l"]
+    stdout: StdioCollector {
+      onStreamFinished: root.setWallTarget(String(text).trim())
+    }
+  }
+  function pickWallTarget() { if (!eyedropper.running) eyedropper.running = true }
+  readonly property bool wallReactorOn: wallOn && wallShown === "colorreact"
   function setStrength(kind, v) {
     v = clamp(Math.round(v), 0, 100)
     if (kind === "color") { colStrength = v; colSender.send(v) }
@@ -326,6 +355,30 @@ BarWidget {
     onFileChanged: reload()
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingMouseStrength < 0) root.mouseStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
     onLoadFailed: root.mouseStrength = 100
+  }
+  FileView {
+    path: root.wallReactFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingWallReact < 0) root.wallReact = isNaN(v) ? 100 : root.clamp(v, 0, 200) }
+    onLoadFailed: root.wallReact = 100
+  }
+  FileView {
+    path: root.wallRangeFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingWallRange < 0) root.wallRange = isNaN(v) ? 50 : root.clamp(v, 0, 100) }
+    onLoadFailed: root.wallRange = 50
+  }
+  FileView {
+    path: root.wallTargetFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var t = String(text() || "").trim().toLowerCase(); root.wallTarget = /^[0-9a-f]{6}$/.test(t) ? t : "e8a33d" }
+    onLoadFailed: root.wallTarget = "e8a33d"
   }
   FileView {
     path: root.winFxStrengthFile
@@ -967,7 +1020,8 @@ BarWidget {
       { id: "shock",     label: "Shockwave",       hint: "rings from mouse" },
       { id: "blackhole", label: "Black hole",      hint: "bends the wallpaper" },
       { id: "xray",      label: "Negative lens",   hint: "inverts at mouse" },
-      { id: "grid",      label: "Gravity grid",    hint: "grid pulled to mouse" }
+      { id: "grid",      label: "Gravity grid",    hint: "grid pulled to mouse" },
+      { id: "colorreact", label: "Colour reactor", hint: "only the picked colour reacts" }
     ] },
     { id: "nature", label: "Weather and nature", items: [
       { id: "rain",      label: "Rain on glass",   hint: "mouse wipes it dry" },
@@ -1170,6 +1224,9 @@ BarWidget {
 
   WallpaperFx {
     strength: root.wallStrength / 100
+    react: root.wallReact / 100
+    range: root.wallRange / 100
+    targetColor: "#" + root.wallTarget
     effect: root.fxHost && !root.paused ? root.wallShown : ""
     wallpaper: root.wallpaperPath
     mouse: root.cursorLive ? root.cursor : Qt.point(-10000, -10000)
@@ -1597,6 +1654,8 @@ BarWidget {
     else if (t === "}") nudgeStrength(1)
     else if (t === "{") nudgeStrength(-1)
     else if (t === "d") resetStrength()
+    else if (t === ")") { if (focusKind === "wall" && wallOn) setWallReact(wallReact + 10) }
+    else if (t === "(") { if (focusKind === "wall" && wallOn) setWallReact(wallReact - 10) }
     else if (t === ".") nudgeMix(5)
     else if (t === ",") nudgeMix(-5)
     else if (t === ">") nudgeMix(1)
@@ -1604,7 +1663,10 @@ BarWidget {
     else if (t === "t") toggleMixMode()
     else if (t === "D") resetMix()
     else if (t === "\b" || t === "\x7f") clearMix()
-    else if (t === "u") { if (showColor) { activeKind = "color"; colorSec.focusHex() } }
+    else if (t === "u") {
+      if (focusKind === "wall" && showWall && wallReactorOn) wallSec.focusTarget()
+      else if (showColor) { activeKind = "color"; colorSec.focusHex() }
+    }
     else if (t === "U") { if (showColor) toggleCustomFav() }
     else if (t >= "1" && t <= "9") s.gotoCat(parseInt(t) - 1)
   }
@@ -1637,7 +1699,7 @@ BarWidget {
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
+                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
   }
 
@@ -1708,6 +1770,109 @@ BarWidget {
 
   // One effect menu: categories on the left, effects on the right. Keyboard state lives here;
   // the widget reacts to pointed (hover or keyboard highlight), chosen and acted signals.
+  // a labelled 0..max slider row (drag, wheel, right-click = default), used under a menu's strength row
+  component PctRow: Item {
+    id: pr
+    property string label: ""
+    property int value: 0
+    property int maxValue: 100
+    property int defaultValue: 100
+    property bool live: true
+    property bool lit: false
+    property bool dragging: false
+    property int dragValue: 0
+    readonly property int shown: (dragging || prHold.running) ? dragValue : value
+    signal picked(int v)
+    signal touched()
+    opacity: live ? 1 : 0.4
+    Timer { id: prHold; interval: 700 }
+    Rectangle { anchors.fill: parent; radius: Style.space(6); color: root.fgA(pr.lit ? 0.1 : 0.05) }
+    Text {
+      id: prLabel
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: pr.label
+      color: root.fg
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body
+    }
+    Text {
+      id: prValue
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(42)
+      horizontalAlignment: Text.AlignRight
+      textFormat: Text.PlainText
+      text: pr.shown + "%"
+      color: root.fg
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body
+    }
+    Item {
+      id: prTrack
+      anchors.left: prLabel.right
+      anchors.leftMargin: Style.space(14)
+      anchors.right: prValue.left
+      anchors.rightMargin: Style.space(10)
+      height: parent.height
+      Rectangle {
+        id: prRail
+        width: parent.width
+        height: Style.space(4)
+        radius: height / 2
+        anchors.verticalCenter: parent.verticalCenter
+        color: root.fgA(0.2)
+      }
+      Rectangle {
+        width: prRail.width * pr.shown / pr.maxValue
+        height: prRail.height
+        radius: prRail.radius
+        anchors.verticalCenter: parent.verticalCenter
+        color: root.fgA(0.85)
+      }
+      Rectangle {
+        x: prRail.width * pr.defaultValue / pr.maxValue - width / 2
+        width: Style.space(2)
+        height: Style.space(12)
+        anchors.verticalCenter: parent.verticalCenter
+        color: root.fgA(0.55)
+      }
+      Rectangle {
+        x: prRail.width * pr.shown / pr.maxValue - width / 2
+        width: Style.space(12)
+        height: width
+        radius: width / 2
+        anchors.verticalCenter: parent.verticalCenter
+        color: root.fg
+      }
+    }
+    MouseArea {
+      anchors.fill: parent
+      enabled: pr.live
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      cursorShape: Qt.PointingHandCursor
+      function valAt(mx) { return Math.round(root.clamp(mapToItem(prTrack, mx, 0).x / prTrack.width, 0, 1) * pr.maxValue) }
+      function pick(v) { pr.dragValue = v; prHold.restart(); pr.picked(v) }
+      onPressed: function(m) {
+        pr.touched()
+        if (m.button === Qt.RightButton) { pick(pr.defaultValue); return }
+        pr.dragging = true
+        pick(valAt(m.x))
+      }
+      onPositionChanged: function(m) {
+        if (!pr.dragging) return
+        var v = valAt(m.x)
+        if (v !== pr.dragValue) pick(v)
+      }
+      onReleased: pr.dragging = false
+      onCanceled: pr.dragging = false
+      onWheel: function(w) { pick(root.clamp(pr.shown + (w.angleDelta.y > 0 ? 5 : -5), 0, pr.maxValue)) }
+    }
+  }
+
   component SectionMenu: Item {
     id: sec
     property string title: ""
@@ -1762,11 +1927,23 @@ BarWidget {
     property real customV: 1
     property bool customFav: false
     property bool customActive: false
-    readonly property bool editing: hexField.activeFocus
     signal customHsv(real h, real s, real v)
     signal customHexEntered(string text)
     signal customFavToggled()
+    // wallpaper options under the strength row: mouse reaction, and the Colour reactor's range and target colour
+    property bool hasWallOpts: false
+    property int reactValue: 100
+    property bool reactLive: false
+    property int rangeValue: 50
+    property string targetHex: "e8a33d"
+    property bool targetLive: false
+    signal reactPicked(int value)
+    signal rangePicked(int value)
+    signal targetHexEntered(string text)
+    signal targetPickRequested()
+    readonly property bool editing: hexField.activeFocus || targetField.activeFocus
     function focusHex() { hexField.forceActiveFocus(); hexField.selectAll() }
+    function focusTarget() { targetField.forceActiveFocus(); targetField.selectAll() }
     property int col: 0
     property int catIdx: 0
     property int itemIdx: 0
@@ -1782,7 +1959,7 @@ BarWidget {
     signal acted(string id)
     signal focusRequested()
 
-    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0)
+    implicitHeight: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 3 * (rowH + Style.space(4)) : 0)
 
     function indexOfSaved(ci) {
       if (saved === "" || ci < 0 || ci >= cats.length) return -1
@@ -2252,6 +2429,107 @@ BarWidget {
       }
     }
 
+    // wallpaper options: mouse reaction (0 = ignores the pointer, 100 = as designed, 200 = exaggerated), then the Colour reactor's range and target colour
+    PctRow {
+      id: reactRow
+      visible: sec.hasWallOpts
+      y: strengthRow.y + sec.rowH + Style.space(4)
+      width: sec.width
+      height: sec.rowH
+      label: "Mouse reaction"
+      value: sec.reactValue
+      maxValue: 200
+      defaultValue: 100
+      live: sec.reactLive
+      lit: sec.focused
+      onPicked: function(v) { sec.reactPicked(v) }
+      onTouched: sec.focusRequested()
+    }
+    PctRow {
+      id: rangeRow
+      visible: sec.hasWallOpts
+      y: reactRow.y + sec.rowH + Style.space(4)
+      width: sec.width
+      height: sec.rowH
+      label: "Colour range"
+      value: sec.rangeValue
+      maxValue: 100
+      defaultValue: 50
+      live: sec.targetLive
+      lit: sec.focused
+      onPicked: function(v) { sec.rangePicked(v) }
+      onTouched: sec.focusRequested()
+    }
+    Item {
+      id: targetRow
+      visible: sec.hasWallOpts
+      y: rangeRow.y + sec.rowH + Style.space(4)
+      width: sec.width
+      height: sec.rowH
+      opacity: sec.targetLive ? 1 : 0.4
+      Rectangle { anchors.fill: parent; radius: Style.space(6); color: root.fgA(sec.focused ? 0.1 : 0.05) }
+      Rectangle {
+        id: targetSwatch
+        x: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(18)
+        height: width
+        radius: Style.space(4)
+        color: "#" + sec.targetHex
+        border.width: 1
+        border.color: root.fgA(0.4)
+      }
+      Text {
+        id: targetLabel
+        anchors.left: targetSwatch.right
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: "Reacts to  #"
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      TextField {
+        id: targetField
+        anchors.left: targetLabel.right
+        anchors.right: targetPick.left
+        anchors.rightMargin: Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        height: sec.rowH - Style.space(4)
+        verticalPadding: Style.space(2)
+        maximumLength: 7
+        placeholderText: "rrggbb"
+        foreground: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+        Binding on text { when: !targetField.activeFocus; value: sec.targetHex }
+        Keys.onPressed: function(event) {
+          if (event.key === Qt.Key_Escape) { text = sec.targetHex; sec.focusRequested(); root.leaveSearch(); event.accepted = true }
+          else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { sec.targetHexEntered(text); root.leaveSearch(); event.accepted = true }
+        }
+      }
+      Text {
+        id: targetPick
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: "Pick from screen"
+        color: root.fg
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body * 0.9
+        font.underline: true
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -Style.space(6)
+          cursorShape: Qt.PointingHandCursor
+          enabled: sec.targetLive
+          onClicked: { sec.focusRequested(); sec.targetPickRequested() }
+        }
+      }
+    }
+
     // custom colour: hex field, hue / saturation / brightness rails, star = favorite (u focuses the field, U toggles favorite)
     Item {
       id: customRow
@@ -2398,7 +2676,7 @@ BarWidget {
       id: keys
       anchors.fill: parent
       onMoveRequested: function(dx, dy) { root.moveKeys(dx, dy) }
-      blocked: searchField.activeFocus || colorSec.editing
+      blocked: searchField.activeFocus || colorSec.editing || wallSec.editing
       onTabRequested: function(dir) { root.cycleKind(dir) }
       onDeleteRequested: root.handleText("x")
       onReturnRequested: root.viaEnter = true
@@ -2633,6 +2911,16 @@ BarWidget {
             strengthLive: root.wallOn
             strength: root.wallStrength
             strengthDefault: 100
+            hasWallOpts: true
+            reactValue: root.wallReact
+            reactLive: root.wallOn
+            rangeValue: root.wallRange
+            targetHex: root.wallTarget
+            targetLive: root.wallReactorOn
+            onReactPicked: function(v) { root.setWallReact(v) }
+            onRangePicked: function(v) { root.setWallRange(v) }
+            onTargetHexEntered: function(t) { root.setWallTarget(t) }
+            onTargetPickRequested: root.pickWallTarget()
             onStrengthPicked: function(v) { root.setStrength("wall", v) }
             onPointed: function(item) { root.previewWall(item) }
             onChosen: function(item, keep) { root.chooseWall(item, keep) }

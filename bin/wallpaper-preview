@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""wallpaper-preview WALL.png OUT.png MX,MY T1,T2 effect.frag ... : contact sheet (rows = effects, columns = times). Needs a venv with moderngl, pillow, numpy (python -m venv v; v/bin/pip install moderngl pillow numpy)."""
-import sys, struct, moderngl, numpy as np
+"""wallpaper-preview WALL.png OUT.png MX,MY T1,T2 effect.frag ... : contact sheet (rows = effects, columns = times). Needs a venv with moderngl, pillow, numpy (env TARGET=#rrggbb REACT=1 RANGE=0.5 to set the colour-reactor target, mouse reaction 0..2 and range 0..1; python -m venv v; v/bin/pip install moderngl pillow numpy)."""
+import sys, os, struct, moderngl, numpy as np
 from PIL import Image
 # render.py wall.png out.png mx,my t1,t2,... effect1.frag effect2.frag ...  -> contact sheet (rows=effects, cols=times)
 wall, out, mouse, times = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -23,7 +23,8 @@ for r, f in enumerate(files):
     for c, t in enumerate(ts):
         mat = np.eye(4, dtype='f4')
         data = mat.tobytes() + struct.pack('ffffffff', 1.0, t, mx*W, my*H, W, H, iw, ih)
-        data += b''.join(struct.pack('4f', *cc) for cc in cols) + bytes(64)
+        data += b''.join(struct.pack('4f', *cc) for cc in cols)
+        data += struct.pack('4f', *col(os.environ.get("TARGET", "#e8a33d"))) + struct.pack('4f', float(os.environ.get("REACT", "1")), float(os.environ.get("RANGE", "0.5")), 0, 0) + bytes(64)
         ub = ctx.buffer(data); ub.bind_to_uniform_block(0)
         tex.use(1); fbo.use(); fbo.clear(0,0,0,1); vao.render(moderngl.TRIANGLE_STRIP)
         im = Image.frombytes("RGBA", (W,H), fbo.read(components=4)).transpose(Image.FLIP_TOP_BOTTOM).convert("RGB").resize((W//2,H//2))

@@ -13,6 +13,9 @@ layout(std140, binding = 0) uniform buf {
   vec4 cMagenta;
   vec4 cPink;
   vec4 cCream;
+  vec4 cTarget;
+  float react;
+  float range;
 };
 layout(binding = 1) uniform sampler2D src;
 
@@ -36,10 +39,11 @@ float fbm(vec2 p) {
 }
 
 
-void main() {
+vec4 fxMain(vec2 mpx) {
+  vec4 fragColor;
   vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
-  vec2 m = mouse / res;
+  vec2 m = mpx / res;
   vec3 col = wall(uv) * 0.82;
   vec3 glow = vec3(0.0);
   for (int layer = 0; layer < 3; layer++) {
@@ -66,4 +70,15 @@ void main() {
   }
   col += glow;
   fragColor = vec4(col, 1.0) * qt_Opacity;
+  return fragColor;
+}
+
+// mouse reaction slider: 1 = as designed, 0 = the pointer is ignored, above 1 = exaggerated (extrapolated from the no-pointer look)
+void main() {
+  vec2 away = vec2(-10000.0);
+  vec4 c;
+  if (react >= 0.995 && react <= 1.005) c = fxMain(mouse);
+  else if (react <= 0.005) c = fxMain(away);
+  else c = mix(fxMain(away), fxMain(mouse), react);
+  fragColor = clamp(c, 0.0, 1.0);
 }

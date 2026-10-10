@@ -2,7 +2,7 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 45 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 44 colour grades plus your own custom colour, 49 animated wallpaper effects and 25 cursor effects (13 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
+Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 45 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 44 colour grades plus your own custom colour, 50 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick) and 25 cursor effects (13 overlays such as a trail of twinkles, 12 that bend the real screen under the pointer). Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
 > **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
@@ -45,6 +45,7 @@ Bar icon: **left click** menu, **right click** pause / resume all effects (they 
 | `/` | filter every column at once: type to narrow (name, description, category; several words must all match), `Enter` keeps the filter and returns to `h j k l`, `Esc` clears it |
 | `Esc`, `q` | clear the filter, or undo and close |
 | `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen, Color, Wallpaper or Cursor menu; wallpaper and cursor strength is how visible the effect is over the real wallpaper / screen) |
+| `(` `)` | wallpaper mouse reaction -/+ 10 % (the **Mouse reaction** slider under the Wallpaper strength slider: 0 % ignores the pointer, 100 % is how the effect was made, up to 200 % exaggerates it). The slider's `Colour range` and `Reacts to #` rows belong to **Colour reactor**; `u` on the Wallpaper menu focuses its hex field, **Pick from screen** is an eyedropper (`hyprpicker`) |
 | `Ctrl+Enter`, `Ctrl+click` | mix a second effect (Screen) or grade (Color) with the first, see Mixing below. Plain `Enter` / click replaces both |
 | `t`, `,` `.`, `<` `>`, `D`, `Backspace` | with a mix on: stack / blend, mix amount -/+ 5 % and -/+ 1 %, amount back to its start value, remove the second |
 | `u`, `U` | custom colour: focus the hex field (`Enter` applies it) / save the custom colour as a favourite (the star next to the field does the same). The H, S and V rails under the Color menu pick it by mouse |
