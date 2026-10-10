@@ -11,6 +11,13 @@ Scope {
   property point mouse: Qt.point(-10000, -10000)
   property int fps: 30
   property real strength: 1.0
+  property real size: 1.0 // effect scale around the pointer: 1 = as designed
+  property real speed: 1.0 // animation speed: 0 = frozen, 1 = as designed
+  property real audio: 0.0 // sound level 0-1: overall, bass, mids, treble (all 0 unless an audio-* effect runs)
+  property real bass: 0.0
+  property real mid: 0.0
+  property real treble: 0.0
+  property real lastTick: 0
 
   property real time: 0
   property var hist: []
@@ -25,7 +32,9 @@ Scope {
     repeat: true
     running: fx.effect !== "" && fx.motion
     onTriggered: {
-      fx.time = (Date.now() - fx.startMs) / 1000
+      var now = (Date.now() - fx.startMs) / 1000
+      fx.time += Math.min(Math.max(now - fx.lastTick, 0), 0.25) * fx.speed
+      fx.lastTick = now
       fx.tick++
       if (fx.tick % 2 === 0) {
         var h = fx.hist.slice(0, 7)
@@ -52,7 +61,17 @@ Scope {
       ShaderEffect {
         anchors.fill: parent
         opacity: fx.strength
+        transform: Scale {
+          origin.x: fx.mouse.x - win.screen.x
+          origin.y: fx.mouse.y - win.screen.y
+          xScale: fx.size
+          yScale: fx.size
+        }
         property real time: fx.time
+        property real audio: fx.audio
+        property real bass: fx.bass
+        property real mid: fx.mid
+        property real treble: fx.treble
         property vector2d mouse: Qt.vector2d(fx.mouse.x - win.screen.x, fx.mouse.y - win.screen.y)
         property vector2d res: Qt.vector2d(width, height)
         property vector4d h0: Qt.vector4d(fx.pt(0).x - win.screen.x, fx.pt(0).y - win.screen.y, fx.pt(1).x - win.screen.x, fx.pt(1).y - win.screen.y)

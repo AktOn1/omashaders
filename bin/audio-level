@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+# Prints "level bass mid treble" (each 0-1) about 25 times a second, measured from whatever the default output plays
+# (the monitor of the default sink, through parec). Levels are auto-scaled, so quiet and loud music both move.
+# "audio-level --stdin" reads raw 16 kHz mono s16le from stdin instead (for testing without a sound server).
+import os, shutil, subprocess, sys
+import numpy as np
+
+RATE = 16000
+CHUNK = 640  # 40 ms
+BANDS = ((40, 250), (250, 2000), (2000, 7500))
+
+freqs = np.fft.rfftfreq(CHUNK, 1.0 / RATE)
+win = np.hanning(CHUNK)
+masks = [(freqs >= lo) & (freqs < hi) for lo, hi in BANDS]
+
+if "--stdin" in sys.argv:
+    src = sys.stdin.buffer
+    proc = None
+else:
+    if not shutil.which("parec"):
+        sys.exit(1)
+    proc = subprocess.Popen(["parec", "-d", "@DEFAULT_SINK@.monitor", "--rate=%d" % RATE, "--channels=1",
+                             "--format=s16le", "--latency-msec=30"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    src = proc.stdout
+
+parent = os.getppid()
+peak = [0.02] * 4
+state = [0.0] * 4
+nbytes = CHUNK * 2
+try:
+    while os.getppid() == parent:
+        buf = src.read(nbytes)
+        if not buf or len(buf) < nbytes:
+            break
+        x = np.frombuffer(buf, dtype=np.int16).astype(np.float32) / 32768.0
+        spec = np.abs(np.fft.rfft(x * win)) / CHUNK
+        raw = [float(np.sqrt(np.mean(x * x)))] + [float(np.sqrt(np.mean(spec[m] ** 2)) * 8) if m.any() else 0.0 for m in masks]
+        out = []
+        for i, v in enumerate(raw):
+            peak[i] = max(v, peak[i] * 0.995, 0.004 if i == 0 else 0.0008)  # slow-falling reference, so a quiet passage fades instead of being boosted
+            t = min(v / peak[i], 1.0) ** 1.5 if v > (0.002 if i == 0 else 0.0004) else 0.0
+            state[i] = t if t > state[i] else state[i] * 0.8 + t * 0.2  # fast attack, slower release
+            out.append(state[i])
+        print("%.2f %.2f %.2f %.2f" % tuple(out), flush=True)
+except (BrokenPipeError, KeyboardInterrupt):
+    pass
+finally:
+    if proc:
+        proc.terminate()

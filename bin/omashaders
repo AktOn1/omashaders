@@ -8,6 +8,8 @@
 #        | window frame [status|list|set NAME|off|reload] (shadow, glow and border presets for all windows: Hyprland's own options, no plugin needed)
 #        | perf [status|on|off|report [--days N] [--notify]|bench [--kinds screen,color,wall] [--only A,B]|crashes [--hours N]] (what each effect costs; bin/perf-log)
 #        | wallopt react|speed|zoom|range [PERCENT|+N|-N|reset] | wallopt target [RRGGBB] (wallpaper effects: mouse reaction 0-200, speed 0-300, zoom 25-300, Colour reactor range and picked colour)
+#        | mouseopt size|speed [PERCENT|+N|-N|reset] (cursor overlay size 25-300 and animation speed 0-300; 100 = as designed)
+#        | fullscreen [status|on|off|toggle] (pause every effect while a fullscreen app runs; the shell calls pause/resume)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
@@ -80,7 +82,8 @@ remembered_strength() { # KIND(fx|col) NAME FILE
 }
 cur_strength() { local v; v=$(cat "$STATE_DIR/strength-$1" 2>/dev/null); echo "${v:-100}"; }
 DISABLED="$STATE_DIR/disabled"
-is_disabled() { [ -s "$DISABLED" ]; }
+FSPAUSE="$STATE_DIR/fs-paused" # set while a fullscreen app runs and "pause while fullscreen" is on
+is_disabled() { [ -s "$DISABLED" ] || [ -s "$FSPAUSE" ]; }
 # Mixing: a second effect (effect2) or colour (color2) can be mixed into the first one. State: mix-effect / mix-color = "MODE VALUE",
 # MODE stack (the second runs on the first one's result; VALUE is how much of it, percent) or blend (both run on the original picture;
 # VALUE is the share of the second, percent).
@@ -597,9 +600,23 @@ case "${1:-}" in
       wall|mouse) set_overlay_strength "$2" "$3" ;;
       *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
-  wallopt) # wallpaper effect options: react 0-200 (mouse reaction, 100 = as designed) | range 0-100 and target RRGGBB (Colour reactor)
+  fullscreen) # pause while fullscreen: status | on | off (the setting) | pause | resume (called by the shell when a fullscreen app starts or ends)
+    FSON="$STATE_DIR/pause-fullscreen"
+    case "${2:-status}" in
+      status) [ -s "$FSON" ] && echo on || echo off; [ -s "$FSPAUSE" ] && echo "paused now" ;;
+      on) mkdir -p "$STATE_DIR"; echo 1 > "$FSON" ;;
+      off) mkdir -p "$STATE_DIR"; : > "$FSON"; if [ -s "$FSPAUSE" ]; then lock; : > "$FSPAUSE"; apply; window_apply; fi ;;
+      toggle) [ -s "$FSON" ] && exec "$0" fullscreen off || exec "$0" fullscreen on ;;
+      pause) [ -s "$FSON" ] && [ ! -s "$FSPAUSE" ] && { lock; mkdir -p "$STATE_DIR"; echo 1 > "$FSPAUSE"; apply; window_apply; } ;;
+      resume) [ -s "$FSPAUSE" ] && { lock; : > "$FSPAUSE"; apply; window_apply; } ;;
+      *) echo "usage: omashaders fullscreen [status|on|off|toggle|pause|resume]" >&2; exit 1 ;;
+    esac; exit 0 ;;
+  wallopt|mouseopt) # wallpaper effect options: react 0-200 (mouse reaction, 100 = as designed) | range 0-100 and target RRGGBB (Colour reactor)
     f=""; max=100; min=0; def=100
+    [ "$1" = mouseopt ] && set -- wallopt "m$2" "${@:3}"
     case "$2" in
+      msize) f="$STATE_DIR/mouse-size"; max=300; min=25 ;;
+      mspeed) f="$STATE_DIR/mouse-speed"; max=300 ;;
       react) f="$STATE_DIR/react-wall"; max=200 ;;
       speed) f="$STATE_DIR/wall-speed"; max=300 ;;
       zoom) f="$STATE_DIR/wall-zoom"; max=300; min=25 ;;

@@ -57,6 +57,11 @@ Item {
   readonly property string sectionsFile: stateDir + "/sections"
   readonly property string shiftOnlyFile: stateDir + "/shift-only"
   readonly property string disabledFile: stateDir + "/disabled"
+  readonly property string fsPauseFile: stateDir + "/pause-fullscreen"
+  readonly property string mouseSizeFile: stateDir + "/mouse-size"
+  readonly property string mouseSpeedFile: stateDir + "/mouse-speed"
+  readonly property string audioScript: path("bin/audio-level")
+  readonly property string fsWatchScript: path("bin/fullscreen-watch")
   readonly property string fxStrengthFile: stateDir + "/strength-effect"
   readonly property string colStrengthFile: stateDir + "/strength-color"
   readonly property string wallStrengthFile: stateDir + "/strength-wall"
@@ -302,6 +307,15 @@ Item {
   Timer { id: wallZoomTimer; interval: 80; onTriggered: { root.writeFile(root.wallZoomFile, String(root.wallZoom)); root.pendingWallZoom = -1 } }
   function setWallSpeed(v) { v = clamp(Math.round(v), 0, 300); wallSpeed = v; pendingWallSpeed = v; wallSpeedTimer.restart() }
   function setWallZoom(v) { v = clamp(Math.round(v), 25, 300); wallZoom = v; pendingWallZoom = v; wallZoomTimer.restart() }
+  // Cursor overlay size (25-300 %, 100 = as designed) and animation speed (0-300 %); bend effects ignore both
+  property int mouseSize: 100
+  property int mouseSpeed: 100
+  property int pendingMouseSize: -1
+  property int pendingMouseSpeed: -1
+  Timer { id: mouseSizeTimer; interval: 80; onTriggered: { root.writeFile(root.mouseSizeFile, String(root.mouseSize)); root.pendingMouseSize = -1 } }
+  Timer { id: mouseSpeedTimer; interval: 80; onTriggered: { root.writeFile(root.mouseSpeedFile, String(root.mouseSpeed)); root.pendingMouseSpeed = -1 } }
+  function setMouseSize(v) { v = clamp(Math.round(v), 25, 300); mouseSize = v; pendingMouseSize = v; mouseSizeTimer.restart() }
+  function setMouseSpeed(v) { v = clamp(Math.round(v), 0, 300); mouseSpeed = v; pendingMouseSpeed = v; mouseSpeedTimer.restart() }
   property int pendingWallRange: -1
   Timer { id: wallReactTimer; interval: 80; onTriggered: { root.writeFile(root.wallReactFile, String(root.wallReact)); root.pendingWallReact = -1 } }
   Timer { id: wallRangeTimer; interval: 80; onTriggered: { root.writeFile(root.wallRangeFile, String(root.wallRange)); root.pendingWallRange = -1 } }
@@ -398,6 +412,30 @@ Item {
     onFileChanged: reload()
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingWallZoom < 0) root.wallZoom = isNaN(v) ? 100 : root.clamp(v, 25, 300) }
     onLoadFailed: root.wallZoom = 100
+  }
+  FileView {
+    path: root.mouseSizeFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingMouseSize < 0) root.mouseSize = isNaN(v) ? 100 : root.clamp(v, 25, 300) }
+    onLoadFailed: root.mouseSize = 100
+  }
+  FileView {
+    path: root.mouseSpeedFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { var v = parseInt(String(text() || "").trim()); if (root.pendingMouseSpeed < 0) root.mouseSpeed = isNaN(v) ? 100 : root.clamp(v, 0, 300) }
+    onLoadFailed: root.mouseSpeed = 100
+  }
+  FileView {
+    path: root.fsPauseFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.fsPauseOn = String(text() || "").trim() !== ""
+    onLoadFailed: root.fsPauseOn = false
   }
   FileView {
     path: root.wallReactFile
@@ -1189,6 +1227,7 @@ Item {
       { id: "glowdust", label: "Glow dust",       hint: "soft lights flee mouse" },
       { id: "fireflies", label: "Fireflies",      hint: "green, blinking, shy" },
       { id: "plankton", label: "Plankton",        hint: "glows near the mouse" },
+      { id: "neonrain", label: "Neon rain",       hint: "night rain, pointer is an umbrella" },
       { id: "fog",       label: "Fog drift",       hint: "mouse clears it" },
       { id: "storm",     label: "Thunderstorm",    hint: "rain, lightning" },
       { id: "embers",    label: "Embers",          hint: "sparks flee mouse" },
@@ -1402,6 +1441,43 @@ Item {
   }
   function pal(key, fallback) { return root.palette[key] || fallback }
 
+  // ---------------------------------------------------------------- pause while fullscreen, and sound for audio-* effects
+  // With "pause while fullscreen" on, every effect stops while the focused monitor shows a fullscreen window. The shell side
+  // (wallpaper, cursor, bend) just follows effectsOff; the Hyprland side (screen shader, window shaders, frames) is paused with
+  // `omashaders fullscreen pause` / `resume`, which keeps a manual pause (the Enabled box) separate.
+  property bool fsPauseOn: false
+  property bool fsActive: false
+  readonly property bool fsPaused: fsPauseOn && fsActive
+  readonly property bool effectsOff: paused || fsPaused
+  Process {
+    running: root.fsPauseOn && root.fxHost
+    command: [root.fsWatchScript]
+    stdout: SplitParser { onRead: function(line) { root.fsActive = line.trim() === "1" } }
+  }
+  onFsPausedChanged: Quickshell.execDetached([root.script, "fullscreen", fsPaused ? "pause" : "resume"])
+  onFsPauseOnChanged: if (!fsPauseOn) { fsActive = false; Quickshell.execDetached([root.script, "fullscreen", "resume"]) }
+  function setFsPause(v) { Quickshell.execDetached([root.script, "fullscreen", v ? "on" : "off"]) }
+
+  // effects named audio-* react to what the speakers play: bin/audio-level prints "level bass mid treble" (0-1) and runs only while one is on
+  readonly property bool audioNeeded: root.fxHost && !root.effectsOff && ((wallOn && wallShown.indexOf("audio-") === 0) || (wallOn && mixSecondOf("wall").indexOf("audio-") === 0) || (mouseOn && !mouseBend && cursorLive && mouseCurrent.indexOf("audio-") === 0))
+  property real audioLevel: 0
+  property real audioBass: 0
+  property real audioMid: 0
+  property real audioTreble: 0
+  Process {
+    id: audioProc
+    running: root.audioNeeded
+    command: [root.audioScript]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var p = line.split(" ")
+        if (p.length !== 4) return
+        root.audioLevel = Number(p[0]); root.audioBass = Number(p[1]); root.audioMid = Number(p[2]); root.audioTreble = Number(p[3])
+      }
+    }
+    onRunningChanged: if (!running) { root.audioLevel = 0; root.audioBass = 0; root.audioMid = 0; root.audioTreble = 0 }
+  }
+
   FxHost {
     source: root.sub("WallpaperFx.qml")
     props: ({
@@ -1409,10 +1485,14 @@ Item {
       react: root.wallReact / 100,
       speed: root.wallSpeed / 100,
       zoom: root.wallZoom / 100,
+      audio: root.audioLevel,
+      bass: root.audioBass,
+      mid: root.audioMid,
+      treble: root.audioTreble,
       range: root.wallRange / 100,
       targetColor: "#" + root.wallTarget,
-      effect: root.fxHost && !root.paused ? root.wallShown : "",
-      effect2: root.fxHost && !root.paused && root.wallPreview === "" ? root.mixSecondOf("wall") : "",
+      effect: root.fxHost && !root.effectsOff ? root.wallShown : "",
+      effect2: root.fxHost && !root.effectsOff && root.wallPreview === "" ? root.mixSecondOf("wall") : "",
       mixMode: root.wallMixMode,
       mixAmount: root.wallMixAmt / 100,
       wallpaper: root.wallpaperPath,
@@ -1489,8 +1569,14 @@ Item {
     source: root.sub("MouseFx.qml")
     props: ({
       strength: root.mouseStrength / 100,
-      effect: root.fxHost && !root.paused && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : "",
+      effect: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : "",
       motion: root.mouseMotion,
+      size: root.mouseSize / 100,
+      speed: root.mouseSpeed / 100,
+      audio: root.audioLevel,
+      bass: root.audioBass,
+      mid: root.audioMid,
+      treble: root.audioTreble,
       mouse: root.cursor,
       fps: root.fps
     })
@@ -1498,7 +1584,7 @@ Item {
 
   // Bend effects: bin/cursor-bend feeds the pointer position into the Hyprland screen shader; with several
   // monitors the cursor's monitor is marked by a 3x2 pixel block in its corner (BendMarker) so only it is bent
-  readonly property bool bendRunning: root.fxHost && !root.paused && root.mouseOn && root.mouseBend && root.cursorLive
+  readonly property bool bendRunning: root.fxHost && !root.effectsOff && root.mouseOn && root.mouseBend && root.cursorLive
   Process {
     running: root.bendRunning
     command: [root.bendScript]
@@ -1514,7 +1600,7 @@ Item {
   // cursor position, polled from Hyprland only while an effect that follows it is running
   property point cursor: Qt.point(-10000, -10000)
   Process {
-    running: !root.paused && (root.wallOn || (root.mouseOn && root.cursorLive)) && root.fxHost
+    running: !root.effectsOff && (root.wallOn || (root.mouseOn && root.cursorLive)) && root.fxHost
     command: [root.cursorScript]
     stdout: SplitParser {
       onRead: function(line) {
@@ -1525,23 +1611,46 @@ Item {
   }
 
   // ---------------------------------------------------------------- combination favorites
-  // A combo is the Screen effect, Wallpaper effect, Cursor effect and Color together; one line per combo
-  // in the state file: "screen|wall|mouse|color" or "screen|wall|mouse|color|name" (an empty part means off; older 3-part lines have no colour; the name is optional, set with n).
+  // A combo is the Screen effect, Wallpaper effect, Cursor effect and Color together, plus optionally the Windows effect, colour and frame; one line per combo
+  // in the state file: "screen|wall|mouse|color", "...|name" or "...|name|winEffect|winColor|winFrame" (an empty part means off; older 3-part lines have no colour; the name is optional, set with n;
+  // lines without the window fields leave the Windows settings as they are when applied).
   property var combos: []
   property string comboFlash: ""
-  function comboKey(s, w, m, c) { return s + "|" + w + "|" + m + "|" + c }
-  function comboBase(line) { return line.split("|").slice(0, 4).join("|") }
+  function comboCompose(s, w, m, c, name, wf, wc, wr) {
+    var win = (wf || wc || wr) ? true : false
+    var out = [s, w, m, c]
+    if (name || win) out.push(name || "")
+    if (win) out.push(wf || "", wc || "", wr || "")
+    return out.join("|")
+  }
+  function comboKey(s, w, m, c, wf, wc, wr) { return comboCompose(s, w, m, c, "", wf, wc, wr) }
+  function comboBase(line) {
+    var p = line.split("|")
+    return comboCompose(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", p[5] || "", p[6] || "", p[7] || "")
+  }
+  function comboHasWin(line) { var p = line.split("|"); return (p[5] || p[6] || p[7]) ? true : false }
+  function comboMatchesNow(line) {
+    var p = line.split("|")
+    var a = comboKey(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", "", "")
+    var b = comboKey(current, wallShown, mouseCurrent, colorCurrent, "", "", "")
+    if (a !== b) return false
+    return !comboHasWin(line) || ((p[5] || "") === winEffect && (p[6] || "") === winColor && (p[7] || "") === winFrame)
+  }
   function comboItem(line) {
     var p = line.split("|")
     var s = p[0] || "", w = p[1] || "", m = p[2] || "", c = p[3] || "", name = p[4] || ""
-    var names = [s, c, w !== "" ? wallLabel(w) : "", m].filter(function(x) { return x !== "" })
+    var wf = p[5] || "", wc = p[6] || "", wr = p[7] || "", hasWin = comboHasWin(line)
+    var winNames = [wf, wc, wr].filter(function(x) { return x !== "" })
+    var names = [s, c, w !== "" ? wallLabel(w) : "", m].concat(winNames).filter(function(x) { return x !== "" })
     var parts = "Screen " + (s || "off") + " · Color " + (c || "off") + " · Wallpaper " + (w !== "" ? wallLabel(w) : "off") + " · Cursor " + (m || "off")
-    return { id: line, screen: s, wall: w, mouse: m, color: c, name: name, label: name !== "" ? name : names.join(" + "), desc: parts }
+                + (hasWin ? " · Windows " + winNames.join(" + ") : "")
+    return { id: line, screen: s, wall: w, mouse: m, color: c, name: name, hasWin: hasWin, winFx: wf, winCol: wc, winFrame: wr,
+             label: name !== "" ? name : names.join(" + "), desc: parts }
   }
   readonly property var comboItems: combos.map(comboItem)
-  readonly property string comboNow: comboKey(current, wallShown, mouseCurrent, colorCurrent)
+  readonly property string comboNow: comboKey(current, wallShown, mouseCurrent, colorCurrent, winEffect, winColor, winFrame)
   readonly property string comboNowId: {
-    for (var i = 0; i < combos.length; i++) if (comboBase(combos[i]) === comboNow) return combos[i]
+    for (var i = 0; i < combos.length; i++) if (comboMatchesNow(combos[i])) return combos[i]
     return comboNow
   }
   property bool renaming: false
@@ -1563,7 +1672,7 @@ Item {
     var key = comboNow
     if (key === "|||") { flash("Nothing to save: every effect is off"); return }
     var label = comboItem(key).label
-    var dup = combos.filter(function(c) { return comboBase(c) === key })
+    var dup = combos.filter(function(c) { return comboMatchesNow(c) })
     if (dup.length > 0) { flash("Already saved: " + comboItem(dup[0]).label); return }
     combos = combos.concat([key])
     writeCombos()
@@ -1599,7 +1708,8 @@ Item {
     var i = combos.indexOf(id)
     if (i < 0) return
     var n = String(name).replace(/[|\r\n]/g, " ").trim().slice(0, 40)
-    var line = comboBase(id) + (n !== "" ? "|" + n : "")
+    var q = id.split("|")
+    var line = comboCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", n, q[5] || "", q[6] || "", q[7] || "")
     var next = combos.slice()
     next[i] = line
     combos = next
@@ -1619,6 +1729,10 @@ Item {
     chooseColor({ id: it.color }, true)
     chooseMouse({ id: it.mouse }, true)
     setWall(it.wall, true)
+    if (it.hasWin) {
+      Quickshell.execDetached(["bash", "-c", 'w() { if [ -n "$3" ]; then "$1" window "$2" set "$3"; else "$1" window "$2" off; fi; }; w "$1" effect "$2" >/dev/null 2>&1; w "$1" color "$3" >/dev/null 2>&1; w "$1" frame "$4" >/dev/null 2>&1; true',
+                               "bash", root.script, it.winFx, it.winCol, it.winFrame])
+    }
     if (!keep) popupOpen = false
   }
   function comboAt(n) {
@@ -1631,7 +1745,7 @@ Item {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.combos = String(text() || "").split("\n").map(function(l) { return l.split("|").length === 3 ? l + "|" : l })
-                                .filter(function(l) { var n = l.split("|").length; return (n === 4 || n === 5) && root.comboBase(l) !== "|||" })
+                                .filter(function(l) { var n = l.split("|").length; return (n === 4 || n === 5 || n === 8) && root.comboBase(l) !== "|||" })
                                 .map(function(l) { return l.split("|").length === 5 && l.split("|")[4] === "" ? root.comboBase(l) : l })
   }
 
@@ -1910,10 +2024,11 @@ Item {
     else if (t === "d") resetStrength()
     else if (t === ")") { if (focusKind === "wall" && wallOn) setWallReact(wallReact + 10) }
     else if (t === "(") { if (focusKind === "wall" && wallOn) setWallReact(wallReact - 10) }
-    else if (t === "v") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed - 10) }
-    else if (t === "V") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed + 10) }
-    else if (t === "z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom - 10) }
-    else if (t === "Z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom + 10) }
+    else if (t === "v") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed - 10); else if (focusKind === "mouse" && mouseOn) setMouseSpeed(mouseSpeed - 10) }
+    else if (t === "V") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed + 10); else if (focusKind === "mouse" && mouseOn) setMouseSpeed(mouseSpeed + 10) }
+    else if (t === "z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom - 10); else if (focusKind === "mouse" && mouseOn) setMouseSize(mouseSize - 10) }
+    else if (t === "Z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom + 10); else if (focusKind === "mouse" && mouseOn) setMouseSize(mouseSize + 10) }
+    else if (t === "e") setFsPause(!fsPauseOn)
     else if (t === ".") nudgeMix(5)
     else if (t === ",") nudgeMix(-5)
     else if (t === ">") nudgeMix(1)
@@ -1954,12 +2069,13 @@ Item {
     wallStep("status")
     winRun(["apply"])
     winRun(["frame", "sync"])
+    Quickshell.execDetached([root.script, "fullscreen", "resume"])
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
     // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
     // and a combo the user removed does not come back
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
                              root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallSpeedFile, root.wallZoomFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
-                             root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile])
+                             root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile, root.fsPauseFile, root.mouseSizeFile, root.mouseSpeedFile])
   }
 
   // ---------------------------------------------------------------- the bar icon
@@ -2212,6 +2328,7 @@ Item {
     signal customFavToggled()
     // wallpaper options under the strength row: mouse reaction, and the Colour reactor's range and target colour
     property bool hasWallOpts: false
+    property bool hasMouseOpts: false // cursor options: Size and Speed rows only
     property int reactValue: 100
     property bool reactLive: false
     property int speedValue: 100
@@ -2243,7 +2360,7 @@ Item {
     signal acted(string id)
     signal focusRequested()
 
-    readonly property int baseH: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 5 * (rowH + Style.space(4)) : 0)
+    readonly property int baseH: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 5 * (rowH + Style.space(4)) : 0) + (hasMouseOpts ? 2 * (rowH + Style.space(4)) : 0)
     implicitHeight: baseH + Style.space(8) + chipFlow.implicitHeight
 
     Flow {
@@ -2890,7 +3007,7 @@ Item {
     // wallpaper options: mouse reaction (0 = ignores the pointer, 100 = as designed, 200 = exaggerated), then the Colour reactor's range and target colour
     PctRow {
       id: speedRow
-      visible: sec.hasWallOpts
+      visible: sec.hasWallOpts || sec.hasMouseOpts
       y: (sec.hasMix ? mixRow.y : strengthRow.y) + sec.rowH + Style.space(4)
       width: sec.width
       height: sec.rowH
@@ -2905,11 +3022,11 @@ Item {
     }
     PctRow {
       id: zoomRow
-      visible: sec.hasWallOpts
+      visible: sec.hasWallOpts || sec.hasMouseOpts
       y: speedRow.y + sec.rowH + Style.space(4)
       width: sec.width
       height: sec.rowH
-      label: "Zoom"
+      label: sec.hasMouseOpts ? "Size" : "Zoom"
       value: sec.zoomValue
       minValue: 25
       maxValue: 300
@@ -3199,7 +3316,7 @@ Item {
           width: body.width
           height: Style.space(28)
           spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 9 - 1) / 9
+          readonly property real cell: (width - spacing * 10 - 1) / 10
 
           MenuRow {
             width: header.cell
@@ -3250,6 +3367,13 @@ Item {
             dim: !root.showScreen
             label: (root.includeAnimated ? root.boxOn : root.boxOff) + " 󰙴 Animated (a)"
             onClicked: root.setAnimated()
+          }
+          MenuRow {
+            width: header.cell
+            toggle: true
+            checked: root.fsPauseOn
+            label: (root.fsPauseOn ? root.boxOn : root.boxOff) + " 󰊓 Fullscreen pause (e)"
+            onClicked: root.setFsPause(!root.fsPauseOn)
           }
           Rectangle {
             width: 1
@@ -3504,6 +3628,12 @@ Item {
             strength: root.mouseStrength
             strengthDefault: 100
             onStrengthPicked: function(v) { root.setStrength("mouse", v) }
+            hasMouseOpts: true
+            reactLive: root.mouseOn && !root.mouseBend
+            speedValue: root.mouseSpeed
+            zoomValue: root.mouseSize
+            onSpeedPicked: function(v) { root.setMouseSpeed(v) }
+            onZoomPicked: function(v) { root.setMouseSize(v) }
             onPointed: function(item) { root.previewMouse(item) }
             onChosen: function(item, keep) { root.chooseMouse(item, keep) }
             onActed: function(id) { root.runAction("mouse", id) }
@@ -3636,7 +3766,7 @@ Item {
           leftPadding: Style.space(10)
           elide: Text.ElideRight
           textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · u custom colour (U to favorite it) · f fav · F save combo · n name a combo · r/R surprise · o/O off · P cost report · s C w c W m menus · A pick the app (Windows) · esc clears filter, then undoes"
+          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · e pause in fullscreen · v/V speed and z/Z zoom (Wallpaper) or size (Cursor) · u custom colour (U to favorite it) · f fav · F save combo · n name a combo · r/R surprise · o/O off · P cost report · s C w c W m menus · A pick the app (Windows) · esc clears filter, then undoes"
           opacity: 0.6
           color: root.fg
           font.family: root.bar.fontFamily

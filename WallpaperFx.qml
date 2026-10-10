@@ -29,6 +29,12 @@ Scope {
   property real speed: 1.0 // animation speed: 0 = frozen, 1 = as designed, 3 = three times faster
   property real zoom: 1.0 // how big the effect is drawn: 1 = as designed, 2 = twice as large, 0.5 = half the size
 
+  // sound level (0-1): overall, bass, mids, treble; all 0 unless an audio-* effect is running (bin/audio-level)
+  property real audio: 0
+  property real bass: 0
+  property real mid: 0
+  property real treble: 0
+
   property real time: 0 // effect clock: runs at `speed` times real time
   property real clock: 0 // real time in seconds
   property real lastTick: 0
@@ -97,6 +103,10 @@ Scope {
     property color cTarget: fx.targetColor
     property real react: fx.react
     property real range: fx.range
+    property real audio: fx.audio
+    property real bass: fx.bass
+    property real mid: fx.mid
+    property real treble: fx.treble
     vertexShader: Qt.resolvedUrl("wallpaper-effects/zoom.vert.qsb")
     fragmentShader: name !== "" ? Qt.resolvedUrl("wallpaper-effects/" + name + ".frag.qsb") : ""
   }

@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# Prints "1" when the focused monitor's workspace has a fullscreen window and "0" when it does not (also once at start),
+# following Hyprland's event socket. Exits with its parent.
+import glob, json, os, socket, sys
+
+rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+base = "%s/hypr/%s" % (rt, sig)
+if not sig or not os.path.exists(base + "/.socket2.sock"):
+    socks = sorted(glob.glob("%s/hypr/*/.socket2.sock" % rt), key=os.path.getmtime)
+    if not socks:
+        sys.exit(1)
+    base = os.path.dirname(socks[-1])
+
+WATCH = (b"fullscreen>>", b"workspace>>", b"workspacev2>>", b"focusedmon>>", b"focusedmonv2>>", b"closewindow>>",
+         b"openwindow>>", b"movewindow>>", b"activewindow>>", b"monitoradded>>", b"monitorremoved>>")
+
+
+def query(cmd):
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(1.0)
+    s.connect(base + "/.socket.sock")
+    s.sendall(cmd.encode())
+    data = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            break
+        data += b
+    s.close()
+    return data.decode()
+
+
+def fullscreen_now():
+    try:
+        mons = json.loads(query("j/monitors"))
+        focused = next((m for m in mons if m.get("focused")), mons[0] if mons else None)
+        if not focused:
+            return False
+        wid = focused.get("activeWorkspace", {}).get("id")
+        for w in json.loads(query("j/workspaces")):
+            if w.get("id") == wid:
+                return bool(w.get("hasfullscreen"))
+    except (OSError, ValueError, KeyError):
+        pass
+    return False
+
+
+parent = os.getppid()
+last = None
+
+
+def report():
+    global last
+    now = fullscreen_now()
+    if now != last:
+        last = now
+        print("1" if now else "0", flush=True)
+
+
+report()
+ev = socket.socket(socket.AF_UNIX)
+ev.connect(base + "/.socket2.sock")
+ev.settimeout(2.0)
+buf = b""
+while os.getppid() == parent:
+    try:
+        chunk = ev.recv(4096)
+    except socket.timeout:
+        continue
+    except OSError:
+        break
+    if not chunk:
+        break
+    buf += chunk
+    lines = buf.split(b"\n")
+    buf = lines.pop()
+    if any(l.startswith(WATCH) for l in lines):
+        try:
+            report()
+        except BrokenPipeError:
+            break
