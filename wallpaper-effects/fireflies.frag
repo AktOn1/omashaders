@@ -56,10 +56,10 @@ vec3 flies(vec2 p, vec2 mp, float sc, float seed, float t, float asp) {
       float d2 = dot(dd, dd);
       float period = 4.0 + 3.5 * h4;
       float ph = fract(t / period + h * 7.0);
-      float blink = smoothstep(0.0, 0.12, ph) * smoothstep(0.55, 0.20, ph);
-      blink = blink * blink * (0.55 + 0.45 * sin(t * 9.0 + h * 90.0) * smoothstep(0.3, 0.1, ph) + 0.45);
-      float core = exp(-d2 * 240.0 / (sc * 0.11));
-      float halo = exp(-d2 * 26.0 / (sc * 0.11));
+      float pulse = smoothstep(0.0, 0.25, ph) * smoothstep(0.75, 0.35, ph);
+      float blink = 0.5 + 0.5 * pulse * pulse * (0.9 + 0.1 * sin(t * 7.0 + h * 90.0));
+      float core = exp(-d2 * 560.0 / (sc * 0.11));
+      float halo = exp(-d2 * 60.0 / (sc * 0.11));
       vec3 tint = mix(vec3(0.55, 1.0, 0.22), vec3(0.78, 1.0, 0.35), h3);
       acc += blink * (tint * halo * 0.55 + vec3(0.72, 1.0, 0.50) * core * 1.2);
     }
