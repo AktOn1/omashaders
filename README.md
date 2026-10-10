@@ -28,7 +28,7 @@ Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy she
 ## First run
 
 1. Click the monitor icon in the bar. A menu with up to five columns opens: **Screen**, **Color**, **Wallpaper**, **Cursor** and **Combos**. Tick the ones you want at the top; ticked menus sit side by side and your choice is remembered.
-2. Move with `h j k l` or the arrow keys. Moving onto an effect with the keys previews it live; hovering with the mouse only highlights it (hold `Shift` while hovering to preview). Categories (left column) are never selected by hovering; click one.
+2. Move with `h j k l` or the arrow keys. Moving onto an effect with the keys previews it live; hovering with the mouse only highlights it; hold `Shift` while hovering to preview, and the previous setting comes back when you release Shift or move off the item (a click keeps it). Categories (left column) are never selected by hovering; click one.
 3. `Enter` keeps the effect and closes, `Space` keeps it and stays open, a click keeps it and stays open, `Esc` puts everything back as it was.
 4. Pick an effect and a colour together: the effect runs first, then the colour grade is applied to its result (for example `crt` + `gameboy` is a CRT look in Game Boy greens).
 5. Lower the **Strength** slider if an effect is too strong. Every effect starts at a readable value (pixelate 20 %, Game Boy LCD 25 %, C64 25 % ...); 0 % is the original screen.

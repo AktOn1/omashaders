@@ -11,7 +11,7 @@ import qs.Ui
 //   Wallpaper animated GPU effects drawn over the wallpaper (WallpaperFx.qml) plus wallpaper picking
 //   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml), and Bend shaders that
 //             distort the real screen around it (bin/cursor-bend + BendMarker.qml)
-// hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (keys preview as you move), a mouse click or Space keeps it and stays open, Enter keeps it and closes,
+// hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (releasing Shift or leaving the item restores the saved setting) (keys preview as you move), a mouse click or Space keeps it and stays open, Enter keeps it and closes,
 // Esc undoes previews.
 BarWidget {
   id: root
@@ -840,6 +840,40 @@ BarWidget {
   }
   onShiftOnlyChanged: if (!shiftOnly) shiftDown = false
 
+  // mouse hover previews only while Shift is held, and goes back to the saved settings on release or when the pointer leaves
+  property bool menuShiftHeld: false
+  property bool hoverPreviewing: false
+  property var hoverItem: null
+  property var hoverSec: null
+  function hoverPoint(sec, item) {
+    hoverSec = sec
+    hoverItem = item
+    hoverLeaveTimer.stop()
+    if (menuShiftHeld) { hoverPreviewing = true; sec.pointed(item) }
+    else revertHoverPreview()
+  }
+  function hoverLeave(item) {
+    if (hoverItem === item) hoverItem = null
+    hoverLeaveTimer.restart()
+  }
+  function setMenuShift(down) {
+    if (menuShiftHeld === down) return
+    menuShiftHeld = down
+    if (down) { if (hoverItem && hoverSec) { hoverPreviewing = true; hoverSec.pointed(hoverItem) } }
+    else revertHoverPreview()
+  }
+  function revertHoverPreview() {
+    hoverLeaveTimer.stop()
+    if (!hoverPreviewing) return
+    hoverPreviewing = false
+    screenTimer.stop(); colorTimer.stop(); mouseTimer.stop()
+    if (screenPreviewed) { applyScreen(screenOrigin); screenPreviewed = false }
+    if (colorPreviewed) { applyColor(colorOrigin); colorPreviewed = false }
+    if (mousePreviewed) { applyMouse(mouseOrigin); mousePreviewed = false }
+    clearWallPreview()
+  }
+  Timer { id: hoverLeaveTimer; interval: 220; onTriggered: root.revertHoverPreview() }
+
   MouseFx {
     strength: root.mouseStrength / 100
     effect: root.fxHost && !root.paused && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : ""
@@ -1018,6 +1052,9 @@ BarWidget {
       colorPreviewed = false
       mousePreviewed = false
       wallPreviewed = false
+      hoverPreviewing = false
+      hoverItem = null
+      menuShiftHeld = false
       activeKind = visibleKinds[0]
       searchField.text = ""
       screenSec.sync()
@@ -1085,6 +1122,7 @@ BarWidget {
     return true
   }
   function moveKeys(dx, dy) {
+    hoverPreviewing = false
     var s = secOf(focusKind)
     var r = s.move(dx, dy)
     if (r === 1) {
@@ -1495,9 +1533,12 @@ BarWidget {
               sec.focusRequested()
               sec.col = 1
               sec.itemIdx = itemRow.index
-              if (m.modifiers & Qt.ShiftModifier) sec.pointed(itemRow.modelData)
+              root.menuShiftHeld = (m.modifiers & Qt.ShiftModifier) !== 0
+              root.hoverPoint(sec, itemRow.modelData)
             }
+            onExited: root.hoverLeave(itemRow.modelData)
             onClicked: {
+              root.hoverPreviewing = false
               sec.focusRequested()
               sec.col = 1
               sec.itemIdx = itemRow.index
@@ -1763,6 +1804,12 @@ BarWidget {
       onActivateRequested: { root.activeSec.activate(!root.viaEnter); root.viaEnter = false }
       onCloseRequested: { if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
+      Keys.forwardTo: [shiftWatcher]
+      Item {
+        id: shiftWatcher
+        Keys.onPressed: function(event) { if (event.key === Qt.Key_Shift) root.setMenuShift(true) }
+        Keys.onReleased: function(event) { if (event.key === Qt.Key_Shift) root.setMenuShift(false) }
+      }
 
       Column {
         id: body
