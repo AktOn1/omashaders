@@ -1388,7 +1388,7 @@ BarWidget {
             width: catCol.width
             height: sec.rowH
             radius: Style.space(6)
-            color: selected ? root.fgA(sec.col === 0 && sec.focused ? 0.2 : 0.09) : "transparent"
+            color: selected ? root.fgA(sec.col === 0 && sec.focused ? 0.2 : 0.09) : (catMouse.containsMouse ? root.fgA(0.04) : "transparent")
 
             Text {
               anchors.left: parent.left
@@ -1419,12 +1419,6 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onPositionChanged: function(m) {
-                if (!sec.realMove(catMouse, m)) return
-                sec.focusRequested()
-                if (sec.catIdx !== catRow.index) { sec.catIdx = catRow.index; sec.itemIdx = Math.max(0, sec.indexOfSaved(catRow.index)) }
-                sec.col = 0
-              }
               onClicked: {
                 sec.focusRequested()
                 sec.catIdx = catRow.index
