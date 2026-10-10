@@ -1126,7 +1126,7 @@ BarWidget {
   property string shiftOnlyFlag: ""
   readonly property bool shiftOnly: shiftOnlyFlag === "" ? setting("cursorNeedsShift", false) === true : shiftOnlyFlag === "on"
   property bool shiftDown: false
-  readonly property bool cursorLive: !shiftOnly || shiftDown
+  readonly property bool cursorLive: !shiftOnly || shiftDown || popupOpen // menu open: show a picked cursor effect at once
   function setShiftOnly(v) { writeFile(shiftOnlyFile, v ? "on" : "off") }
   FileView {
     path: root.shiftOnlyFile

@@ -117,7 +117,7 @@ The plugin must be built for your Hyprland version; if `hyprpm add` fails, the p
 
 ### Shift only (cursor effects)
 
-Cursor effects and the wallpaper effects' mouse reaction can be limited to "only while Shift is held" (`x` in the menu). For that, Hyprland has to tell the plugin when Shift is down; add this to `~/.config/hypr/bindings.lua`, and the same line for `Shift_R`:
+While the menu is open the effects always show, so a cursor effect you pick appears at once; Shift only matters with the menu closed. Cursor effects and the wallpaper effects' mouse reaction can be limited to "only while Shift is held" (`x` in the menu). For that, Hyprland has to tell the plugin when Shift is down; add this to `~/.config/hypr/bindings.lua`, and the same line for `Shift_R`:
 
 ```lua
 hl.bind("Shift_L", hl.dsp.global("omashaders:shift"), { non_consuming = true, dont_inhibit = true })
