@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""wallpaper-preview WALL.png OUT.png MX,MY T1,T2 effect.frag ... : contact sheet (rows = effects, columns = times). Needs a venv with moderngl, pillow, numpy (env ZOOM=1 SPEED=1 AUDIO=level,bass,mid,treble for the zoom and speed sliders, TARGET=#rrggbb REACT=1 RANGE=0.5 to set the colour-reactor target, mouse reaction 0..2 and range 0..1; python -m venv v; v/bin/pip install moderngl pillow numpy)."""
+"""wallpaper-preview WALL.png OUT.png MX,MY T1,T2 effect.frag ... : contact sheet (rows = effects, columns = times). Needs a venv with moderngl, pillow, numpy (env ZOOM=1 SPEED=1 AUDIO=level,bass,mid,treble for the zoom and speed sliders, TARGET=#rrggbb REACT=1 RANGE=0.5 to set the colour-reactor target, mouse reaction 0..2 and range 0..1; the python packages moderngl, pillow and numpy in a venv)."""
 import sys, os, struct, moderngl, numpy as np
 AUDIO = (list(map(float, os.environ.get('AUDIO', '0,0,0,0').split(','))) + [0, 0, 0, 0])[:4]  # level,bass,mid,treble for audio-* effects
 from PIL import Image
