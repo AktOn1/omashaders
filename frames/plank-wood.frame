@@ -1,0 +1,12 @@
+# category: Border
+# desc: Rough weathered plank border: sun-dried boards in dusty tan and grey-brown with a soft, dark, slightly warm shadow, like a saloon wall
+rounding=0
+border_size=5
+border_colors=b98a55ff,86603aff,a67a48ff,6e4c2eff
+border_angle=90
+border_inactive=6e4f3399
+shadow_range=30
+shadow_power=3
+shadow_color=1a0e06b0
+shadow_offset=0,8
+shadow_inactive=1a0e0655

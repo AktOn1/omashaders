@@ -1,0 +1,12 @@
+# category: Border
+# desc: Heavy riveted brass border: a thick polished-brass band with bright and dark bands like rivet heads, and a warm bronze shadow
+rounding=2
+border_size=7
+border_colors=e3bd62ff,9a7428ff,f4dc92ff,b08a35ff
+border_angle=45
+border_inactive=86683266
+shadow_range=40
+shadow_power=3
+shadow_color=3a240a99
+shadow_offset=0,9
+shadow_inactive=3a240a44
