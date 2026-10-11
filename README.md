@@ -2,13 +2,20 @@
 
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-Full-screen shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: 69 screen effects (CRT, pixel art, e-ink, Game Boy, camouflage and pixel camouflage, halation, oil paint, matrix rain ...), 67 colour grades plus your own custom colour, 70 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick) and 30 overlay cursor effects (a trail of twinkles, rain ripples, glows ...) plus 12 that bend the real screen under the pointer. Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
+Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: over 100 screen and window shaders (CRT, pixel art, e-ink, Game Boy, camouflage, halation, oil paint, matrix rain ...), over 130 colour grades plus your own custom colour, about 170 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick), more than 50 cursor effects (trails, glows, rain ripples, plus ones that bend the real screen under the pointer), and 131 ready-made combos that set everything together. Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
-> **Brand new: this plugin is one day old** (first written on 9 October 2026, first public release on 10 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
+> **Brand new: this plugin is two days old** (first written on 9 October 2026, first public release on 10 October 2026, this update on 11 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
 ![Nine of the screen effects, each combined with a colour grade](preview.png)
 
 *The picture is a sample desktop rendered with the plugin's own shaders (`bin/shader-preview`), not a screenshot of the menu.*
+
+## What's new
+
+- **11 Oct 2026, 1.26:** 100 new starter combos (131 in total), each a Screen + Color + Wallpaper + Cursor + window shader + frame picture, from cosy and calm to gothic, sci-fi, retro and seasonal. About 100 new wallpaper scenes, 15+ colour grades, 20+ frames and new cursor overlays to go with them.
+- **10 Oct 2026, 1.12 to 1.24:** window shaders and frames (needs the optional HyprWindowShade plugin for shaders), mixing two effects with `Ctrl`, fullscreen pause, cursor Size and Speed sliders, audio-reactive effects, combo renaming, filter with `/`, colour reactor wallpaper, Speed and Zoom sliders.
+- **Menu changes now load without restarting the shell** (1.21): new effects and menu edits show up the next time you open the menu.
+- **10 Oct 2026, 1.5.3:** previous store version.
 
 ## Install
 
@@ -235,7 +242,3 @@ If this is useful to you, you can [buy me a coffee on Ko-fi](https://ko-fi.com/a
 ## License
 
 MIT, see [LICENSE](LICENSE). The shaders were written for this plugin; no third-party code or assets are bundled.
-
-Forty-two more starter combos (v1.25.0), one for each of the new wallpaper scenes in the groups Cozy corners, Places and eras, Sea and sky, Fantasy realms, Wild places, Seasons and festivals, Sci-fi worlds, Retro machines, Art studio and Mood scenes. Each pairs the scene with a Screen shader, a Color grade, a cursor effect, a window shader and a frame: Izakaya Alley, Rainy Cafe, Seventies Lounge, Aquarelle Studio, Great Wave, Study Lamp, Library Light, Rainy Sunday, Tea House, Sleep Sky, Still Field, Breath Orb, Spa Stones, Bakery Dawn, Campfire Stars, Cumulus Sunset, Golden Sail, Ice Floes, Reef Shallows, Storm Beacon, Elven City, Dragon Hoard, Soul River, Wisp Wood, Wizard Study, Megacity Lights, Orbital Dawn, Green Screen 3270, EGA Desk, Joy Confetti, Blue Lull, Beat Bands, Jungle Mist, Oasis Noon, Prairie Storm, Savanna Dust, Tropic Lagoon, Pumpkin Night, Fairy Lights, Harvest Gold, Midsummer Heat, Green Shoots. New pieces made for them: 15 Color grades, 24 frames, 5 cursor overlays (`brush-bloom`, `neon-tube-trail`, `phosphor-ghost`, `pop-flakes`, `tear-fall`) and 11 Screen/window shaders. Window parts need the HyprWindowShade plugin.
-
-More starter combos (v1.26.0), 58 new ones in waves, each with its own new wallpaper scene plus Screen shader, Color grade, cursor effect, window shader and frame (new or reused). Gothic and dark tales: Haunted Manor, Crypt Candles, Gothic Cathedral, Wolf Moon, Graveyard Mist, Blood Moon Castle, Witching Hour, Rooftop Noir, Ghost Ship, Pirate Cove. Frontier, steam and wastelands: Dusty Saloon, High Noon, Canyon Campfire, Steam Foundry, Airship Harbour, Clockwork Tower, Wasteland Dusk, Fallout Shelter, Overgrown City, Smoky Jazz Club. Neon nights and deep space: Chrome Rain, Ramen Skyline, Drone Alley, Outrun Highway, Vapor Pool, Arcade Night, Star Fleet Dock, Ringed Giant, Derelict Station, Alien Garden. Ancient worlds, mountains and storms: Temple of the Sun, Jungle Ruins, Pharaoh's Night, Acropolis Dawn, Alpine Dawn, Blizzard Pass, Volcano Night, Desert Stars, Thunderhead, Bus Stop Rain. Water, style studies and anime play: Deep Blue, Kelp Forest, Stadium Lights, Concrete Light, Deco Foyer, Baroque Hall, Pop Art Dots, Summer Crossing, Idol Stage, Candy Clouds. Quiet and focus, and holidays: Zen Sand, Minimal Dawn, Candle Meditation, Quiet Desk, Focus Haze, Christmas Eve, Winter Market, Spring Meadow.
