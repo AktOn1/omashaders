@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Square mainframe bezel: thin phosphor-green line with a soft green halo, dim when unfocused
+rounding=0
+border_size=2
+border_colors=4dff7aff
+border_inactive=1c5a2e99
+shadow_range=26
+shadow_power=3
+shadow_color=2cff6a44
+shadow_inactive=00000000

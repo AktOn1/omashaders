@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Thin clean cyan hologram edge with a pale aqua haze, sharp corners
+rounding=3
+border_size=1
+border_colors=6ff2ffff,c8fbffff
+border_angle=45
+border_inactive=2a6a7a66
+shadow_range=36
+shadow_power=2
+shadow_color=40d8ee77
+shadow_inactive=00000000

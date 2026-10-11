@@ -1,0 +1,12 @@
+# category: Border
+# desc: Flat industrial border in warning amber on gunmetal, no glow, like a hazard stripe on a hull panel
+rounding=0
+border_size=3
+border_colors=e8a317ff,3a3f40ff
+border_angle=45
+border_inactive=3a3f4099
+shadow_range=22
+shadow_power=4
+shadow_color=000000bb
+shadow_offset=0,4
+shadow_inactive=00000066

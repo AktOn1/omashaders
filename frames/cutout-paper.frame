@@ -1,0 +1,8 @@
+# category: Shadow
+# desc: Layered paper-cut look: a short crisp shadow just under the edge, as if each window were a card on the one behind
+rounding=6
+shadow_range=9
+shadow_power=2
+shadow_color=1a121088
+shadow_offset=0,7
+shadow_inactive=1a121055

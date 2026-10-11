@@ -98,3 +98,7 @@ Nothing in this plugin needs `omarchy-restart-shell` while you work on it, excep
 - A watcher `FileView` on four files costs nothing for people who never edit the plugin.
 - `vm-check.sh` (run by `vm-test omashaders`) proves all of this in the Omarchy VM in both layouts: edit the bar glyph, broken edit refused, restore, broken sibling, new wallpaper categories in the open menu, an edited menu string, forced reloads (no memory growth, one perf-log, no duplicate handler warnings).
 - The very first load of the host (updating from 1.20 or older, or `omarchy plugin enable`) still needs one `omarchy-restart-shell`, because the running shell holds the old `BarWidget.qml` in memory.
+
+## More combos (v1.25.0)
+
+Starter combos 32-73 pair each of the 42 new wallpaper scenes with existing or new Screen, Color, cursor, window and frame pieces; every id was checked against the files, and `bin/shader-check` passes. Wallpaper categories come from the `// category:` headers, so no `Core.qml` change. Not yet viewed on a live desktop.

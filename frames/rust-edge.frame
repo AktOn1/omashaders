@@ -1,0 +1,12 @@
+# category: Border
+# desc: Weathered copper border in rust and ochre with a low dusty shadow
+rounding=5
+border_size=2
+border_colors=d2693cff,8a3a1cff
+border_angle=45
+border_inactive=5a342666
+shadow_range=34
+shadow_power=3
+shadow_color=40180899
+shadow_offset=0,6
+shadow_inactive=00000055

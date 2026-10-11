@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Bioluminescent teal and violet border with a soft green spore halo
+rounding=16
+border_size=2
+border_colors=39ffc2ff,9a5cffff
+border_angle=120
+border_inactive=2a665a66
+shadow_range=52
+shadow_power=2
+shadow_color=2fe6a888
+shadow_inactive=00000000

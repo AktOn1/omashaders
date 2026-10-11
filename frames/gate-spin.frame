@@ -1,0 +1,11 @@
+# category: Spin
+# desc: A ring of molten gold and violet light slowly circling the window, like matter around a black hole
+rounding=12
+border_size=2
+border_colors=ffc24aff,7a4cffff,ffc24aff,2a1a6aff
+border_angle=0
+spin=18
+shadow_range=44
+shadow_power=3
+shadow_color=7a4cff99
+shadow_inactive=00000000

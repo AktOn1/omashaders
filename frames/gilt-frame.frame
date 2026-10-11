@@ -1,0 +1,12 @@
+# category: Border
+# desc: Antique gilt picture frame: a warm gold border, slightly rounded, with a soft green-brown shadow
+rounding=3
+border_size=4
+border_colors=e6c46aff,b8923aff,f3dd9bff
+border_angle=45
+border_inactive=a8894a66
+shadow_range=34
+shadow_power=3
+shadow_color=2a3a2288
+shadow_offset=0,8
+shadow_inactive=2a3a2244

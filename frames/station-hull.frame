@@ -1,0 +1,11 @@
+# category: Border
+# desc: Pale hull-plate border, thin and squared with a cold blue ambient glow, like a station viewport frame
+rounding=4
+border_size=2
+border_colors=d8e4f2ff,8fa6c4ff
+border_angle=90
+border_inactive=45526088
+shadow_range=30
+shadow_power=3
+shadow_color=4a78c066
+shadow_inactive=00000000

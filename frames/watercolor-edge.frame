@@ -1,0 +1,12 @@
+# category: Border
+# desc: Thin rose-to-ochre border like a wash that ran to the edge of the paper, with a faint warm shadow
+rounding=4
+border_size=2
+border_colors=e9a3b6ff,f0c987ff
+border_angle=60
+border_inactive=d9cfc066
+shadow_range=26
+shadow_power=3
+shadow_color=7a4a3a55
+shadow_offset=0,5
+shadow_inactive=7a4a3a33

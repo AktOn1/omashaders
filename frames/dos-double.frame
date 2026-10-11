@@ -1,0 +1,12 @@
+# category: Border
+# desc: Square text-mode frame: a hard light-cyan border with an offset black drop shadow, dim grey when unfocused
+rounding=0
+border_size=3
+border_colors=55ffffff
+border_inactive=555577ff
+shadow_range=1
+shadow_power=1
+shadow_color=000000cc
+shadow_inactive=00000088
+shadow_offset=8,8
+shadow_sharp=1

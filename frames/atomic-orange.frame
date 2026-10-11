@@ -1,0 +1,12 @@
+# category: Border
+# desc: Chunky rounded space-age border in tangerine and cream with a soft warm shadow
+rounding=18
+border_size=4
+border_colors=ff8a2bff,fff1d0ff
+border_angle=45
+border_inactive=c9a87c88
+shadow_range=26
+shadow_power=3
+shadow_color=5a2a0a66
+shadow_offset=0,5
+shadow_inactive=00000044

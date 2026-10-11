@@ -1,0 +1,10 @@
+# category: Glow
+# desc: Sunny yellow-to-coral border with a warm golden glow
+rounding=14
+border_size=2
+border_colors=ffd23fff,ff9a5cff,ff6f91ff
+border_angle=45
+shadow_range=44
+shadow_power=2
+shadow_color=ffb83f77
+shadow_inactive=00000000

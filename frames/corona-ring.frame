@@ -1,0 +1,11 @@
+# category: Glow
+# desc: White-gold to ember border with a deep orange solar glow
+rounding=10
+border_size=2
+border_colors=fff2b0ff,ff9a1fff,ff3d0fff
+border_angle=30
+border_inactive=6a2a1066
+shadow_range=54
+shadow_power=2
+shadow_color=ff6a1acc
+shadow_inactive=00000000

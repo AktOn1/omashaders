@@ -1,0 +1,12 @@
+# category: Border
+# desc: Square wooden blackboard frame: a thick brown wood border and a soft dark shadow
+rounding=0
+border_size=6
+border_colors=a8763aff,7a5126ff,b98446ff
+border_angle=0
+border_inactive=6b4a2899
+shadow_range=22
+shadow_power=3
+shadow_color=000000aa
+shadow_offset=0,6
+shadow_inactive=00000055

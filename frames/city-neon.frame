@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Magenta to cyan sign-tube border over a deep violet glow, like a neon shopfront in the rain
+rounding=6
+border_size=2
+border_colors=ff2f9aff,38e1ffff
+border_angle=60
+border_inactive=5a2a6a66
+shadow_range=44
+shadow_power=3
+shadow_color=b02fd0aa
+shadow_inactive=00000000

@@ -1,0 +1,12 @@
+# category: Shadow
+# desc: Square window with a black keyline and a hard red block shadow, in the Bauhaus primary-colour manner
+rounding=0
+border_size=2
+border_colors=151515ff,151515ff
+border_inactive=15151588
+shadow_range=2
+shadow_power=1
+shadow_sharp=1
+shadow_color=d62828ff
+shadow_offset=10,10
+shadow_inactive=d6282866

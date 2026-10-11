@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Amber neon tube border with a warm orange glow, like a bar sign
+rounding=10
+border_size=2
+border_colors=ffb347ff,ff6a3aff
+border_angle=45
+border_inactive=ff8a3a33
+shadow_range=38
+shadow_power=3
+shadow_color=ff7a2ecc
+shadow_inactive=00000000

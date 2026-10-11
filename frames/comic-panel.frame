@@ -1,0 +1,12 @@
+# category: Border
+# desc: Thick black comic-panel border with a hard black drop shadow
+rounding=0
+border_size=4
+border_colors=111111ff,111111ff
+border_inactive=111111aa
+shadow_range=2
+shadow_power=1
+shadow_sharp=1
+shadow_color=111111ee
+shadow_offset=8,8
+shadow_inactive=11111166

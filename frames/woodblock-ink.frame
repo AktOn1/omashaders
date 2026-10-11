@@ -1,0 +1,13 @@
+# category: Border
+# desc: Square indigo ink border with a hard dark-blue offset, like a woodblock print keyline
+rounding=0
+border_size=3
+border_colors=1f3a6bff,2e5a9aff
+border_angle=45
+border_inactive=1f3a6b66
+shadow_range=2
+shadow_power=1
+shadow_sharp=1
+shadow_color=0d1b3acc
+shadow_offset=6,6
+shadow_inactive=0d1b3a66

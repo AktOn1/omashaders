@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Hot pink to sunset orange border with a magenta underglow, synthwave style
+rounding=8
+border_size=3
+border_colors=ff2e97ff,ff8a2bff,ffe14dff
+border_angle=90
+border_inactive=6a2a6a66
+shadow_range=48
+shadow_power=3
+shadow_color=ff2e97aa
+shadow_offset=0,6
+shadow_inactive=00000000

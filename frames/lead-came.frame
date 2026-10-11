@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Dark lead border with a ruby-and-sapphire glow, like light leaking round a cathedral pane
+rounding=2
+border_size=3
+border_colors=2a2a33ff,3b3b47ff
+border_angle=45
+border_inactive=2a2a3399
+shadow_range=40
+shadow_power=3
+shadow_color=d9304a66
+shadow_inactive=00000000

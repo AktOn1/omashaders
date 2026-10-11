@@ -1,0 +1,10 @@
+# category: Border
+# desc: Thin slate-blue line with a deep blue shadow, quiet as a rainy evening
+rounding=10
+border_size=1
+border_colors=7a93c8cc
+border_inactive=4a5f9040
+shadow_range=40
+shadow_power=3
+shadow_color=0a1640aa
+shadow_inactive=00000000

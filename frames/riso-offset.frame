@@ -1,0 +1,12 @@
+# category: Shadow
+# desc: Misregistered two-colour print: a blue keyline and a hard pink shadow shifted off to one side
+rounding=2
+border_size=2
+border_colors=2f5fd0ff,2f5fd0ff
+border_inactive=2f5fd088
+shadow_range=2
+shadow_power=1
+shadow_sharp=1
+shadow_color=ff4f9aff
+shadow_offset=7,5
+shadow_inactive=ff4f9a66
