@@ -102,3 +102,8 @@ Nothing in this plugin needs `omarchy-restart-shell` while you work on it, excep
 ## More combos (v1.25.0)
 
 Starter combos 32-73 pair each of the 42 new wallpaper scenes with existing or new Screen, Color, cursor, window and frame pieces; every id was checked against the files, and `bin/shader-check` passes. Wallpaper categories come from the `// category:` headers, so no `Core.qml` change. Not yet viewed on a live desktop.
+
+## Fifty-eight more combos (v1.26.0)
+
+Built in waves of about ten: starter combos 74 onward. Each combo has a new wallpaper scene (`// category:` group, so no `Core.qml` change) and new or reused Screen, Color, cursor, window and frame pieces; every id is checked against the files (`ls` of the piece folders, `.qsb` newer than `.frag`) and `bin/shader-check` passes. Not yet viewed on a live desktop.
+- Wave 1, group "Dark tales": Haunted Manor, Crypt Candles, Gothic Cathedral, Wolf Moon, Graveyard Mist, Blood Moon Castle, Witching Hour, Rooftop Noir, Ghost Ship, Pirate Cove (new window shader `stained-light`, cursors `ghost-wisp`, `bat-flutter`, `gold-coin`).

@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Wrought-iron border in near-black with a thin cold pale glow around it, like a gate in the moonlit fog
+rounding=2
+border_size=3
+border_colors=1b1d22ff,3a3f4aff,1b1d22ff
+border_angle=90
+border_inactive=1f2227aa
+shadow_range=38
+shadow_power=3
+shadow_color=a8c4d070
+shadow_offset=0,0
+shadow_inactive=00000000

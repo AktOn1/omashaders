@@ -1,0 +1,12 @@
+# category: Border
+# desc: Weathered grey stone border with a deep soft shadow, like a window cut into a crypt wall
+rounding=3
+border_size=4
+border_colors=8b8d8aff,5f6260ff,9a9c97ff
+border_angle=60
+border_inactive=55585877
+shadow_range=56
+shadow_power=2
+shadow_color=000000cc
+shadow_offset=0,10
+shadow_inactive=00000066

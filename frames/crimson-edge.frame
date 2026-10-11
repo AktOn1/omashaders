@@ -1,0 +1,12 @@
+# category: Border
+# desc: Thin dark crimson border with a soft red shadow underneath, like velvet in candlelight
+rounding=6
+border_size=2
+border_colors=9c1428ff,5a0a18ff
+border_angle=45
+border_inactive=4a121e66
+shadow_range=44
+shadow_power=3
+shadow_color=b01428aa
+shadow_offset=0,6
+shadow_inactive=40081455
