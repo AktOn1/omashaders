@@ -223,7 +223,7 @@ EOF
   wtype -k Escape; sleep 1
   # 4. import dialog
   # the code goes through the clipboard, which the dialog reads when it opens (typing it with wtype dropped or swapped letters under load)
-  printf '%s' "$code" | wl-copy; sleep 1; ipc importTheme; sleep 3
+  printf '%s' "$code" | wl-copy >/dev/null 2>&1; sleep 1; ipc importTheme; sleep 3
   shot theme-4-import
   wtype -k Return; wait_for 30 "grep -q 'VM Share' $st/themes"; sleep 2; shot theme-5-imported
   grep -q 'VM Share' "$st/themes" && ok "theme: import dialog saved the theme" || bad "theme: import dialog did not save 'VM Share'"
