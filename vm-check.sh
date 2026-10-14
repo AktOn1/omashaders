@@ -221,9 +221,10 @@ EOF
   # 3. share dialog
   ipc shareTheme 1; sleep 4; shot theme-3-share
   wtype -k Escape; sleep 1
-  # 4. import dialog (a code is typed; the clipboard may be empty in the VM)
-  wl-copy --clear 2>/dev/null; ipc importTheme; sleep 3
-  wtype -d 25 "$code"; sleep 3; shot theme-4-import
+  # 4. import dialog
+  # the code goes through the clipboard, which the dialog reads when it opens (typing it with wtype dropped or swapped letters under load)
+  printf '%s' "$code" | wl-copy; sleep 1; ipc importTheme; sleep 3
+  shot theme-4-import
   wtype -k Return; wait_for 30 "grep -q 'VM Share' $st/themes"; sleep 2; shot theme-5-imported
   grep -q 'VM Share' "$st/themes" && ok "theme: import dialog saved the theme" || bad "theme: import dialog did not save 'VM Share'"
   wtype -k Escape; sleep 1; wtype -k Escape; sleep 1
