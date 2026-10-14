@@ -112,12 +112,23 @@ Item {
   property bool rich: false
   property int richRounds: 2
   property bool provImage: true
+  property var provEndpoint: ({ url: "", key_env: "", key_file: "" })
   property bool showSheet: true
   property bool inventReady: true
   property string inventHint: ""
   property string testMsg: ""
   property bool testBad: false
   property var est: null
+  readonly property int spritesExtra: sprites ? 260 : 70
+  // Painted sprites (optional, off by default): eight pictures made by the user's OWN image model for a new wallpaper effect (bin/aisprites.py, bin/imgprov.py).
+  // Nothing goes to the image model before "Create theme" is pressed with the box ticked. The tick is not remembered between openings; the picked model is.
+  property bool sprites: false
+  property var imgRows: []
+  property string imgProv: "comfyui"
+  property var imgChoice: ({ comfy: { url: "", checkpoint: "" }, endpoint: { url: "", model: "", key_env: "", key_file: "" }, custom: "" })
+  property var imgCheckpoints: []
+  property string imgMsg: ""
+  property bool imgBad: false
   // the chat: the first answer makes the theme (chatActive), nothing is in the list until it is saved
   property bool settingsOpen: true
   readonly property var partKeys: [
@@ -189,7 +200,8 @@ Item {
       jobId = core.dlgJob !== "" && core.jobById(core.dlgJob) ? core.dlgJob : bestJob()
       if (jobId === "") restoreForm(core.jobsForm)
       else { settingsOpen = false; showDraft() }
-      core.refreshAi(); loadProviders(); focusTimer.restart()
+      sprites = false; imgMsg = ""; imgCheckpoints = []
+      core.refreshAi(); loadProviders(); loadImg(); focusTimer.restart()
     }
     else if (mode === "share") {
       var n = number
@@ -260,7 +272,7 @@ Item {
   function formState() {
     var parts = {}
     for (var i = 0; i < partKeys.length; i++) { var f = partFields.itemAt(i); if (f && f.text.trim() !== "") parts[partKeys[i].key] = f.text.trim() }
-    return { text: promptField.text, genre: genreField.text, rounds: richRounds, useCurrent: useCurrent, subtle: subtle, parts: parts, wh: whId }
+    return { text: promptField.text, genre: genreField.text, rounds: richRounds, useCurrent: useCurrent, subtle: subtle, parts: parts, wh: whId, sprites: sprites }
   }
   function saveForm() {
     var f = formState()
@@ -272,7 +284,7 @@ Item {
     promptField.text = whId !== "" ? "" : String(f.text || "")
     genreField.text = String(f.genre || "")
     if (f.rounds !== undefined) richRounds = Math.max(0, Math.min(3, Number(f.rounds) || 0))
-    useCurrent = f.useCurrent === true; subtle = f.subtle === true
+    useCurrent = f.useCurrent === true; subtle = f.subtle === true; sprites = f.sprites === true
     var p = f.parts || ({})
     for (var i = 0; i < partKeys.length; i++) { var fld = partFields.itemAt(i); if (fld) fld.text = String(p[partKeys[i].key] || "") }
     refreshEstimate()
@@ -320,6 +332,11 @@ Item {
           td.provId = d.choice.provider
           td.provModel = d.choice.model
           if (d.choice.custom && customField.text === "") customField.text = d.choice.custom
+          td.provEndpoint = d.choice.endpoint || ({ url: "", key_env: "", key_file: "" })
+          if (!modelField.activeFocus) modelField.text = td.provModel
+          if (!epUrlField.activeFocus) epUrlField.text = td.provEndpoint.url
+          if (!epKeyEnvField.activeFocus) epKeyEnvField.text = td.provEndpoint.key_env
+          if (!epKeyFileField.activeFocus) epKeyFileField.text = td.provEndpoint.key_file
           var row = td.rowOf(td.provId)
           td.provStrong = !row || row.strong !== false
           td.inventReady = d.invent_ready !== false
@@ -367,6 +384,8 @@ Item {
     runUse(a)
   }
   function pickModel(m) { testMsg = ""; provModel = m; runUse(["--model", m]) }
+  function saveEndpoint() { runUse(["endpoint", "--url", epUrlField.text.trim(), "--key-env", epKeyEnvField.text.trim(), "--key-file", epKeyFileField.text.trim()]) }
+  function setCaps(seeing, strong) { testMsg = ""; runUse(["--can-see", seeing ? "1" : "0", "--strong", strong ? "1" : "0"]) }
   function saveCustom() { if (customField.text.trim() !== "") runUse(["custom", "--custom", customField.text.trim()]) }
   function setMode(m) {
     if (m !== "pick" && !inventReady) { say(inventHint, true); return }
@@ -396,6 +415,109 @@ Item {
     }
   }
 
+  // ------------------------------------------------------------ image model (for the painted sprites)
+  function loadImg() { if (!imgProc.running) imgProc.running = true }
+  Process {
+    id: imgProc
+    command: ["python3", td.core ? td.core.path("bin/ai-theme") : "ai-theme", "img", "providers", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim().split("\n").pop())
+          td.imgRows = d.providers
+          td.imgChoice = d.choice
+          td.imgProv = d.choice.provider
+          if (!imgUrlField.activeFocus) imgUrlField.text = d.choice.comfy.url
+          if (!imgEpUrlField.activeFocus) imgEpUrlField.text = d.choice.endpoint.url
+          if (!imgEpModelField.activeFocus) imgEpModelField.text = d.choice.endpoint.model
+          if (!imgEpKeyEnvField.activeFocus) imgEpKeyEnvField.text = d.choice.endpoint.key_env
+          if (!imgEpKeyFileField.activeFocus) imgEpKeyFileField.text = d.choice.endpoint.key_file
+          if (!imgCmdField.activeFocus) imgCmdField.text = d.choice.custom
+        } catch (e) { td.imgMsg = "Could not read the image model settings."; td.imgBad = true }
+      }
+    }
+  }
+  readonly property var imgOptions: imgRows.map(function(r) { return { value: r.id, label: r.label } })
+  readonly property var ckptOptions: {
+    var o = imgCheckpoints.map(function(n) { return { value: n, label: n } })
+    var cur = imgChoice && imgChoice.comfy ? imgChoice.comfy.checkpoint : ""
+    if (cur !== "" && imgCheckpoints.indexOf(cur) < 0) o.unshift({ value: cur, label: cur })
+    return o
+  }
+  property var imgQueue: []
+  function runImgUse(args, thenTest) { imgQueue.push({ a: args, t: !!thenTest }); pumpImg() }
+  function pumpImg() {
+    if (imgUseProc.running || imgQueue.length === 0) return
+    var j = imgQueue.shift()
+    imgUseProc.cur = j
+    imgUseProc.command = ["python3", core.path("bin/ai-theme"), "img", "use"].concat(j.a).concat(["--json"])
+    imgUseProc.running = true
+  }
+  Process {
+    id: imgUseProc
+    property var cur: ({ t: false })
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: {
+      if (td.imgQueue.length > 0) { td.pumpImg(); return }
+      td.loadImg()
+      if (cur.t) td.startImgTest()
+    }
+  }
+  function pickImgProvider(id) { imgMsg = ""; imgProv = id; runImgUse([id]) }
+  function imgFieldArgs() {
+    return ["--url", imgUrlField.text.trim(), "--endpoint-url", imgEpUrlField.text.trim(), "--model", imgEpModelField.text.trim(),
+            "--key-env", imgEpKeyEnvField.text.trim(), "--key-file", imgEpKeyFileField.text.trim(), "--command", imgCmdField.text.trim()]
+  }
+  function saveImg() { runImgUse(imgFieldArgs()) }
+  function pickCheckpoint(n) { imgMsg = ""; runImgUse(["--checkpoint", n]) }
+  function setSprites(on) {
+    sprites = on
+    if (on) { loadImg(); if (imgProv === "comfyui" && imgCheckpoints.length === 0) listCheckpoints() }
+    refreshEstimate()
+  }
+  function listCheckpoints() { if (!ckptProc.running) ckptProc.running = true }
+  Process {
+    id: ckptProc
+    command: ["python3", td.core ? td.core.path("bin/ai-theme") : "ai-theme", "img", "checkpoints", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim().split("\n").pop())
+          if (d.ok) {
+            td.imgCheckpoints = d.checkpoints
+            var cur = td.imgChoice && td.imgChoice.comfy ? td.imgChoice.comfy.checkpoint : ""
+            if (d.checkpoints.length > 0 && d.checkpoints.indexOf(cur) < 0) td.pickCheckpoint(d.checkpoints[0])
+          }
+        } catch (e) { }
+      }
+    }
+  }
+  function startImgTest() {
+    if (imgTestProc.running) return
+    imgMsg = "Testing the connection to your image model…"; imgBad = false
+    imgTestProc.running = true
+  }
+  // saves what is typed first, then tests (so the test is of what the boxes say)
+  function testImgConnection() { runImgUse(imgFieldArgs(), true) }
+  Process {
+    id: imgTestProc
+    command: ["python3", td.core ? td.core.path("bin/ai-theme") : "ai-theme", "img", "test", "--json"]
+    stdout: StdioCollector { id: imgTestOut; waitForEnd: true }
+    onExited: function(code) {
+      var d = null
+      try { d = JSON.parse(String(imgTestOut.text).trim().split("\n").pop()) } catch (e) { d = null }
+      td.imgBad = !(d && d.ok)
+      td.imgMsg = d ? (d.ok ? String(d.message || "Connection works.") : "Test failed: " + (d.error || "no answer")) : "Test failed: no answer."
+      if (d && d.ok && d.checkpoints) {
+        td.imgCheckpoints = d.checkpoints
+        var cur = td.imgChoice && td.imgChoice.comfy ? td.imgChoice.comfy.checkpoint : ""
+        if (d.checkpoints.length > 0 && d.checkpoints.indexOf(cur) < 0) td.pickCheckpoint(d.checkpoints[0])
+      }
+    }
+  }
+
   // ------------------------------------------------------------ estimate
   function partArgs() {
     var a = []
@@ -419,6 +541,7 @@ Item {
     var c = ["python3", core.path("bin/ai-theme"), "estimate", promptField.text.trim()].concat(baseArgs())
     if (invent) c = c.concat(partArgs())
     if (rich) c = c.concat(["--rich", "--rounds", String(richRounds)])
+    if (invent && sprites) c.push("--sprites")
     c.push("--json")
     estProc.command = c
     estProc.running = true
@@ -475,6 +598,7 @@ Item {
     }
     else if (invent) c.push("--invent")
     else if (subtle) c.push("--subtle")
+    if (invent && sprites) c.push("--sprites")
     c = c.concat(parts)
     var form = formState()
     form.surprise = sur
@@ -818,12 +942,12 @@ Item {
     open: td.open
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(760))
-    contentHeight: panel.fittedContentHeight(td.mode === "ai" ? (td.job !== null ? (td.chatActive ? (td.card ? Style.space(td.settingsOpen ? 980 : 860) : (td.settingsOpen ? Style.space(780) : Style.space(600))) : Style.space(td.settingsOpen ? 700 : 440)) : (td.rich ? Style.space(780) : td.invent ? Style.space(700) : Style.space(520))) : (td.mode === "save" ? Style.space(170) : Style.space(td.mode === "share" ? 400 : 380)))
+    contentHeight: panel.fittedContentHeight(td.mode === "ai" ? (td.job !== null ? (td.chatActive ? (td.card ? Style.space(td.settingsOpen ? 980 : 860) : (td.settingsOpen ? Style.space(780) : Style.space(600))) : Style.space(td.settingsOpen ? 700 : 440)) : (td.rich ? Style.space(780 + td.spritesExtra) : td.invent ? Style.space(700 + td.spritesExtra) : Style.space(520 + td.spritesExtra))) : (td.mode === "save" ? Style.space(170) : Style.space(td.mode === "share" ? 400 : 380)))
 
     PanelKeyCatcher {
       id: keys
       anchors.fill: parent
-      blocked: saveField.activeFocus || promptField.activeFocus || genreField.activeFocus || codeField.activeFocus || customField.activeFocus || td.anyPartFocus || provDrop.popupOpen || modelDrop.popupOpen
+      blocked: saveField.activeFocus || promptField.activeFocus || genreField.activeFocus || codeField.activeFocus || customField.activeFocus || td.anyPartFocus || provDrop.popupOpen || modelDrop.popupOpen || imgUrlField.activeFocus || imgEpUrlField.activeFocus || imgEpModelField.activeFocus || imgEpKeyEnvField.activeFocus || imgEpKeyFileField.activeFocus || imgCmdField.activeFocus || imgProvDrop.popupOpen || imgCkptDrop.popupOpen
       onMoveRequested: function(dx, dy) {}
       onActivateRequested: {
         if (td.mode === "ai") { if (td.chatActive) td.saveChat(); else if (td.formMode) td.sendTurn(false); else if (!td.busy) td.retryJob() }
@@ -933,6 +1057,85 @@ Item {
             }
           }
           TextField {
+            id: modelField
+            visible: td.provId !== "custom"
+            width: col.width
+            height: Style.space(32)
+            verticalPadding: Style.space(3)
+            placeholderText: td.provId === "endpoint" ? "Model name the server expects, e.g. anthropic/claude-3.5-sonnet or llama3.1" : "Model (optional): empty = this tool's own default model"
+            foreground: td.fg
+            font.family: td.font
+            font.pixelSize: Style.font.body
+            maximumLength: 80
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { keys.forceActiveFocus(); event.accepted = true }
+            }
+            onEditingFinished: if (text.trim() !== td.provModel) td.pickModel(text.trim())
+          }
+          Column {
+            visible: td.provId === "endpoint"
+            width: col.width
+            spacing: Style.space(6)
+            TextField {
+              id: epUrlField
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "Server address, e.g. https://openrouter.ai/api/v1 or http://localhost:1234/v1 (LM Studio)"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 200
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveEndpoint()
+            }
+            Row {
+              spacing: Style.space(8)
+              TextField {
+                id: epKeyEnvField
+                width: (col.width - Style.space(8)) / 2
+                height: Style.space(32)
+                verticalPadding: Style.space(3)
+                placeholderText: "Key from this environment variable (name only)"
+                foreground: td.fg
+                font.family: td.font
+                font.pixelSize: Style.font.body
+                maximumLength: 60
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                  else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { keys.forceActiveFocus(); event.accepted = true }
+                }
+                onEditingFinished: td.saveEndpoint()
+              }
+              TextField {
+                id: epKeyFileField
+                width: (col.width - Style.space(8)) / 2
+                height: Style.space(32)
+                verticalPadding: Style.space(3)
+                placeholderText: "or from a private file (chmod 600), e.g. ~/.config/my-ai-key"
+                foreground: td.fg
+                font.family: td.font
+                font.pixelSize: Style.font.body
+                maximumLength: 200
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                  else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { keys.forceActiveFocus(); event.accepted = true }
+                }
+                onEditingFinished: td.saveEndpoint()
+              }
+            }
+          }
+          Row {
+            visible: td.provId === "custom" || td.provId === "endpoint"
+            spacing: Style.space(8)
+            Btn { toggle: true; checked: td.provImage; label: (td.provImage ? "󰄲 " : "󰄱 ") + "This AI can look at pictures"; onClicked: td.setCaps(!td.provImage, td.provStrong) }
+            Btn { toggle: true; checked: td.provStrong; label: (td.provStrong ? "󰄲 " : "󰄱 ") + "Strong enough to invent effects"; onClicked: td.setCaps(td.provImage, !td.provStrong) }
+          }
+          TextField {
             id: customField
             visible: td.provId === "custom"
             width: col.width
@@ -987,6 +1190,190 @@ Item {
             Btn {
               label: "Review rounds: " + td.richRounds
               onClicked: { td.richRounds = (td.richRounds + 1) % 4; td.refreshEstimate() }
+            }
+          }
+          // Painted sprites: off by default; the image model is the user's own (ComfyUI, an OpenAI-compatible images endpoint or a command)
+          Column {
+            visible: td.formMode
+            width: col.width
+            spacing: Style.space(6)
+            Btn { toggle: true; checked: td.sprites; label: (td.sprites ? "󰄲 " : "󰄱 ") + "Painted sprites (uses your image model)"; onClicked: td.setSprites(!td.sprites) }
+            Text {
+              visible: !td.sprites || !td.invent
+              width: col.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: td.sprites && !td.invent
+                    ? "Pick existing effects makes no new effect, so nothing would be painted. Choose Invent to use this."
+                    : "Optional. A new wallpaper effect gets eight small pictures painted by an image model on your computer or account. Off by default."
+              opacity: 0.8
+              color: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body * 0.9
+            }
+            Column {
+              visible: td.sprites
+              width: col.width
+              spacing: Style.space(6)
+              Row {
+                spacing: Style.space(8)
+                Column {
+                  spacing: Style.space(2)
+                  Text { textFormat: Text.PlainText; text: "Image model"; opacity: 0.7; color: td.fg; font.family: td.font; font.pixelSize: Style.font.caption }
+                  Dropdown {
+                    id: imgProvDrop
+                    showLabel: false
+                    width: Style.space(250)
+                    foreground: td.fg
+                    fontFamily: td.font
+                    options: td.imgOptions
+                    value: td.imgProv
+                    onChanged: function(v) { td.pickImgProvider(v) }
+                  }
+                }
+                Column {
+                  visible: td.imgProv === "comfyui"
+                  spacing: Style.space(2)
+                  Text { textFormat: Text.PlainText; text: "Checkpoint (from your ComfyUI)"; opacity: 0.7; color: td.fg; font.family: td.font; font.pixelSize: Style.font.caption }
+                  Dropdown {
+                    id: imgCkptDrop
+                    showLabel: false
+                    width: Style.space(300)
+                    foreground: td.fg
+                    fontFamily: td.font
+                    options: td.ckptOptions
+                    value: td.imgChoice && td.imgChoice.comfy ? td.imgChoice.comfy.checkpoint : ""
+                    onChanged: function(v) { td.pickCheckpoint(v) }
+                  }
+                }
+                Column {
+                  spacing: Style.space(2)
+                  Text { textFormat: Text.PlainText; text: " "; font.pixelSize: Style.font.caption }
+                  Btn { label: "Test connection"; onClicked: td.testImgConnection() }
+                }
+              }
+            TextField {
+              id: imgUrlField
+              visible: td.imgProv === "comfyui"
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "ComfyUI address, e.g. http://127.0.0.1:8188"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 200
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveImg(); keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveImg()
+            }
+            TextField {
+              id: imgEpUrlField
+              visible: td.imgProv === "endpoint"
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "Images server address, e.g. https://api.openai.com/v1 or http://localhost:8080/v1"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 200
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveImg(); keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveImg()
+            }
+            TextField {
+              id: imgEpModelField
+              visible: td.imgProv === "endpoint"
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "Model name the server expects, e.g. gpt-image-1 or dall-e-3"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 80
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveImg(); keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveImg()
+            }
+            TextField {
+              id: imgEpKeyEnvField
+              visible: td.imgProv === "endpoint"
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "Key from this environment variable (name only)"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 60
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveImg(); keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveImg()
+            }
+            TextField {
+              id: imgEpKeyFileField
+              visible: td.imgProv === "endpoint"
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "or from a private file (chmod 600), e.g. ~/.config/my-image-key"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 200
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveImg(); keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveImg()
+            }
+            TextField {
+              id: imgCmdField
+              visible: td.imgProv === "custom"
+              width: col.width
+              height: Style.space(32)
+              verticalPadding: Style.space(3)
+              placeholderText: "Custom command that writes the picture to {out}, e.g. my-image-tool --prompt {prompt} --out {out}"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body
+              maximumLength: 300
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveImg(); keys.forceActiveFocus(); event.accepted = true }
+              }
+              onEditingFinished: td.saveImg()
+            }
+              Text {
+                visible: td.imgMsg !== ""
+                width: col.width
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                text: td.imgMsg
+                color: td.imgBad ? "#ff8a80" : td.fg
+                font.family: td.font
+                font.pixelSize: Style.font.body * 0.95
+              }
+              Text {
+                width: col.width
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                text: "When you press Create, eight short sprite descriptions (for example “a glowing paper lantern”) go to this image model, one picture each. Only those descriptions are sent: your wallpaper and the words you typed are not. If the image model does not answer, the theme is still made, without sprites."
+                opacity: 0.8
+                color: td.fg
+                font.family: td.font
+                font.pixelSize: Style.font.body * 0.9
+              }
             }
           }
           Text {

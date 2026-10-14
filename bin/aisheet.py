@@ -71,8 +71,8 @@ def mock_window(path):
     return im
 
 
-def run_render(frag, base_png, out_png, uniforms=None, alpha=False, t=TA):
-    dt, err = G.render(frag, base_png, out_png, uniforms, alpha=alpha, t=t, budget=BUDGET)
+def run_render(frag, base_png, out_png, uniforms=None, alpha=False, t=TA, sprites=""):
+    dt, err = G.render(frag, base_png, out_png, uniforms, alpha=alpha, t=t, budget=BUDGET, sprites=sprites)
     if err:
         raise RuntimeError(err[:300])
     return dt
@@ -103,7 +103,7 @@ def render_wall(piece, base_png, tmp, t, m, tag):
     open(frag, "w").write(piece["built"]["es"])
     out = os.path.join(tmp, "wall-%s.png" % tag)
     uni = {"mouse": "%d,%d" % (m[0] * G.W, m[1] * G.H), "res": "%d,%d" % (G.W, G.H), "imgSize": "%d,%d" % (G.W, G.H), "time": str(t)}
-    run_render(frag, base_png, out, uni, t=t)
+    run_render(frag, base_png, out, uni, t=t, sprites=piece.get("atlas") or "")   # piece["atlas"]: the painted sprites of this effect, when it has them
     base = np.asarray(Image.open(base_png).convert("RGB"), dtype=np.float32) / 255.0
     ren = np.asarray(Image.open(out).convert("RGB"), dtype=np.float32) / 255.0
     k = piece["start"] / 100.0
@@ -217,7 +217,7 @@ def jpeg_bytes(im, q=82):
 
 
 def build(pieces, image, out_dir, progress=lambda m: None):
-    """pieces = {slot: {"built", "start", "settings"}} for the pieces that passed the gate.
+    """pieces = {slot: {"built", "start", "settings", "atlas" (a wallpaper effect with painted sprites)}} for the pieces that passed the gate.
     Returns {"sheet": path of the whole sheet, "images": [JPEG bytes of the two sheets], "whole": JPEG bytes of both, "contents": [[slots on sheet 1], [slots on sheet 2]], "failed": {slot: reason}}"""
     from PIL import Image
     os.makedirs(out_dir, exist_ok=True)

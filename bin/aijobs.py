@@ -210,6 +210,8 @@ def estimate_steps(mode, argv, follow):
         except (ValueError, IndexError):
             r = 2
         n += 3 * max(0, min(3, r))
+    if "--sprites" in argv and not follow:
+        n += 9   # eight painted sprites and the check after them
     return max(2, n // 2) if follow else n
 
 

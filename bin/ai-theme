@@ -3,7 +3,10 @@
 
   ai-theme providers [--json]             the AIs installed on this machine (+ Custom command), models, the remembered choice
   ai-theme use PROVIDER [--model M] [--custom CMD] [--mode pick|invent]
-                                          remember the choice (claude codex gemini opencode ollama custom)
+                                          remember the choice (claude codex gemini opencode ollama endpoint custom); M is any model id, empty = the tool's default
+  ai-theme use endpoint --url URL --model M [--key-env VAR | --key-file PATH]
+                                          an OpenAI-compatible server (OpenRouter, LM Studio, llama.cpp, vLLM, Ollama /v1); the key is read from VAR or a private file, never stored
+  ai-theme use --can-see 0|1 --strong 0|1  tell it what a Custom command / endpoint model can do
   ai-theme test [--json]                  "Test connection": a tiny real round trip with the remembered choice
   ai-theme check [--json]                 is the chosen AI available? (nothing is sent)
   ai-theme estimate [WORDS] [--invent|--rich] [--rounds N] [--part KEY=TEXT] [--current|--wallhaven ID|--picture FILE] [--json]
@@ -29,6 +32,12 @@
                                           finished theme waits as a draft (save / discard / change), a killed one shows as interrupted
                                           (retry). Two at a time. See bin/aijobs.py.
   ai-theme keep ID...                     keep generated effects          ai-theme discard [--theme LINE] ID...   delete generated effects (and that theme line)
+  ai-theme make/chat turn/job start ... --sprites
+                                          PAINTED SPRITES (Quick and Rich): the new wallpaper effect also gets eight sprites painted by YOUR image model
+                                          (bin/aisprites.py); only the sprite prompts go to it, never your picture. A failure makes the theme without sprites.
+  ai-theme img providers|use|checkpoints|test [--json]
+                                          the image model for sprites: ComfyUI (URL + checkpoint + optional workflow), an OpenAI-compatible images endpoint
+                                          or a custom command (bin/imgprov.py); `img test` is a free check, no picture is made
   ai-theme catalog                        print the catalog the AI is given in Pick mode (and its size)
   ai-theme selftest                       offline checks (no AI call, no network)
 
@@ -59,7 +68,7 @@ def availability():
 
 
 def parse_args(a):
-    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "keep_out": "", "picture": "", "words": [], "rest": []}
+    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "sprites": False, "keep_out": "", "picture": "", "words": [], "rest": []}
     it = iter(a)
     for x in it:
         if x == "--json":
@@ -80,6 +89,8 @@ def parse_args(a):
             o["rich"] = True
         elif x == "--surprise":
             o["surprise"] = True
+        elif x == "--sprites":
+            o["sprites"] = True
         elif x == "--rounds":
             try:
                 o["rounds"] = max(0, min(3, int(next(it, ""))))
@@ -135,7 +146,7 @@ def cmd_make(a):
         import airich
         path, wh = picture_for(o)
         res = airich.run(request, o["parts"], path, wh, ch, rounds=airich.DEFAULT_ROUNDS if o["rounds"] is None else o["rounds"], genre=o["genre"],
-                         surprise=o["surprise"], progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True), keep_out=o["keep_out"])
+                         surprise=o["surprise"], progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True), keep_out=o["keep_out"], sprites=o["sprites"])
         res.pop("rich_state", None)
         res.pop("clean", None)
         if o["json"]:
@@ -160,7 +171,7 @@ def cmd_make(a):
     if o["invent"]:
         import aiinvent
         path, wh = picture_for(o)
-        res = aiinvent.run(request, o["parts"], path, wh, ch, progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True), keep_out=o["keep_out"])
+        res = aiinvent.run(request, o["parts"], path, wh, ch, progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True), keep_out=o["keep_out"], sprites=o["sprites"])
         if o["json"]:
             print(json.dumps(res))
         else:
@@ -178,11 +189,13 @@ def cmd_make(a):
     jpg, facts = (picture_facts(path) if path else (None, ""))
     tags = wallhaven_tags(wh) if wh else []
     mode = "subtle" if o["subtle"] else "full"
-    img_ok = bool(jpg) and (P.info_of(ch["provider"]).get("image") or ch["provider"] == "custom")
+    img_ok = bool(jpg) and P.can_see(ch)
     prompt = user_prompt(cat, request, facts, tags, bool(img_ok), mode)
     text, usage = P.call(ch, guide_text(), prompt, jpg if img_ok else None)
     answer = extract_json(text)
     clean, notes = finish(answer, cat, wh, mode)
+    if o["sprites"]:
+        notes.append("Painted sprites: Pick existing uses ready-made effects, so nothing was painted and nothing was sent to your image model. Use Quick or Rich for painted sprites.")
     line, num, existed = L.save_theme(clean)
     note = T.sentence(answer.get("note"), 300)
     idea = T.sentence(answer.get("idea"), 300)
@@ -203,7 +216,7 @@ def cmd_make(a):
 def cmd_check(a):
     av = availability()
     ch = P.choice()
-    av = dict(av, provider=ch["provider"], model=ch["model"], strong=P.info_of(ch["provider"]).get("strong"))
+    av = dict(av, provider=ch["provider"], model=ch["model"], strong=P.is_strong(ch), image=P.can_see(ch))
     if "--json" in a:
         print(json.dumps(av))
     else:
@@ -217,6 +230,8 @@ def cmd_providers(a):
     for p in P.providers():
         rows.append({"id": p["id"], "label": p["label"], "strong": p["strong"], "image": p["image"], "parallel": p.get("parallel", False), "exe": p.get("exe_path", ""),
                      "models": [{"id": m, "label": l} for m, l in p["models"]], "default_model": p["default_model"]})
+        if p["id"] in ("custom", "endpoint"):
+            rows[-1].update(strong=P.is_strong(dict(ch, provider=p["id"])), image=P.can_see(dict(ch, provider=p["id"])))
     import aigen
     miss = aigen.render_ready()
     out = {"choice": ch, "providers": rows, "available": P.availability(ch)["available"], "invent_ready": miss == "", "invent_hint": miss}
@@ -230,12 +245,16 @@ def cmd_providers(a):
 
 def cmd_use(a):
     it = iter(a)
-    prov, kw = None, {}
+    prov, kw, ep, caps = None, {}, {}, {}
     for x in it:
         if x == "--model":
             kw["model"] = P.clean_model(next(it, ""))
         elif x == "--custom":
             kw["custom"] = next(it, "")
+        elif x in ("--url", "--key-env", "--key-file"):
+            ep[x[2:].replace("-", "_")] = next(it, "").strip()
+        elif x in ("--can-see", "--strong"):
+            caps["image" if x == "--can-see" else "strong"] = next(it, "") in ("1", "true", "yes")
         elif x == "--mode":
             m = next(it, "")
             if m not in ("pick", "invent", "rich"):
@@ -244,11 +263,17 @@ def cmd_use(a):
         elif x != "--json":
             prov = x
     if prov is not None:
-        if prov not in {p["id"] for p in P.PROVIDERS} | {"custom"}:
+        if prov not in {p["id"] for p in P.PROVIDERS} | {"custom", "endpoint"}:
             raise L.Bad("Unknown AI “%s”" % prov)
         kw["provider"] = prov
         if "model" not in kw:
-            kw["model"] = P.info_of(prov)["default_model"]
+            kw["model"] = (P.load_choice().get("models") or {}).get(prov, P.info_of(prov)["default_model"])
+    if "model" in kw:
+        kw["models"] = dict(P.load_choice().get("models") or {}, **{kw.get("provider") or P.choice()["provider"]: kw["model"]})
+    if ep:
+        kw["endpoint"] = dict(P.choice()["endpoint"], **ep)
+    if caps:
+        kw["caps"] = dict(P.choice()["caps"], **caps)
     d = P.save_choice(**kw)
     ch = P.choice()
     if "--json" in a:
@@ -277,14 +302,14 @@ def cmd_estimate(a):
     cat = L.catalog()
     if o["rich"]:
         import airich
-        e = airich.estimate(o["request"], path, ch, cat, airich.DEFAULT_ROUNDS if o["rounds"] is None else o["rounds"], o["genre"])
-        e["quick"] = aiinvent.estimate(o["request"], o["parts"], path, ch, cat)
+        e = airich.estimate(o["request"], path, ch, cat, airich.DEFAULT_ROUNDS if o["rounds"] is None else o["rounds"], o["genre"], o["sprites"])
+        e["quick"] = aiinvent.estimate(o["request"], o["parts"], path, ch, cat, o["sprites"])
         if "--json" in a:
             print(json.dumps(e))
         else:
             print(e["summary"] + (" (" + e["note"] + ")" if e["note"] else ""))
         return 0
-    e = aiinvent.estimate(o["request"], o["parts"], path, ch, cat)
+    e = aiinvent.estimate(o["request"], o["parts"], path, ch, cat, o["sprites"])
     if "--json" in a:
         print(json.dumps(e))
     else:
@@ -327,7 +352,7 @@ def cmd_chat(a):
     if sub == "turn":
         o = parse_args(rest)
         res = aichat.turn(o["request"], invent=o["invent"], wh=o["wh"], current=o["current"], new="--new" in rest, subtle=o["subtle"], parts=o["parts"],
-                          rich=o["rich"], rounds=o["rounds"], genre=o["genre"], surprise=o["surprise"],
+                          rich=o["rich"], rounds=o["rounds"], genre=o["genre"], surprise=o["surprise"], sprites=o["sprites"],
                           progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True))
     elif sub == "keep":
         name = rest[rest.index("--name") + 1] if "--name" in rest and rest.index("--name") + 1 < len(rest) else ""
@@ -387,6 +412,65 @@ def cmd_job(a):
         res = aijobs.start(o["request"], "rich" if o["rich"] else ("invent" if o["invent"] else "pick"), [x for x in rest if x != "--new"], form, est)
     print(json.dumps({"ok": True, "job": res}) if js else aijobs.line(res))
     return 0
+
+
+def cmd_img(a):
+    """the image model for painted sprites (bin/imgprov.py): providers | use | checkpoints | test"""
+    import imgprov as I
+    if not a or a[0] not in ("providers", "use", "checkpoints", "test"):
+        raise L.Bad("img needs providers, use, checkpoints or test")
+    sub, rest = a[0], list(a[1:])
+    js = "--json" in rest
+    try:
+        if sub == "providers":
+            out = {"ok": True, "choice": I.choice(), "providers": I.providers()}
+            if js:
+                print(json.dumps(out))
+            else:
+                ch = I.choice()
+                for p in out["providers"]:
+                    print("%s%-9s %s" % ("* " if p["id"] == ch["provider"] else "  ", p["id"], p["label"]))
+            return 0
+        if sub == "use":
+            kw, it, prov = {}, iter([x for x in rest if x != "--json"]), None
+            cur = I.choice()
+            comfy, ep = dict(cur["comfy"]), dict(cur["endpoint"])
+            for x in it:
+                if x in ("--url", "--checkpoint", "--workflow"):
+                    comfy[x[2:]] = next(it, "").strip()
+                elif x in ("--model", "--size", "--key-env", "--key-file"):
+                    ep[x[2:].replace("-", "_")] = next(it, "").strip()
+                elif x == "--endpoint-url":
+                    ep["url"] = next(it, "").strip()
+                elif x == "--command":
+                    kw["custom"] = next(it, "").strip()
+                else:
+                    prov = x
+            if prov is not None:
+                if prov not in {p["id"] for p in I.providers()}:
+                    raise L.Bad("Unknown image model “%s”: use comfyui, endpoint or custom" % prov)
+                kw["provider"] = prov
+            kw["comfy"], kw["endpoint"] = comfy, ep
+            I.save_choice(**kw)
+            ch = I.choice()
+            print(json.dumps({"ok": True, "choice": ch}) if js else "Image model: %s" % ch["provider"])
+            return 0
+        ch = I.choice()
+        if sub == "checkpoints":
+            names = I.checkpoints(ch)
+            print(json.dumps({"ok": True, "checkpoints": names}) if js else "\n".join(names))
+            return 0
+        msg = I.test(ch)
+        names = []
+        if ch["provider"] == "comfyui":
+            try:
+                names = I.checkpoints(ch)
+            except I.Bad:
+                pass
+        print(json.dumps({"ok": True, "message": msg, "checkpoints": names}) if js else msg)
+        return 0
+    except I.Bad as e:
+        raise L.Bad(str(e))
 
 
 def cmd_catalog(a):
@@ -520,6 +604,14 @@ def cmd_selftest(a):
         check(r2.returncode == 1 and "AI needed" in r2.stdout, "missing AI command gives the 'AI needed' message and no crash")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    r = subprocess.run([sys.executable, os.path.join(L.HERE, "aiprov_selftest.py")], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip()[-600:])
+    check(r.returncode == 0, "which AI is preselected, free-text models, OpenAI-compatible endpoint (local stand-in server)")
+    for st_name, st_what in (("imgprov_selftest.py", "image model for sprites: ComfyUI, OpenAI-compatible images endpoint, custom command, safety limits (local stand-in servers)"),
+                             ("aisprites_selftest.py", "painted sprites: cut-out, atlas checks, gate with sprites, install/delete, share codes, failure paths (stand-in image server)")):
+        r = subprocess.run([sys.executable, os.path.join(L.HERE, st_name)], capture_output=True, text=True)
+        print(r.stdout.strip() or r.stderr.strip()[-600:])
+        check(r.returncode == 0, st_what)
     r = subprocess.run([sys.executable, os.path.join(L.HERE, "aiinvent_selftest.py")], capture_output=True, text=True)
     print(r.stdout.strip() or r.stderr.strip()[-600:])
     check(r.returncode == 0, "provider picker and Invent flow (stub AIs, scratch state)")
@@ -559,6 +651,8 @@ def main():
             return cmd_chat(a[1:])
         if a[0] == "job":
             return cmd_job(a[1:])
+        if a[0] == "img":
+            return cmd_img(a[1:])
         if a[0] == "make":
             cmd_make(a[1:])
         elif a[0] == "catalog":

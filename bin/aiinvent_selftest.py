@@ -115,12 +115,12 @@ def run():
         r = cli(["providers", "--json"], e)
         d = json.loads(r.stdout)
         ids = [p["id"] for p in d["providers"]]
-        check("providers: only installed ones + custom", ids == ["claude", "codex", "custom"], str(ids))
-        check("providers: Claude is the default choice with a model", d["choice"]["provider"] == "claude" and d["choice"]["model"] == "sonnet", str(d["choice"]))
-        check("providers: Claude offers sonnet and opus", [m["id"] for m in d["providers"][0]["models"]] == ["sonnet", "opus"])
+        check("providers: only installed ones + custom", ids == ["claude", "codex", "endpoint", "custom"], str(ids))
+        check("providers: Claude is the default choice and uses its own default model", d["choice"]["provider"] == "claude" and d["choice"]["model"] == "", str(d["choice"]))
+        check("providers: Claude offers sonnet and opus", [m["id"] for m in d["providers"][0]["models"]] == ["", "sonnet", "opus"])
         e_all = env(path_names=("claude", "codex", "gemini", "opencode", "ollama"))
         ids = [p["id"] for p in json.loads(cli(["providers", "--json"], e_all).stdout)["providers"]]
-        check("providers: all five + custom when all are installed", ids == ["claude", "codex", "gemini", "opencode", "ollama", "custom"], str(ids))
+        check("providers: all five + custom when all are installed", ids == ["claude", "codex", "gemini", "opencode", "ollama", "endpoint", "custom"], str(ids))
         ol = [p for p in json.loads(cli(["providers", "--json"], e_all).stdout)["providers"] if p["id"] == "ollama"][0]
         check("providers: ollama models come from `ollama list`", [m["id"] for m in ol["models"]] == ["qwen2.5-coder:7b"], str(ol["models"]))
         r = cli(["check", "--json"], env(path_names=()))

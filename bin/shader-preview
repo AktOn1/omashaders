@@ -6,6 +6,7 @@ without touching the live desktop. Needs python-pillow and Mesa. Prints compile 
 Qt-style test twins (a fragment shader that reads qt_TexCoord0, as bin/aigen builds them for wallpaper and cursor effects) get
 the same vertex coordinates, the picture also as `src`, the wallpaper palette and the usual uniforms with test values;
 any uniform can be set with U_name=a,b,c; SP_ALPHA=1 keeps the alpha channel in the output PNG (cursor overlays).
+SP_SPRITES=ATLAS.png binds a sprite atlas on texture unit 2 as `sprites` (wallpaper effects with painted sprites, bin/aisprites.py).
 Window shaders (#version 320 es, from compose-shader --window) get the HyprWindowShade uniforms with test values
 (surface_size = image size, is_active 1, seed 0.37, mouse = image centre, window_box = the whole image at 100,100);
 override one with an environment variable, e.g. U_is_active=0 U_mouse=300,200 U_seed=0.8.
@@ -97,6 +98,19 @@ for pname, val in ((0x2800, 0x2601), (0x2801, 0x2601), (0x2802, 0x812F), (0x2803
     gl.glTexParameteri(0x0DE1, pname, val)
 gl.glUniform1i(gl.glGetUniformLocation(prog, b"tex"), 0)
 gl.glUniform1i(gl.glGetUniformLocation(prog, b"src"), 0)
+if os.environ.get("SP_SPRITES"):
+    sp = Image.open(os.environ["SP_SPRITES"]).convert("RGBA")
+    sloc = gl.glGetUniformLocation(prog, b"sprites")
+    if sloc >= 0:
+        gl.glActiveTexture(0x84C2)
+        stex = C.c_uint()
+        gl.glGenTextures(1, C.byref(stex))
+        gl.glBindTexture(0x0DE1, stex)
+        gl.glTexImage2D(0x0DE1, 0, 0x1908, sp.size[0], sp.size[1], 0, 0x1908, 0x1401, sp.tobytes())
+        for pname, val in ((0x2800, 0x2601), (0x2801, 0x2601), (0x2802, 0x812F), (0x2803, 0x812F)):
+            gl.glTexParameteri(0x0DE1, pname, val)
+        gl.glUniform1i(sloc, 2)
+        gl.glActiveTexture(0x84C0)
 loc = gl.glGetUniformLocation(prog, b"time")
 if loc >= 0:
     gl.glUniform1f(loc, t)

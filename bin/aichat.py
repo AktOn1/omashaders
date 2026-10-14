@@ -63,7 +63,7 @@ def pick_turn(request, s, path, wh, ch, cat):
     """Pick existing: the AI chooses among the effects that exist; a follow-up names only what changes"""
     jpg, facts = T.picture_facts(path) if path else (None, "")
     tags = T.wallhaven_tags(wh) if wh else []
-    img_ok = bool(jpg) and (P.info_of(ch["provider"]).get("image") or ch["provider"] == "custom") and not s["history"]
+    img_ok = bool(jpg) and P.can_see(ch) and not s["history"]
     if s["history"]:
         prompt = "\n".join([T.catalog_text(cat), "# MODE", T.FOLLOWUP_RULES, T.current_text(s["theme"], desc_of), T.history_text(s["history"]),
                             "# REQUEST", request.strip()] + (["# BASE PICTURE", facts] if facts else []) + ["\nAnswer with the one JSON object only."])
@@ -83,7 +83,7 @@ def pick_turn(request, s, path, wh, ch, cat):
             "usage": u, "new": [], "fell_back": []}
 
 
-def turn(message, invent=False, wh="", current=False, progress=lambda m: None, new=False, subtle=False, parts=None, rich=False, rounds=None, genre="", surprise=False):
+def turn(message, invent=False, wh="", current=False, progress=lambda m: None, new=False, subtle=False, parts=None, rich=False, rounds=None, genre="", surprise=False, sprites=False):
     """one chat turn -> result dict (line, changes, reply, ...); raises L.Bad for a plain-language failure"""
     message = " ".join(str(message or "").split())[:400]
     if new:
@@ -121,19 +121,21 @@ def turn(message, invent=False, wh="", current=False, progress=lambda m: None, n
         import airich
         if first:
             res = airich.run(message, (s.get("parts") or {}), s["path"], s["wh"], ch, rounds=airich.DEFAULT_ROUNDS if rounds is None else rounds,
-                             genre=genre, surprise=surprise, progress=progress, save=False)
+                             genre=genre, surprise=surprise, progress=progress, save=False, sprites=sprites)
         else:
             if not s.get("rich"):
                 raise L.Bad("This Rich chat has no theme yet")
             res = airich.follow(request, s["rich"], s["theme"], s["history"], s["path"], s["wh"], ch, progress=progress)
         s["rich"] = res["rich_state"]
-    elif s["mode"] == "invent":
+    elif s["mode"] == "invent":  # only the first turn paints sprites; a follow-up never sends anything to the image model
         import aiinvent
         chat = None if first else {"theme": s["theme"], "history": s["history"], "desc_of": desc_of}
-        res = aiinvent.run(request, (s.get("parts") or {}) if first else {}, s["path"], s["wh"], ch, progress=progress, chat=chat, save=False)
+        res = aiinvent.run(request, (s.get("parts") or {}) if first else {}, s["path"], s["wh"], ch, progress=progress, chat=chat, save=False, sprites=sprites and first)
     else:
         progress("Asking the AI…")
         res = pick_turn(request, s, s["path"], s["wh"], ch, cat)
+        if sprites and first:
+            res["notes"] = list(res.get("notes", [])) + ["Painted sprites: Pick existing uses ready-made effects, so nothing was painted and nothing was sent to your image model. Use Quick or Rich for painted sprites."]
     if first and "clean" not in res:
         raise L.Bad("The AI did not answer with a theme")
     clean = res["clean"]

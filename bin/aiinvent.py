@@ -17,6 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import aigen as G  # noqa: E402
+import aisprites as SP  # noqa: E402
+import imgprov as I  # noqa: E402
 import aiprov as P  # noqa: E402
 import aitheme as T  # noqa: E402
 import omslib as L  # noqa: E402
@@ -127,7 +129,7 @@ def directions_text(directions):
     return ("# DIRECTIONS FOR PARTS (orders from the user)\n" + "\n".join(rows)) if rows else ""
 
 
-def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None):
+def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None, sprites=False):
     p = [names_text(cat), "# MODE"]
     if chat:
         p += ["INVENT. " + T.FOLLOWUP_RULES + " Write a new effect only for a part the request needs something that does not exist yet for; "
@@ -150,11 +152,13 @@ def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None
             p.append(facts)
         if pal["main"]:
             p.append(palette_text(pal))
+    if sprites and not chat:
+        p.append("\n" + SP.builder_text(None))
     p.append("\nAnswer with the one JSON object only.")
     return "\n".join(p)
 
 
-def repair_prompt(failed, pal):
+def repair_prompt(failed, pal, sprites=False):
     rows = ["# REPAIR", "The safety gate refused these new effects. Fix every one so it passes; keep the idea and the colours. "
             "Answer with one JSON object that has ONLY these keys, each as {\"new\": {...}} in the same shape as before: %s." % ", ".join(failed)]
     for slot, f in failed.items():
@@ -165,6 +169,8 @@ def repair_prompt(failed, pal):
     t = palette_text(pal)
     if t:
         rows.append("\n" + t)
+    if sprites and "wallpaper" in failed:
+        rows.append("\n" + SP.builder_text(failed["wallpaper"].get("sprites")))
     return "\n".join(rows)
 
 
@@ -198,7 +204,7 @@ LIFE_TEXT = {
 }
 
 
-def life_prompt(gaps, parts, pal):
+def life_prompt(gaps, parts, pal, sprites=False):
     rows = ["# REPAIR (THE THEME DOES NOT LIVE)",
             "The theme you wrote would look like a plain tint. Fix it without changing the idea or the colours. Answer with one JSON object that has ONLY the keys you change, "
             "from: wallpaper, cursor. Each is an existing id from the lists, or {\"new\": {...}} in the same shape as before. Keep the playful, slight and soft feel."]
@@ -209,6 +215,8 @@ def life_prompt(gaps, parts, pal):
     t = palette_text(pal)
     if t:
         rows.append("\n" + t)
+    if sprites:
+        rows.append("\n" + SP.builder_text(None))
     return "\n".join(rows)
 
 
@@ -240,6 +248,8 @@ def part_of(slot, v):
         if not isinstance(n.get("code"), str) or not n["code"].strip():
             raise ValueError("%s: a new effect needs its \"code\" as one string" % slot)
         out["code"] = n["code"]
+        if slot == "wallpaper":
+            out["sprites"] = SP.clean_spec(n.get("sprites"))
     return ("new", out)
 
 
@@ -248,11 +258,12 @@ def gated_start(slot, p):
     return max(floor, min(100, max(5, p["start"])))
 
 
-def gate_part(slot, p, image, keep_out="", profile="quick"):
+def gate_part(slot, p, image, keep_out="", profile="quick", sprites=False, atlas=""):
+    """sprites: the user asked for painted sprites; a new wallpaper effect is then built with the sprite atlas bound (rendered with a stand-in atlas here)"""
     kind = SLOTS[slot][0]
     start = gated_start(slot, p)
     r = G.gate(kind, p["code"], p["name"], p["desc"] or p["name"], start, image, p.get("settings"),
-               os.path.join(keep_out, slot) if keep_out else "", profile=profile)
+               os.path.join(keep_out, slot) if keep_out else "", profile=profile, sprites=(sprites if slot == "wallpaper" else False), atlas=atlas)
     return r, start
 
 
@@ -282,14 +293,13 @@ def closest_existing(slot, p, cat):
 
 
 # ------------------------------------------------------------------ estimate
-def estimate(request, directions, path, ch=None, cat=None):
+def estimate(request, directions, path, ch=None, cat=None, sprites=False):
     ch = ch or P.choice()
     cat = cat or L.catalog()
     pal = palette(path) if path else {"main": [], "accents": []}
-    prompt = user_prompt(cat, request, directions, pal, "", [], bool(path))
+    prompt = user_prompt(cat, request, directions, pal, "", [], bool(path), None, sprites)
     system = T.invent_text()
-    info = P.info_of(ch["provider"])
-    img = IMAGE_TOKENS if (path and info.get("image")) else 0
+    img = IMAGE_TOKENS if (path and P.can_see(ch)) else 0
     t_in = (len(system) + len(prompt)) // 4 + img
     wanted = sum(1 for k in DIRECTION_KEYS if (directions or {}).get(k)) or 4
     t_out = 400 + OUT_TOKENS_PER_PART * max(wanted, 4)
@@ -302,6 +312,7 @@ def estimate(request, directions, path, ch=None, cat=None):
         est["note"] = "local: no cost, only time"
     else:
         est["note"] = "price depends on your plan"
+    est["sprite_images"] = SP.CELLS if sprites else 0
     est["pick_tokens_in"] = (len(T.guide_text()) + len(T.catalog_text(cat))) // 4 + img
     return est
 
@@ -316,10 +327,12 @@ def add_usage(total, u):
     total["estimated"] = total["estimated"] or bool(u.get("estimated"))
 
 
-def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="", chat=None, save=True):
+def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="", chat=None, save=True, sprites=False):
     """-> result dict (see the keys at the end); raises L.Bad for a plain-language failure.
     chat = {"theme": cleaned current theme, "history": [...], "desc_of": fn} makes this a follow-up turn: only what the answer names changes,
-    the theme is not saved (the chat does that on Keep) and the picture is not sent again (its palette still is)."""
+    the theme is not saved (the chat does that on Keep) and the picture is not sent again (its palette still is).
+    sprites = the user ticked "Painted sprites (uses your image model)": the new wallpaper effect gets eight sprites painted by the image model
+    (bin/aisprites.py). Only the first build paints; a follow-up turn never sends anything to the image model."""
     av = P.availability(ch)
     if not av["available"]:
         raise L.Bad("AI needed. " + av["hint"])
@@ -328,7 +341,9 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
         raise L.Bad(miss)
     cat = L.catalog()
     notes = []
-    if P.info_of(ch["provider"]).get("strong") is False:
+    if sprites and chat:
+        sprites = False
+    if not P.is_strong(ch):
         notes.append("This is a small local model. Writing new effects usually fails the safety check with these; Pick existing works better for it.")
     jpg, facts = T.picture_facts(path) if path else (None, "")
     tags = T.wallhaven_tags(wh) if wh else []
@@ -336,7 +351,7 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
     system = T.invent_text()
     if chat:
         jpg = None
-    prompt = user_prompt(cat, request, directions, pal, facts, tags, bool(jpg) and bool(P.info_of(ch["provider"]).get("image") or ch["provider"] == "custom"), chat)
+    prompt = user_prompt(cat, request, directions, pal, facts, tags, bool(jpg) and P.can_see(ch), chat, sprites)
     usage = {"tokens_in": 0, "tokens_out": 0, "cost_usd": None, "calls": 0, "estimated": False}
 
     progress("Asking the AI to invent the theme…")
@@ -371,7 +386,7 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
         if gaps:
             progress("The theme has nothing that moves or answers the pointer; asking the AI to add it…")
             try:
-                text, u = P.call(ch, system, life_prompt(gaps, parts, pal), None)
+                text, u = P.call(ch, system, life_prompt(gaps, parts, pal, sprites), None)
                 add_usage(usage, u)
                 fix = T.extract_json(text)
                 for slot in ("wallpaper", "cursor"):
@@ -400,17 +415,18 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
         progress("Checking %d new effect%s with the safety gate…" % (len(todo), "" if len(todo) == 1 else "s") if rnd == 0 else
                  "Repair round %d: checking %d effect%s again…" % (rnd, len(todo), "" if len(todo) == 1 else "s"))
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            futs = {s: ex.submit(gate_part, s, parts[s][1], path, keep_out) for s in todo}
+            futs = {s: ex.submit(gate_part, s, parts[s][1], path, keep_out, "quick", sprites) for s in todo}
             for s, f in futs.items():
                 r, start = f.result()
                 st = state[s]
                 st.update(tries=st["tries"] + 1, ok=r["ok"], problems=r["problems"], info=r["info"], built=r["built"], start=start)
-        failed = {s: {"name": parts[s][1]["name"], "problems": state[s]["problems"], "code": parts[s][1].get("code", "")} for s in todo if not state[s]["ok"]}
+        failed = {s: {"name": parts[s][1]["name"], "problems": state[s]["problems"], "code": parts[s][1].get("code", ""), "sprites": parts[s][1].get("sprites")}
+                  for s in todo if not state[s]["ok"]}
         if not failed or rnd == MAX_REPAIRS:
             break
         progress("%d effect%s refused by the gate; asking the AI to repair %s…" % (len(failed), "" if len(failed) == 1 else "s", "it" if len(failed) == 1 else "them"))
         try:
-            text, u = P.call(ch, system, repair_prompt(failed, pal), None)
+            text, u = P.call(ch, system, repair_prompt(failed, pal, sprites), None)
             add_usage(usage, u)
             fix = T.extract_json(text)
         except L.Bad as e:
@@ -426,6 +442,8 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
                 val.setdefault("fallback", "")
                 if not val["fallback"]:
                     val["fallback"] = parts[slot][1].get("fallback", "")
+                if slot == "wallpaper" and not val.get("sprites"):
+                    val["sprites"] = parts[slot][1].get("sprites")
                 parts[slot] = ("new", val)
                 todo.append(slot)
     # install what passed, replace what did not
@@ -438,7 +456,20 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
             continue
         st = state[slot]
         if st["ok"]:
-            eid = G.install(SLOTS[slot][0], st["built"], val["name"], val["desc"] or val["name"], request, "", False)
+            if sprites and slot == "wallpaper":
+                eid, sprob, snotes, sinfo = SP.finish_wall(
+                    val, I.choice(), path, st["start"],
+                    lambda built, atlas: G.install("wallpaper", built, val["name"], val["desc"] or val["name"], request, "", False, atlas=atlas),
+                    keep_out=os.path.join(keep_out, slot) if keep_out else "", progress=progress, ch_text=ch)
+                notes += snotes
+                if eid is None:
+                    st.update(ok=False, problems=sprob or ["it did not pass"])
+                    # fall through to the "did not pass" branch below
+                else:
+                    st["info"] = sinfo or st["info"]
+            else:
+                eid = G.install(SLOTS[slot][0], st["built"], val["name"], val["desc"] or val["name"], request, "", False)
+        if st["ok"]:
             chosen[slot] = eid
             made.append({"slot": slot, "title": TITLE[slot], "id": eid, "name": val["name"], "desc": val["desc"], "tries": st["tries"],
                          "start": st["start"], "info": st["info"]})
@@ -454,6 +485,8 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
                 chosen[slot] = alt
             elif chat and chat["theme"].get(SLOTS[slot][1]):
                 chosen[slot] = chat["theme"][SLOTS[slot][1]]
+    if sprites and not any(m["slot"] == "wallpaper" for m in made):
+        notes.append(SP.NOT_PAINTED)
     d = {"name": answer.get("name"), "idea": answer.get("idea"), "note": answer.get("note"), "strength": {}}
     for slot in SLOTS:
         d[slot] = chosen.get(slot, "")

@@ -20,11 +20,14 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import aigen as G  # noqa: E402
 import aiinvent as I  # noqa: E402
 import aiprov as P  # noqa: E402
+import aisprites as SP  # noqa: E402
+import imgprov as IMG  # noqa: E402
 import aisheet as S  # noqa: E402
 import aitheme as T  # noqa: E402
 import omslib as L  # noqa: E402
@@ -84,7 +87,7 @@ def titles_in_use(cat):
     return out
 
 
-def planner_prompt(request, genre, surprise, titles, directions, pal, facts, tags, has_image):
+def planner_prompt(request, genre, surprise, titles, directions, pal, facts, tags, has_image, sprites=False):
     p = ["# REQUEST"]
     if surprise:
         p.append("SURPRISE ME. The user gave no words; choose a specific, vivid, uncommon place and moment of your own."
@@ -112,6 +115,8 @@ def planner_prompt(request, genre, surprise, titles, directions, pal, facts, tag
             p.append(I.palette_text(pal))
     else:
         p.append("\n# BASE PICTURE\nThere is no picture: invent the place and its palette yourself. The Builders' tests run over a stand-in gradient.")
+    if sprites:
+        p.append("\n" + SP.planner_text())
     p.append("\nAnswer with the one JSON object only.")
     return "\n".join(p)
 
@@ -138,6 +143,7 @@ def clean_concept(a, pal, titles):
             if h not in [x["hex"] for x in pl]:
                 pl.append({"hex": h, "role": nm})
     c["palette"] = pl[:6]
+    c["sprites"] = SP.clean_spec(a.get("sprites"))
     c["tags"] = [w for w in (re.sub(r"[^a-z0-9-]", "", str(t).lower()) for t in (a.get("tags") if isinstance(a.get("tags"), list) else [])) if w][:10]
     br = a.get("briefs") if isinstance(a.get("briefs"), dict) else {}
     c["briefs"] = {k: T.sentence(br.get(k), 900) for k in PARTS if T.sentence(br.get(k), 900)}
@@ -160,11 +166,11 @@ def concept_text(c):
     return "\n".join(rows)
 
 
-def run_planner(ch, request, genre, surprise, directions, path, wh, pal, facts, tags, jpg, usage, steps, cat):
+def run_planner(ch, request, genre, surprise, directions, path, wh, pal, facts, tags, jpg, usage, steps, cat, sprites=False):
     titles = titles_in_use(cat)
     system = T.planner_text()
     has_image = bool(jpg)
-    prompt = planner_prompt(request, genre, surprise, titles, directions, pal, facts, tags, has_image)
+    prompt = planner_prompt(request, genre, surprise, titles, directions, pal, facts, tags, has_image, sprites)
     ask = prompt
     for attempt in range(2):
         text, u = P.call(ch, system, ask, jpg if has_image else None)
@@ -209,11 +215,13 @@ def fallback_ids(slot, cat):
     return sorted(ids)
 
 
-def build_prompt(slot, concept, pal, cat, prev=None, fixes=None):
+def build_prompt(slot, concept, pal, cat, prev=None, fixes=None, sprites=False):
     c = concept
     rows = [concept_text(c), "\n# ALL BRIEFS (what the other parts do, so yours belongs with them)"]
     rows += ["- %s: %s" % (k, v) for k, v in c["briefs"].items()]
     rows.append("\n# YOUR PART: %s (target: %s)\n%s" % (slot, I.SLOTS[slot][0], c["briefs"][slot]))
+    if sprites is True and slot == "wallpaper":
+        rows.append("\n" + SP.builder_text(c.get("sprites")))
     if slot in c["strength"]:
         rows.append("Test it at `start` %d unless the brief needs a different strength." % c["strength"][slot])
     rows.append("\n# FALLBACK (existing ids of this part; give the closest to your idea as `fallback`)\n" + " ".join(fallback_ids(slot, cat)))
@@ -238,8 +246,9 @@ def refusal_prompt(base, problems, code):
             ("\nYour code was:\n" + code[:5000] if code else "") + "\nFix every problem, keep the idea. Answer with the whole piece as one JSON object.")
 
 
-def make_piece(ch, system, slot, base_prompt, path, keep_out="", repairs=MAX_REPAIRS):
-    """one Builder call + gate + repairs -> (piece or None, [usage], tries, last problems)"""
+def make_piece(ch, system, slot, base_prompt, path, keep_out="", repairs=MAX_REPAIRS, sprites=False, atlas="", spec=None):
+    """one Builder call + gate + repairs -> (piece or None, [usage], tries, last problems)
+    sprites (wallpaper only): True = may draw painted sprites (rendered with `atlas`, or a stand-in when there is none yet); "blank" = sprite() draws nothing"""
     us, ask, last, problems = [], base_prompt, None, []
     for attempt in range(repairs + 1):
         text, u = P.call(ch, system, ask, None)
@@ -254,9 +263,12 @@ def make_piece(ch, system, slot, base_prompt, path, keep_out="", repairs=MAX_REP
             problems = ["not a new piece"]
             continue
         last = val
-        r, start = I.gate_part(slot, val, path, keep_out, profile="rich")
+        if slot == "wallpaper" and sprites and not val.get("sprites"):
+            val["sprites"] = spec
+        r, start = I.gate_part(slot, val, path, keep_out, profile="rich", sprites=sprites, atlas=atlas)
         if r["ok"]:
-            return {"slot": slot, "p": val, "built": r["built"], "info": r["info"], "start": start, "tries": attempt + 1}, us, attempt + 1, []
+            return {"slot": slot, "p": val, "built": r["built"], "info": r["info"], "start": start, "tries": attempt + 1,
+                    "sprites": sprites if slot == "wallpaper" else False, "atlas": atlas if slot == "wallpaper" else ""}, us, attempt + 1, []
         problems = r["problems"]
         ask = refusal_prompt(base_prompt, problems, val.get("code", ""))
     return None, us, repairs + 1, problems
@@ -264,7 +276,7 @@ def make_piece(ch, system, slot, base_prompt, path, keep_out="", repairs=MAX_REP
 
 def pmap(ch, fn, items):
     """run fn over items, in parallel only when the provider allows it"""
-    workers = BUILD_WORKERS if P.info_of(ch["provider"]).get("parallel") else 1
+    workers = BUILD_WORKERS if P.runs_parallel(ch) else 1
     if workers == 1 or len(items) < 2:
         return [fn(i) for i in items]
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
@@ -293,7 +305,7 @@ def reviewer_prompt(concept, pieces, contents, has_picture):
 def look(ch, concept, pieces, path, usage, steps, label, progress, out_dir=None):
     """render the contact sheets and ask the Reviewer -> (sheet dict, {slot: {score, seen, fixes}} or {}, summary)"""
     progress("%s: rendering the pieces over your picture…" % label)
-    spec = {s: {"built": p["built"], "start": p["start"], "settings": p["p"].get("settings")} for s, p in pieces.items()}
+    spec = {s: {"built": p["built"], "start": p["start"], "settings": p["p"].get("settings"), "atlas": p.get("atlas") or ""} for s, p in pieces.items()}
     sheet = S.build(spec, path, out_dir or rich_dir(), progress=progress)
     imgs = sheet["images"]
     if not imgs:
@@ -324,14 +336,14 @@ def look(ch, concept, pieces, path, usage, steps, label, progress, out_dir=None)
 
 
 def reviewer_possible(ch):
-    return bool(P.info_of(ch["provider"]).get("image") or ch["provider"] == "custom")
+    return P.can_see(ch)
 
 
 # ------------------------------------------------------------------ install + results
 def install_piece(slot, piece, request, score=None):
     kind = I.SLOTS[slot][0]
     p = piece["p"]
-    eid = G.install(kind, piece["built"], p["name"], p["desc"] or p["name"], request, "", False)
+    eid = G.install(kind, piece["built"], p["name"], p["desc"] or p["name"], request, "", False, atlas=(piece.get("atlas") or None) if piece.get("sprites") is True else None)
     try:
         mp = G.meta_path(eid)
         m = json.load(open(mp))
@@ -350,7 +362,7 @@ def install_piece(slot, piece, request, score=None):
 def state_piece(slot, piece, eid, score):
     p = piece["p"]
     return {"id": eid, "name": p["name"], "desc": p["desc"], "start": piece["start"], "fallback": p.get("fallback", ""), "code": p.get("code", ""),
-            "settings": p.get("settings"), "score": score}
+            "settings": p.get("settings"), "score": score, "sprites": piece.get("sprites", False)}
 
 
 def installed_frag(kind, eid):
@@ -365,8 +377,19 @@ def clear_sheet():
     shutil.rmtree(rich_dir(), ignore_errors=True)
 
 
-def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surprise=False, progress=lambda m: None, keep_out="", save=True):
-    """-> result dict; raises L.Bad with a plain reason. save=False (the chat) leaves the theme unsaved; the chat keeps `rich_state`."""
+def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surprise=False, progress=lambda m: None, keep_out="", save=True, sprites=False):
+    """-> result dict; raises L.Bad with a plain reason. save=False (the chat) leaves the theme unsaved; the chat keeps `rich_state`.
+    sprites = the user ticked "Painted sprites (uses your image model)": see bin/aisprites.py. The painted atlas lives in a private temporary folder
+    for the run and is copied next to the effect when it is installed."""
+    sdir = tempfile.mkdtemp(prefix="oms-sprites-") if sprites else ""
+    try:
+        return _run(request, directions, path, wh, ch, rounds, genre, surprise, progress, keep_out, save, bool(sprites), sdir)
+    finally:
+        if sdir:
+            shutil.rmtree(sdir, ignore_errors=True)
+
+
+def _run(request, directions, path, wh, ch, rounds, genre, surprise, progress, keep_out, save, sprites, sdir):
     av = P.availability(ch)
     if not av["available"]:
         raise L.Bad("AI needed. " + av["hint"])
@@ -376,14 +399,13 @@ def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surp
     rounds = max(0, min(MAX_ROUNDS, int(rounds)))
     cat = L.catalog()
     notes = []
-    info = P.info_of(ch["provider"])
-    if info.get("strong") is False:
-        notes.append("This is a small local model. Rich mode needs a strong model; Quick or Pick existing will work better for it.")
-    if not info.get("parallel"):
+    if not P.is_strong(ch):
+        notes.append("This AI is marked as not strong enough (a small local model, for example). Rich mode needs a strong model; Quick or Pick existing will work better for it.")
+    if not P.runs_parallel(ch):
         notes.append("This AI runs one call at a time, so Rich takes longer.")
     surprise = bool(surprise) or (not request.strip() and not path)
     jpg, facts = T.picture_facts(path) if path else (None, "")
-    if jpg and not (info.get("image") or ch["provider"] == "custom"):
+    if jpg and not P.can_see(ch):
         jpg = None
     tags = T.wallhaven_tags(wh) if wh else []
     pal = I.palette(path)
@@ -391,12 +413,13 @@ def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surp
     clear_sheet()
 
     progress("Planning the place and mood…")
-    concept = run_planner(ch, request, genre, surprise, directions, path, wh, pal, facts, tags, jpg, usage, steps, cat)
+    concept = run_planner(ch, request, genre, surprise, directions, path, wh, pal, facts, tags, jpg, usage, steps, cat, sprites)
     progress("Concept: %s. Making %d parts…" % (concept["title"], len(concept["briefs"])))
 
     build_sys = T.builder_text()
     slots = [s for s in PARTS if s in concept["briefs"]]
-    results = pmap(ch, lambda s: make_piece(ch, build_sys, s, build_prompt(s, concept, pal, cat), path, keep_out), slots)
+    results = pmap(ch, lambda s: make_piece(ch, build_sys, s, build_prompt(s, concept, pal, cat, sprites=(sprites and s == "wallpaper")), path, keep_out,
+                                            sprites=(sprites and s == "wallpaper"), spec=concept.get("sprites")), slots)
     pieces, tries, refused = {}, {}, {}
     for slot, (piece, us, n, problems) in zip(slots, results):
         for u in us:
@@ -406,6 +429,18 @@ def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surp
             pieces[slot] = piece
         else:
             refused[slot] = problems
+    if sprites:
+        if "wallpaper" in pieces:   # paint now (once): the Reviewer then sees the real sprites and a revision is gated with them
+            wp = pieces["wallpaper"]
+            r, atlas, snotes = SP.prepare_wall(wp["p"], IMG.choice(), path, wp["start"], sdir, "rich", os.path.join(keep_out, "wallpaper") if keep_out else "", progress, ch)
+            notes += snotes
+            if r["ok"]:
+                pieces["wallpaper"] = dict(wp, built=r["built"], info=r["info"], sprites=True if atlas else "blank", atlas=atlas)
+            else:
+                del pieces["wallpaper"]
+                refused["wallpaper"] = r["problems"]
+        else:
+            notes.append(SP.NOT_PAINTED)
     scores, fixes_of, revisions, seen = {}, {}, {s: 0 for s in slots}, {}
     history = {s: [(p, None)] for s, p in pieces.items()}
     rounds_done, review_summary, sheet = 0, "", None
@@ -436,7 +471,8 @@ def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surp
                 break
             progress("%s: revising %s…" % (label, ", ".join(weak)))
             rounds_done += 1
-            outs = pmap(ch, lambda s: make_piece(ch, build_sys, s, build_prompt(s, concept, pal, cat, prev=pieces[s]["p"], fixes=fixes_of.get(s)), path, keep_out, 1), weak)
+            outs = pmap(ch, lambda s: make_piece(ch, build_sys, s, build_prompt(s, concept, pal, cat, prev=pieces[s]["p"], fixes=fixes_of.get(s), sprites=pieces[s].get("sprites", False)),
+                                                 path, keep_out, 1, sprites=pieces[s].get("sprites", False), atlas=pieces[s].get("atlas", ""), spec=concept.get("sprites")), weak)
             for slot, (piece, us, n, problems) in zip(weak, outs):
                 for u in us:
                     steps_add(steps, usage, "Revise: " + slot, u)
@@ -473,7 +509,7 @@ def run(request, directions, path, wh, ch, rounds=DEFAULT_ROUNDS, genre="", surp
 
     if pieces and (sheet is None or built_for != {s: id(p) for s, p in pieces.items()}):
         progress("Rendering the contact sheet…")
-        sheet = S.build({s: {"built": p["built"], "start": p["start"], "settings": p["p"].get("settings")} for s, p in pieces.items()}, path, rich_dir())
+        sheet = S.build({s: {"built": p["built"], "start": p["start"], "settings": p["p"].get("settings"), "atlas": p.get("atlas") or ""} for s, p in pieces.items()}, path, rich_dir())
 
     made, state_pieces = [], {}
     for slot, piece in pieces.items():
@@ -565,7 +601,13 @@ def follow(request, rs, theme, history, path, wh, ch, progress=lambda m: None, k
             raise L.Bad(miss)
         progress("Rebuilding the %s…" % I.TITLE[slot].lower())
         pal = I.palette(path)
-        piece, us, n, problems = make_piece(ch, T.builder_text(), slot, build_prompt(slot, rs["concept"], pal, cat, prev=prev, fixes=[request.strip()]), path, keep_out)
+        mode, atlas = (old.get("sprites", False) if (old and slot == "wallpaper") else False), ""   # a rewrite keeps the sprites already painted; it never paints again
+        if mode is True:
+            atlas = os.path.join(G.GEN, G.SUBDIR["wallpaper"], old["id"] + ".png")
+            if not os.path.isfile(atlas):
+                mode, atlas = "blank", ""
+        piece, us, n, problems = make_piece(ch, T.builder_text(), slot, build_prompt(slot, rs["concept"], pal, cat, prev=prev, fixes=[request.strip()], sprites=mode), path, keep_out,
+                                            sprites=mode, atlas=atlas, spec=rs["concept"].get("sprites"))
         for x in us:
             steps_add(steps, usage, "Build: " + slot, x)
         if piece:
@@ -613,12 +655,14 @@ def follow(request, rs, theme, history, path, wh, ch, progress=lambda m: None, k
         for s, e in pieces.items():
             kind = I.SLOTS[s][0]
             if e.get("code"):
-                built = G.build(kind, e["code"], e.get("desc", ""), e["start"], e.get("name", ""), rich=True)
+                sp = e.get("sprites", False) if kind == "wallpaper" else False
+                built = G.build(kind, e["code"], e.get("desc", ""), e["start"], e.get("name", ""), rich=True, sprites=sp)
             else:
                 frag = installed_frag(kind, e["id"])
                 built = {"frag": frag} if frag is not None else None
             if built is not None:
-                spec[s] = {"built": built, "start": e["start"], "settings": e.get("settings")}
+                atlas = os.path.join(G.GEN, G.SUBDIR["wallpaper"], e["id"] + ".png") if (s == "wallpaper" and e.get("sprites") is True) else ""
+                spec[s] = {"built": built, "start": e["start"], "settings": e.get("settings"), "atlas": atlas if atlas and os.path.isfile(atlas) else ""}
         if spec:
             progress("Rendering the contact sheet…")
             sheet = S.build(spec, path, rich_dir())
@@ -629,15 +673,14 @@ def follow(request, rs, theme, history, path, wh, ch, progress=lambda m: None, k
 
 
 # ------------------------------------------------------------------ estimate
-def estimate(request, path, ch=None, cat=None, rounds=DEFAULT_ROUNDS, genre=""):
+def estimate(request, path, ch=None, cat=None, rounds=DEFAULT_ROUNDS, genre="", sprites=False):
     """what a Rich run is expected to cost, from the real prompt sizes; the real numbers come back with the result"""
     ch = ch or P.choice()
     cat = cat or L.catalog()
-    info = P.info_of(ch["provider"])
-    has_img = bool(path and info.get("image"))
+    has_img = bool(path and P.can_see(ch))
     pal = I.palette(path) if path else {"main": [], "accents": []}
     img = I.IMAGE_TOKENS if has_img else 0
-    dprompt = planner_prompt(request, genre, not request.strip() and not path, set(), {}, pal, "", [], has_img)
+    dprompt = planner_prompt(request, genre, not request.strip() and not path, set(), {}, pal, "", [], has_img, sprites)
     d_in = (len(T.planner_text()) + len(dprompt)) // 4 + 500 + img   # + titles in use
     d_out = 2400
     fake = {"title": "x", "tags": [], "briefs": {k: "x" * 500 for k in PARTS}, "palette": [{"hex": "000000", "role": "x"}] * 5, "strength": {}, "biome": "", "layout": "x" * 300}
@@ -654,7 +697,9 @@ def estimate(request, path, ch=None, cat=None, rounds=DEFAULT_ROUNDS, genre=""):
     t_in = d_in + n_code * m_in + n_frame * (m_in // 2) + cr_in + rev * (m_in + 1500)
     t_out = d_out + n_code * m_out + n_frame * 300 + cr_out + rev * 2800
     calls = 1 + n_code + n_frame + looks + rev
-    est = {"tokens_in": t_in, "tokens_out": t_out, "calls": calls, "rounds": rounds, "cost_usd": None, "note": "", "parallel": bool(info.get("parallel")),
+    if sprites:
+        t_in += len(SP.builder_text(None)) // 4
+    est = {"sprite_images": SP.CELLS if sprites else 0, "tokens_in": t_in, "tokens_out": t_out, "calls": calls, "rounds": rounds, "cost_usd": None, "note": "", "parallel": P.runs_parallel(ch),
            "review": looks > 0}
     pr = I.PRICES.get(ch.get("model")) if ch["provider"] == "claude" else None
     if pr:
@@ -665,4 +710,6 @@ def estimate(request, path, ch=None, cat=None, rounds=DEFAULT_ROUNDS, genre=""):
         est["note"] = "price depends on your plan"
     tok = t_in + t_out
     est["summary"] = "Rich: about %dk tokens%s, %d calls" % (round(tok / 1000.0), (", about $%.2f" % est["cost_usd"]) if est["cost_usd"] is not None else "", calls)
+    if sprites:
+        est["summary"] += ", plus %d pictures from your image model" % SP.CELLS
     return est

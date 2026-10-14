@@ -33,7 +33,7 @@ KINDS = {"screen": "shader", "window": "shader", "effect": "shader", "shader": "
 LAYOUT = {
     "shader": (["shaders"], [".frag"], "screen", ("s", "wf")),
     "color": (["colors"], [".frag"], "color", ("c", "wc")),
-    "wall": (["wallpaper-effects"], [".frag", ".frag.qsb"], "wall", ("w",)),
+    "wall": (["wallpaper-effects"], [".frag", ".frag.qsb", ".png"], "wall", ("w",)),   # .png = the painted sprites of a sprite effect
     "mouse": (["mouse-effects", "cursor-shaders"], [".frag", ".frag.qsb"], "mouse", ("m",)),
     "frame": (["frames"], [".frame"], "frame", ("wr",)),
 }

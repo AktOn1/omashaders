@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """aigen: the safety gate and the store for effects an AI invented ("Invent new" mode of bin/ai-theme).
 
-  aigen check KIND [FILE|-] [--name N] [--desc D] [--start N] [--image PNG] [--keep-out DIR] [--profile quick|rich] [--json]
+  aigen check KIND [FILE|-] [--name N] [--desc D] [--start N] [--image PNG] [--keep-out DIR] [--profile quick|rich] [--sprites] [--json]
         run the whole gate on the code in FILE (stdin when -). KIND: screen | window | color | wallpaper | cursor | frame
   aigen analyze FILE...            static cost of finished shader files (used to calibrate the caps)
   aigen list [--json]              the generated effects in the state folder (Made by AI)
@@ -21,6 +21,9 @@ The gate is mandatory and has four parts, run in this order:
      colour, visible, text still readable at the start strength; wallpaper overlays must stay light (the picture survives);
      cursor effects must stay local; screen, window and wallpaper effects must not be only a colour tint (low-res renders at a
      second moment and, for wallpapers, a second pointer place, see tint_check)
+Painted sprites (optional, wallpaper effects only, bin/aisprites.py): the template can bind a sprite atlas (binding 2) and offers
+`vec4 sprite(int cell, vec2 q)`; the AI still declares nothing and still cannot call texture(). The atlas is data (a checked 1024x512 PNG);
+the gate renders the code with a stand-in atlas, and an effect with sprites is installed as <id>.frag + <id>.frag.qsb + <id>.png.
 Generated effects live in <state>/generated/, never in the plugin folder.
 """
 import sys
@@ -248,6 +251,17 @@ WALL_FUNCS = """vec2 coverUV(vec2 uv) {
 vec3 wall(vec2 uv) { return texture(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.05) + 0.5, 0.0, 1.0))).rgb; }
 """
 
+# painted sprites: the template owns the sampler and the only function that reads it (cell 0..7 of a 4 x 2 atlas, q = -1..1 inside the cell, 0.453 as pumpkin-night)
+SPRITE_BINDING = "layout(binding = 2) uniform sampler2D sprites;\n"
+SPRITE_FUNC = """vec4 sprite(int cell, vec2 q) {
+  int k = clamp(cell, 0, 7);
+  vec2 o = vec2(float(k - 4 * (k / 4)), float(k / 4));
+  float inside = step(abs(q.x), 1.0) * step(abs(q.y), 1.0);
+  return texture(sprites, (o + 0.5 + clamp(q, -1.0, 1.0) * 0.453) / vec2(4.0, 2.0)) * inside;
+}
+"""
+SPRITE_BLANK = "vec4 sprite(int cell, vec2 q) { return vec4(0.0); }\n"   # the same function when no sprites could be made: the effect still builds and runs
+
 WALL_MAIN = """void main() {
   vec2 uv = qt_TexCoord0;
   vec3 base = wall(uv);
@@ -304,9 +318,11 @@ def one_line(s, n=120):
     return re.sub(r"\s+", " ", re.sub(r"[^\x20-\x7e]", " ", str(s or ""))).strip()[:n]
 
 
-def build(kind, code, desc="", start=70, name="", rich=False):
+def build(kind, code, desc="", start=70, name="", rich=False, sprites=False):
     """-> {'frag': text of the shipped-style file, 'es': an ES 3.00 twin for the offscreen render (wallpaper/cursor), 'animated': bool}
-    code is the AI's code after the colour shorthand is expanded."""
+    code is the AI's code after the colour shorthand is expanded.
+    sprites (wallpaper only): False = no sprite() at all; True = the template binds the atlas (binding 2) and offers sprite(cell, q);
+    "blank" = sprite() exists but returns nothing and no atlas is bound (the same code when the sprites could not be made)."""
     code = hex_colors(code).strip() + "\n"
     desc = one_line(desc, 140) or "Made by AI"
     start = max(5, min(100, int(start)))
@@ -325,6 +341,9 @@ def build(kind, code, desc="", start=70, name="", rich=False):
     if kind == "wallpaper":
         members, funcs, main_ = WALL_MEMBERS, helpers + WALL_FUNCS, WALL_MAIN
         extra = "layout(binding = 1) uniform sampler2D src;\n"
+        if sprites:
+            funcs += SPRITE_FUNC if sprites is True else SPRITE_BLANK
+            extra += SPRITE_BINDING if sprites is True else ""
         meta = "// category: %s\n// label: %s\n// hint: %s\n// ai-generated: yes\n" % (CATEGORY, one_line(name, 40) or "Made by AI", desc)
         members_q = "  mat4 qt_Matrix;\n  float qt_Opacity;\n"
     elif kind == "cursor":
@@ -339,8 +358,9 @@ def build(kind, code, desc="", start=70, name="", rich=False):
           "layout(std140, binding = 0) uniform buf {\n" + members_q + ubo + "};\n" + extra + "\n" + funcs + "\n" + code + "\n" + main_)
     es = ("#version 300 es\nprecision highp float;\nin vec2 qt_TexCoord0;\nout vec4 fragColor;\nconst float qt_Opacity = 1.0;\n"
           + "".join("uniform %s %s;\n" % m for m in members) + ("uniform sampler2D src;\n" if kind == "wallpaper" else "")
+          + ("uniform sampler2D sprites;\n" if kind == "wallpaper" and sprites is True else "")
           + "\n" + funcs + "\n" + code + "\n" + main_)
-    return {"frag": qt, "es": es, "animated": animated, "code": code, "rich": rich}
+    return {"frag": qt, "es": es, "animated": animated, "code": code, "rich": rich, "sprites": sprites if kind == "wallpaper" else False}
 
 
 # ------------------------------------------------------------------ a) text rules
@@ -554,7 +574,7 @@ def call_rules(kind, built):
         if n in CONTROL or n in BUILTINS or n in declared:
             continue
         p.append("unknown function '%s'. Only GLSL built-ins and functions you define in the code may be called (helpers offered: %s%s)" %
-                 (n, ", ".join(h for h, _, _, ks in helper_table(built.get("rich")) if ks is None or kind in ks), ", wall(uv)" if kind == "wallpaper" else ""))
+                 (n, ", ".join(h for h, _, _, ks in helper_table(built.get("rich")) if ks is None or kind in ks), (", wall(uv)" if kind == "wallpaper" else "") + (", sprite(cell, q)" if built.get("sprites") else "")))
     for m in re.finditer(r"\btexture(?:Size)?\s*\(\s*(\w*)", code):
         if kind in ("screen", "window", "color"):
             if m.group(1) != "tex":
@@ -572,6 +592,8 @@ def static_rules(kind, raw_code, built, lim=None):
     # a fully assembled file is analysed: template helpers count towards the cost too
     full = built["frag"]
     probs = call_rules(kind, built)
+    if built.get("sprites") is True and not re.search(r"(?<![\w.])sprite\s*\(", strip_comments(built["code"])):
+        probs.append("the painted sprites are never drawn: call sprite(cell, q) at least once (it returns the colour and alpha of a sprite)")
     try:
         cost = analyze_text(full)
     except GateFail as e:
@@ -721,11 +743,13 @@ def luma_of(a):
     return a[..., 0] * 0.2126 + a[..., 1] * 0.7152 + a[..., 2] * 0.0722
 
 
-def render(frag, base_png, out_png, uniforms=None, alpha=False, t=1.5, budget=None):
-    """run bin/shader-preview; returns (seconds, error text)"""
+def render(frag, base_png, out_png, uniforms=None, alpha=False, t=1.5, budget=None, sprites=""):
+    """run bin/shader-preview; returns (seconds, error text). sprites = an atlas PNG bound as `sprites` (binding 2 in the Qt file)"""
     env = dict(os.environ)
     for k, v in (uniforms or {}).items():
         env["U_" + k] = v
+    if sprites:
+        env["SP_SPRITES"] = sprites
     if alpha:
         env["SP_ALPHA"] = "1"
     budget = budget or RENDER_BUDGET_S
@@ -790,7 +814,7 @@ def unexplained(design, y):
     return float(np.sqrt(((y - design @ coef) ** 2).mean()))
 
 
-def tint_check(kind, start, tmp, image, budget=None):
+def tint_check(kind, start, tmp, image, budget=None, sprites=""):
     """-> (problems, info) for screen, window and wallpaper effects that are only a colour mix"""
     import numpy as np
     from PIL import Image
@@ -808,7 +832,7 @@ def tint_check(kind, start, tmp, image, budget=None):
         out_png = os.path.join(tmp, "low%d.png" % i)
         if kind == "wallpaper":
             uni = {"mouse": "%d,%d" % (m[0] * TINT_W, m[1] * TINT_H), "res": "%d,%d" % (TINT_W, TINT_H), "imgSize": "%d,%d" % (TINT_W, TINT_H), "time": str(t)}
-            dt, err = render(os.path.join(tmp, "gen.es.frag"), low_png, out_png, uni, t=t, budget=budget)
+            dt, err = render(os.path.join(tmp, "gen.es.frag"), low_png, out_png, uni, t=t, budget=budget, sprites=sprites)
         else:
             dt, err = render(os.path.join(tmp, "render.frag"), low_png, out_png, t=t, budget=budget)
         if err:
@@ -835,8 +859,8 @@ def tint_check(kind, start, tmp, image, budget=None):
     return [], info
 
 
-def render_gate(kind, built, start, tmp, image, lim=None):
-    """-> (problems, info)"""
+def render_gate(kind, built, start, tmp, image, lim=None, atlas=""):
+    """-> (problems, info). atlas = the sprite atlas the render binds (wallpaper effects with painted sprites)"""
     import numpy as np
     lim = lim or limits("quick", kind)
     base_png = os.path.join(tmp, "base.png")
@@ -858,7 +882,7 @@ def render_gate(kind, built, start, tmp, image, lim=None):
     elif kind == "wallpaper":
         frag = os.path.join(tmp, "gen.es.frag")
         open(frag, "w").write(built["es"])
-        dt, err = render(frag, base_png, out_png, {"mouse": "%d,%d" % (W // 2, H // 2), "res": "%d,%d" % (W, H), "imgSize": "%d,%d" % (W, H), "time": "1.5"}, budget=lim["render_s"])
+        dt, err = render(frag, base_png, out_png, {"mouse": "%d,%d" % (W // 2, H // 2), "res": "%d,%d" % (W, H), "imgSize": "%d,%d" % (W, H), "time": "1.5"}, budget=lim["render_s"], sprites=atlas)
     else:
         frag = os.path.join(tmp, "gen.es.frag")
         open(frag, "w").write(built["es"])
@@ -910,7 +934,7 @@ def render_gate(kind, built, start, tmp, image, lim=None):
         probs += readable(base, out, masks)
     Image.fromarray((np.clip(out, 0, 1) * 255).astype("uint8")).save(os.path.join(tmp, "result.png"))
     if kind in ("screen", "window", "wallpaper") and not any("black screen" in q or "white screen" in q or "single flat" in q for q in probs):
-        tp, ti = tint_check(kind, start, tmp, image, lim["render_s"])
+        tp, ti = tint_check(kind, start, tmp, image, lim["render_s"], atlas)
         probs += tp
         info.update(ti)
     return probs, info
@@ -962,8 +986,10 @@ def frame_text(settings, desc):
 
 
 # ------------------------------------------------------------------ the whole gate
-def gate(kind, code, name="", desc="", start=70, image="", settings=None, keep_out="", profile="quick"):
-    """Run every check. Returns {'ok', 'problems', 'info', 'built'}; never raises for a bad effect."""
+def gate(kind, code, name="", desc="", start=70, image="", settings=None, keep_out="", profile="quick", sprites=False, atlas=""):
+    """Run every check. Returns {'ok', 'problems', 'info', 'built'}; never raises for a bad effect.
+    sprites (wallpaper only): True = the effect may draw painted sprites; it is rendered with `atlas` (a PNG that bin/aisprites.py checked) or, when
+    there is none yet, with a stand-in atlas. "blank" = the same code built so that sprite() draws nothing (the sprites could not be made)."""
     res = {"ok": False, "problems": [], "info": {"kind": kind}, "built": None}
     if kind not in KINDS:
         res["problems"] = ["unknown kind %s" % kind]
@@ -976,7 +1002,7 @@ def gate(kind, code, name="", desc="", start=70, image="", settings=None, keep_o
             res["problems"] = [str(e)]
         return res
     try:
-        built = build(kind, code, desc, start, name, rich=(profile == "rich"))
+        built = build(kind, code, desc, start, name, rich=(profile == "rich"), sprites=sprites if kind == "wallpaper" else False)
     except (GateFail, ValueError) as e:
         res["problems"] = [str(e)]
         return res
@@ -994,8 +1020,20 @@ def gate(kind, code, name="", desc="", start=70, image="", settings=None, keep_o
         if cp:
             res["problems"] = cp
             return res
+        use_atlas = ""
+        if built.get("sprites") is True:
+            import aisprites
+            use_atlas = atlas or os.path.join(tmp, "stand-in.png")
+            if atlas:
+                try:
+                    aisprites.validate_atlas(atlas)
+                except L.Bad as e:
+                    res["problems"] = ["the sprite atlas is not usable: %s" % e]
+                    return res
+            else:
+                aisprites.stand_in(use_atlas)
         try:
-            rp, info = render_gate(kind, built, max(5, min(100, int(start))), tmp, image, lim)
+            rp, info = render_gate(kind, built, max(5, min(100, int(start))), tmp, image, lim, use_atlas)
         except ImportError as e:
             res["problems"] = ["the render check needs python-pillow and python-numpy (%s)" % e]
             return res
@@ -1020,9 +1058,17 @@ def slug(name):
     return (s or "effect")[:30].strip("-")
 
 
-def new_id(name, kind):
+SPRITE_TAG = "-sp"   # an id ending in -sp (or -sp-2 ...) has a sprite atlas next to its shader; WallpaperFx.qml loads <id>.png only for those
+
+
+def has_sprite_tag(eid):
+    return re.search(r"-sp(?:-\d+)?$", str(eid)) is not None
+
+
+def new_id(name, kind, sprites=False):
     d = os.path.join(GEN, SUBDIR[kind])
-    base = PREFIX + slug(name)
+    # the -sp tag is only ever given here, to an effect that has its atlas: a name that would end in it by itself loses it
+    base = PREFIX + re.sub(r"-sp(-\d+)?$", "", slug(name)).strip("-") + (SPRITE_TAG if sprites else "")
     n, cand = 1, base
     while any(os.path.exists(os.path.join(GEN, sd, cand + ext)) for sd in set(SUBDIR.values()) for ext in (".frag", ".frame")):
         n += 1
@@ -1035,18 +1081,30 @@ def meta_path(eid):
     return os.path.join(GEN, "meta", eid + ".json")
 
 
-def install(kind, built, name, desc, prompt="", fallback="", kept=False, uses="", extra=None):
+def install(kind, built, name, desc, prompt="", fallback="", kept=False, uses="", extra=None, atlas=None):
     """write the effect into <state>/generated; returns its id. Only call with gate-approved output.
+    atlas = path of the sprite atlas PNG (wallpaper effects built with sprites=True; it is checked again here and copied next to the shader).
     Locked, because two background jobs can install at the same moment and must not pick the same id."""
     import fcntl
     os.makedirs(GEN, exist_ok=True)
     with open(os.path.join(GEN, ".lock"), "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
-        return _install(kind, built, name, desc, prompt, fallback, kept, uses, extra)
+        return _install(kind, built, name, desc, prompt, fallback, kept, uses, extra, atlas)
 
 
-def _install(kind, built, name, desc, prompt, fallback, kept, uses, extra=None):
-    eid = new_id(name, kind)
+def _install(kind, built, name, desc, prompt, fallback, kept, uses, extra=None, atlas=None):
+    sprites = bool(atlas)
+    if kind != "wallpaper" and sprites:
+        raise GateFail("only wallpaper effects can have sprites")
+    if sprites != (built.get("sprites") is True):
+        raise GateFail("the effect and its sprite atlas do not belong together")   # a shader that binds a missing atlas, or an atlas nobody reads
+    if sprites:
+        import aisprites
+        try:
+            aisprites.validate_atlas(atlas)
+        except L.Bad as e:
+            raise GateFail("the sprite atlas is not usable: %s" % e)
+    eid = new_id(name, kind, sprites)
     sub = os.path.join(GEN, SUBDIR[kind])
     os.makedirs(sub, exist_ok=True)
     ext = ".frame" if kind == "frame" else ".frag"
@@ -1061,9 +1119,14 @@ def _install(kind, built, name, desc, prompt, fallback, kept, uses, extra=None):
             raise GateFail("qsb failed: " + clean_log(r.stderr, 300))
         os.replace(target + ".qsb.tmp", target + ".qsb")
     os.replace(target + ".tmp", target)
+    if sprites:
+        shutil.copyfile(atlas, target[:-5] + ".png.tmp")
+        os.replace(target[:-5] + ".png.tmp", target[:-5] + ".png")
     os.makedirs(os.path.join(GEN, "meta"), exist_ok=True)
     meta = {"id": eid, "kind": kind, "name": L.clean_name(name, 40) or eid, "desc": one_line(desc, 140), "prompt": one_line(prompt, 300),
             "created": int(time.time()), "kept": bool(kept), "fallback": fallback}
+    if built.get("sprites"):
+        meta["sprites"] = True if sprites else "blank"   # "blank": written for sprites that could not be made; its code still calls sprite()
     if extra:
         meta.update(extra)
     with open(meta_path(eid) + ".tmp", "w") as f:
@@ -1086,7 +1149,7 @@ def listing():
 def files_of(eid):
     out = []
     for sd in set(SUBDIR.values()):
-        for ext in (".frag", ".frag.qsb", ".frame"):
+        for ext in (".frag", ".frag.qsb", ".frame", ".png"):
             p = os.path.join(GEN, sd, eid + ext)
             if os.path.exists(p):
                 out.append(p)
@@ -1135,6 +1198,8 @@ def cmd_check(a):
             opts[x[2:]] = next(it, "")
         elif x == "--json":
             opts["json"] = True
+        elif x == "--sprites":
+            opts["sprites"] = True
         elif not kind:
             kind = x
         else:
@@ -1146,7 +1211,8 @@ def cmd_check(a):
             settings = json.loads(code)
         except ValueError:
             settings = None
-    r = gate(kind, code, opts.get("name", ""), opts.get("desc", ""), int(opts.get("start") or 70), opts.get("image", ""), settings, opts.get("keep-out", ""), opts.get("profile") or "quick")
+    r = gate(kind, code, opts.get("name", ""), opts.get("desc", ""), int(opts.get("start") or 70), opts.get("image", ""), settings, opts.get("keep-out", ""), opts.get("profile") or "quick",
+             sprites=bool(opts.get("sprites")))
     r.pop("built", None)
     if opts.get("json"):
         print(json.dumps(r))

@@ -9,6 +9,13 @@ Scope {
   id: fx
 
   property string effect: ""
+  property var offScreens: [] // names of the monitors that get no effect (they show a fullscreen window)
+  function shownScreens(off) {
+    var out = []
+    for (var i = 0; i < Quickshell.screens.length; i++)
+      if (off.indexOf(Quickshell.screens[i].name) < 0) out.push(Quickshell.screens[i])
+    return out
+  }
   // file:// url of the folder with AI-made effects; names starting "ai-" load from genDir/wall/
   property string genDir: ""
   function shaderUrl(n) {
@@ -17,7 +24,11 @@ Scope {
   }
   // effects that draw sprites from wallpaper-effects/NAME.png (sampler `sprites`, binding 2, RGBA atlas)
   readonly property var spriteEffects: ["pumpkin-night"]
-  function spriteUrl(n) { return fx.spriteEffects.indexOf(n) >= 0 ? Qt.resolvedUrl("wallpaper-effects/" + n + ".png") : "" }
+  // AI-made effects with painted sprites: the id ends in -sp (or -sp-2 ...) and genDir/wall/NAME.png is the atlas (a checked 1024x512 PNG made by bin/aisprites.py)
+  function spriteUrl(n) {
+    if (n.indexOf("ai-") === 0) return (fx.genDir !== "" && /-sp(-[0-9]+)?$/.test(n)) ? fx.genDir + "/wall/" + n + ".png" : ""
+    return fx.spriteEffects.indexOf(n) >= 0 ? Qt.resolvedUrl("wallpaper-effects/" + n + ".png") : ""
+  }
   // optional second effect: "stack" runs it on the first one's result, "blend" runs both on the wallpaper; mixAmount is its share (0..1)
   property string effect2: ""
   property string mixMode: "stack"
@@ -123,7 +134,7 @@ Scope {
   }
 
   Variants {
-    model: fx.effect !== "" ? Quickshell.screens : []
+    model: fx.effect !== "" ? fx.shownScreens(fx.offScreens) : []
 
     PanelWindow {
       id: win

@@ -109,6 +109,9 @@ def local_entry(eid, slots):
         text = open(path, encoding="utf-8").read()
     except OSError:
         raise L.Bad("the file is missing")
+    if kind == "wallpaper" and (meta.get("sprites") or G.has_sprite_tag(eid) or os.path.exists(path[:-5] + ".png") or re.search(r"(?<![\w.])sprite\s*\(", text)):
+        # share codes carry no pictures, and an effect without its sprites is not the effect its author made: it is left out of the code (the safe choice)
+        raise L.Bad("it uses painted sprites, and share codes carry no pictures")
     name = L.clean_name(re.sub(r"^%s" % re.escape(IMPORT_PREFIX), "", str(meta.get("name") or eid)), 60)
     desc = G.one_line(meta.get("desc"), 140)
     e = {"id": eid, "k": kind, "name": name, "desc": desc}
