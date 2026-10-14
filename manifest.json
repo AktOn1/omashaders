@@ -5,7 +5,7 @@
   "version": "1.38.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "Brand new (five days old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 160 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
+  "description": "Brand new (five days old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 156 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
   "kinds": [
     "bar-widget"
   ],

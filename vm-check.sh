@@ -198,6 +198,8 @@ EOF
   wtype -k Escape; sleep 1; wtype -k Escape; sleep 1
   # 2. a working fake AI command -> typed wish -> theme applied live (not saved), a follow-up changes it, "s" saves it
   jq --arg c "$fake" '(.. | objects | select(.id? == "io.github.akton1.omashaders")) += {aiCommand: $c}' "$cfg" >"$cfg.tmp" && mv "$cfg.tmp" "$cfg"; sleep 6
+  # the dialog remembers its last pick (ai.json), which now wins over the setting: point the remembered Custom command at the fake AI
+  mkdir -p "$st"; printf '{"provider": "custom", "model": "", "custom": "%s"}' "$fake" >"$st/ai.json"
   ipc aiTheme; sleep 4
   wtype "a calm test night"; sleep 1; shot theme-1-ai-typed; wtype -k Return
   wait_for 90 "grep -q 'Fake Test' $st/chat.json"

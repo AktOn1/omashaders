@@ -1,4 +1,4 @@
-Theme guide version: 1.36.0
+Theme guide version: 1.38.0
 
 # OmaShaders theme guide
 
@@ -226,13 +226,13 @@ effect when the wallpaper overlay already carries the whole mood, no cursor
 effect for calm themes, no frame when windows should stay plain, no window shader
 when the screen effect already does that job. `window_color` is
 almost always `""`: a second grade on top of the screen grade double-tints text.
-In the 131 shipped themes, none sets `window_color`.
+In the 156 shipped themes, none sets `window_color`.
 
 **Cursor, window and frame are accents.** They are accents in size, not in
 presence: in a Full theme fill each with the one that best fits the idea. Thin, small frames read well (`thin-gold`, `mono-line`, `clean`,
 `soft-shadow`, `contact-shadow`, `soft-round`); big busy ones do not. Glow frames
 (`ember`, `aurora`, `neon-cyan`) suit night and neon themes only. Spin frames
-(`*-spin`) animate the border forever - used in 3 of 131 themes, so keep them for
+(`*-spin`) animate the border forever - used in 4 of 156 themes, so keep them for
 arcade, party or music requests. Window shaders are per-window glass and light;
 they need an optional plugin and simply do nothing if it is missing, so never let
 the whole idea rest on them.

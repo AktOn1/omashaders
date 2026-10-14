@@ -133,15 +133,10 @@ machine-hall|megacity-lights|reading-line|blade-haze|Hacker Loft Night|crt-monit
 overcast||streak|storm-gold|Misty Pace Lap|||contact-shadow|fx=40,col=55,cur=55,wh=d8vvlo
 dust-sun||streak|kodachrome|Misty Race Day|||contact-shadow|fx=40,col=50,cur=55,wh=d8vvlo
 overcast||streak|kodachrome|Misty Fast Ride|||mono-line|fx=40,col=55,cur=60,wh=d8vvlo
-sunlit|speedlines|comet|sunny-pop|Marlboro Speed Run|sun-patch||soft-round|fx=65,col=70,wall=85,cur=85,wh=d8vvlo
-sunlit|speedlines|streak|sunny-pop|Marlboro Run|sun-patch||soft-round|fx=65,col=70,wall=85,cur=80,wh=d8vvlo
-sunlit|speedlines|streak|sunny-pop|Marlboro Rush|sunbeam-pane||soft-round|fx=65,col=72,wall=90,cur=85,wh=d8vvlo
+sunlit|speedlines|comet|sunny-pop|Sunny Speed Run|sun-patch||soft-round|fx=65,col=70,wall=85,cur=85,wh=d8vvlo
+sunlit|speedlines|streak|sunny-pop|Sunny Run|sun-patch||soft-round|fx=65,col=70,wall=85,cur=80,wh=d8vvlo
+sunlit|speedlines|streak|sunny-pop|Sunny Rush|sunbeam-pane||soft-round|fx=65,col=72,wall=90,cur=85,wh=d8vvlo
 sunlit|speedlines|comet|sunny-pop|Sunny F40 Run|sunbeam-pane||soft-round|fx=65,col=70,wall=85,cur=85,wh=d8vvlo
-ai-misty-pace|ai-wet-road-streaks|streak|teal-orange|Marlboro Mist Run|ai-mist-pane||ai-rust-edge-line|fx=65,col=65,wall=80,cur=80,wh=d8vvlo
-ai-edge-rush|ai-velocity-streaks|comet|sunny-pop|Red Rush F40|ai-livery-rush||ai-livery-edge|fx=70,col=70,wall=85,cur=85,wh=d8vvlo
-ai-monitor-glow|ai-data-drift|ai-signal-ping|neon-noir|Midnight Workbench|ai-terminal-pane||ai-circuit-edge|fx=65,col=65,wall=80,cur=80,wh=jel1jq
-ai-pond-daylight|ai-pond-sparkle|water-rings|lagoon|Lotus Pond Noon|ai-lotus-glass||ai-lily-edge|fx=65,col=65,wall=80,cur=80,wh=216y9y
-ai-pond-caustics|ai-pond-glints|water-rings|fresh-meadow||ai-lily-glass||ai-lotus-edge|fx=65,col=65,wall=80,wspeed=55,wzoom=47,cur=80
 vignette|snow|ice-crystals|polar-night|Snow Globe|frost-pane||white-halo
 overcast|storm|silver-ripples|pitch-night|Lightning Night|blue-swell||deep-shadow
 anamorphic|bokehlights|neon-tube-trail|miami-night|Bokeh Boulevard|sign-glow||neon-pink
