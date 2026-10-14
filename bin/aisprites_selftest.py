@@ -13,17 +13,17 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, HERE)
-import aigen as _G  # noqa: E402
-if _G.render_ready():  # painted sprites ride on the Invent flow, which needs the render check
-    print("skipped: the painted sprites need the render check (%s)" % _G.render_ready())
-    sys.exit(0)
 TMP = tempfile.mkdtemp(prefix="aisprites-selftest-")
 STATE = os.path.join(TMP, "state")
 os.makedirs(STATE)
 os.environ["OMASHADERS_STATE_DIR"] = STATE
 os.environ["XDG_STATE_HOME"] = os.path.join(TMP, "xdg")
 sys.path.insert(0, HERE)
+import aigen as _G  # noqa: E402
+if _G.render_ready():  # painted sprites ride on the Invent flow, which needs the render check
+    print("skipped: the painted sprites need the render check (%s)" % _G.render_ready())
+    shutil.rmtree(TMP, ignore_errors=True)
+    sys.exit(0)
 OK = FAIL = 0
 
 
