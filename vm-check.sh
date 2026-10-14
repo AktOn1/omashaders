@@ -203,25 +203,27 @@ EOF
   mkdir -p "$st"; printf '{"provider": "custom", "model": "", "custom": "%s"}' "$fake" >"$st/ai.json"
   ipc aiTheme; sleep 4
   wtype "a calm test night"; sleep 1; shot theme-1-ai-typed; wtype -k Return
-  wait_for 90 "grep -q 'Fake Test' $st/chat.json"
+  # the dialog runs every request as a background job: its chat session is <state>/jobs/<id>/chat.json
+  wait_for 90 "grep -q 'Fake Test' $st/jobs/*/chat.json"
   sleep 4; shot theme-2-ai-done
-  grep -q 'Fake Test' "$st/chat.json" && ok "theme: the first message built a theme (chat session)" || bad "theme: no 'Fake Test' in the chat session $st/chat.json"
+  jd=$(ls -d "$st"/jobs/j* 2>/dev/null | head -1)
+  grep -q 'Fake Test' "$jd/chat.json" 2>/dev/null && ok "theme: the first message built a theme (job's chat session)" || bad "theme: no 'Fake Test' in the job's chat session under $st/jobs"
   grep -q 'Fake Test' "$st/themes" && bad "theme: the chat theme was saved before Save as theme" || ok "theme: nothing is in the list until the theme is saved"
   wait_for 30 '[ "$(cat "$st/color" 2>/dev/null)" = "neon-noir" ] || [ "$("$bin/omashaders" color status 2>/dev/null | head -1)" = "neon-noir" ]' && ok "theme: the new theme was applied live (colour is neon-noir)" || bad "theme: theme not applied (colour: $(cat "$st/color" 2>/dev/null))"
   wtype "no cursor effect, quieter overlay"; sleep 1; wtype -k Return
-  wait_for 90 "[ \$(python3 $bin/ai-theme chat status | grep -c '\"role\": \"ai\"') -ge 2 ]"
+  wait_for 90 "[ \$(OMASHADERS_CHAT_DIR=$jd python3 $bin/ai-theme chat status | grep -c '\"role\": \"ai\"') -ge 2 ]"
   sleep 4; shot theme-2b-ai-followup
-  python3 "$bin/ai-theme" chat status | grep '"line"' | grep -q 'wall=30' && ok "theme: the follow-up changed the same theme (overlay 30)" || bad "theme: follow-up did not change the theme: $(python3 "$bin/ai-theme" chat status | grep '"line"')"
-  python3 "$bin/ai-theme" chat status | grep '"line"' | grep -q 'rain-ripples' && bad "theme: the cursor effect should be gone after the follow-up" || ok "theme: follow-up removed the cursor effect and kept the rest"
+  OMASHADERS_CHAT_DIR="$jd" python3 "$bin/ai-theme" chat status | grep '"line"' | grep -q 'wall=30' && ok "theme: the follow-up changed the same theme (overlay 30)" || bad "theme: follow-up did not change the theme: $(OMASHADERS_CHAT_DIR="$jd" python3 "$bin/ai-theme" chat status | grep '"line"')"
+  OMASHADERS_CHAT_DIR="$jd" python3 "$bin/ai-theme" chat status | grep '"line"' | grep -q 'rain-ripples' && bad "theme: the cursor effect should be gone after the follow-up" || ok "theme: follow-up removed the cursor effect and kept the rest"
   wtype -k Escape; sleep 1; wtype s; wait_for 30 "grep -q 'Fake Test' $st/themes"; sleep 2; shot theme-2c-ai-saved
   grep -c 'Fake Test' "$st/themes" | grep -qx 1 && ok "theme: s saved the chat's theme as a theme (once)" || bad "theme: 'Fake Test' not saved exactly once in $st/themes"
-  [ -f "$st/chat.json" ] && bad "theme: the chat session is still there after saving" || ok "theme: the chat ended after saving"
+  [ ! -f "$st/chat.json" ] && ok "theme: no stray chat session in the state folder after saving" || bad "theme: a chat session is still in the state folder after saving"
   # 3. share dialog
   ipc shareTheme 1; sleep 4; shot theme-3-share
   wtype -k Escape; sleep 1
   # 4. import dialog (a code is typed; the clipboard may be empty in the VM)
   wl-copy --clear 2>/dev/null; ipc importTheme; sleep 3
-  wtype "$code"; sleep 3; shot theme-4-import
+  wtype -d 25 "$code"; sleep 3; shot theme-4-import
   wtype -k Return; wait_for 30 "grep -q 'VM Share' $st/themes"; sleep 2; shot theme-5-imported
   grep -q 'VM Share' "$st/themes" && ok "theme: import dialog saved the theme" || bad "theme: import dialog did not save 'VM Share'"
   wtype -k Escape; sleep 1; wtype -k Escape; sleep 1
