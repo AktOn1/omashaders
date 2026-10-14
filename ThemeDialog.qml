@@ -331,7 +331,7 @@ Item {
           td.provRows = d.providers
           td.provId = d.choice.provider
           td.provModel = d.choice.model
-          if (d.choice.custom && customField.text === "") customField.text = d.choice.custom
+          if (d.choice.custom && !customField.activeFocus) customField.text = d.choice.custom
           td.provEndpoint = d.choice.endpoint || ({ url: "", key_env: "", key_file: "" })
           if (!modelField.activeFocus) modelField.text = td.provModel
           if (!epUrlField.activeFocus) epUrlField.text = td.provEndpoint.url
