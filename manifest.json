@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.omashaders",
   "name": "OmaShaders",
-  "version": "1.37.0",
+  "version": "1.38.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "Brand new (five days old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 131 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
+  "description": "Brand new (five days old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 160 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
   "kinds": [
     "bar-widget"
   ],
@@ -22,6 +22,7 @@
       "fps": 30,
       "cursorNeedsShift": false,
       "pauseKey": "CTRL + ALT + P",
+      "menuLayout": "New",
       "aiProvider": "Remembered choice",
       "aiModel": "",
       "aiCommand": ""
@@ -46,16 +47,23 @@
         "defaultValue": "CTRL + ALT + P"
       },
       {
+        "key": "menuLayout",
+        "type": "enum",
+        "label": "Menu layout (New: themes first; Classic: the older Screen, Color, Wallpaper, Cursor, Windows, Combos columns)",
+        "options": ["New", "Classic"],
+        "defaultValue": "New"
+      },
+      {
         "key": "aiProvider",
         "type": "enum",
-        "label": "AI tool for “Create your own theme” (the theme dialog lists only the tools installed here and remembers its last pick; changing this sets it)",
-        "options": ["Remembered choice", "Claude Code", "Codex", "Gemini CLI", "OpenCode", "Ollama (local)", "Custom command"],
+        "label": "AI tool for “Create your own theme” (the theme dialog lists only the tools installed here and remembers its last pick; changing this sets it; with “Remembered choice” and no pick yet it starts with the agent set by `omarchy default agent`)",
+        "options": ["Remembered choice", "Claude Code", "Codex", "Gemini CLI", "OpenCode", "Ollama (local)", "OpenAI-compatible endpoint", "Custom command"],
         "defaultValue": "Remembered choice"
       },
       {
         "key": "aiModel",
         "type": "string",
-        "label": "AI model (empty = the tool's default; Claude: sonnet or opus; Ollama: a model you pulled)",
+        "label": "AI model (empty = the tool's own default; any model id the tool or endpoint accepts)",
         "defaultValue": ""
       },
       {
