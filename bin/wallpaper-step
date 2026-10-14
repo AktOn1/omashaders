@@ -1,5 +1,5 @@
 #!/bin/bash
-# wallpaper-step next|prev|status|list|pick
+# wallpaper-step next|prev|status|list|pick|set FILE
 # Cycles the Omarchy wallpaper through the theme's backgrounds plus extra folders
 # (default ~/Pictures/Wallpapers; override with WALLPAPER_SWITCHER_DIRS, ':' separated).
 
@@ -8,6 +8,8 @@ THEME_NAME=$(cat "$STATE/theme.name" 2>/dev/null)
 DIRS=("$STATE/theme/backgrounds" "$HOME/.config/omarchy/backgrounds/$THEME_NAME")
 IFS=':' read -ra EXTRA <<<"${WALLPAPER_SWITCHER_DIRS:-$HOME/Pictures/Wallpapers}"
 DIRS+=("${EXTRA[@]}")
+PLUGIN_STATE="${OMASHADERS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders}"
+DIRS+=("$PLUGIN_STATE/wallhaven/used")
 
 declare -A seen
 LIST=()
@@ -67,5 +69,11 @@ case "$1" in
     [[ -n $picked ]] && omarchy-theme-bg-set "$(readlink -f "$picked")"
     rm -rf "$PICKDIR"
     ;;
-  *) echo "Usage: wallpaper-step next|prev|status|list|pick" >&2; exit 1 ;;
+  set)
+    f=$(readlink -f "${2:-}" 2>/dev/null)
+    [[ -f $f ]] || { echo "No such picture: ${2:-}" >&2; exit 1; }
+    omarchy-theme-bg-set "$f" || exit 1
+    echo "${f##*/}"
+    ;;
+  *) echo "Usage: wallpaper-step next|prev|status|list|pick|set FILE" >&2; exit 1 ;;
 esac

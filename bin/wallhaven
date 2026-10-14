@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""wallhaven: browse and fetch wallpapers from wallhaven.cc (public API, SFW only, no key).
+
+  wallhaven search [QUERY | --q TEXT] [--cats 111] [--sort toplist] [--atleast 1920x1080] [--ratio 16x9]
+                   [--color 336600] [--page N] [--seed S] [--json]
+  wallhaven info ID [--json]        details of one picture (tags, colours, source)
+  wallhaven preview ID              medium-size preview (CDN, no API call), prints its path
+  wallhaven fetch ID                download the full picture into the cache, print its path
+  wallhaven use ID                  fetch it and make it the wallpaper (same way as the picker)
+  wallhaven prune                   trim the cache to its size caps
+
+Everything is fetched with curl. Cache and notes live in
+  <state dir>/wallhaven/{thumbs,full,used}  (state dir: ~/.local/state/omarchy/io.github.akton1.omashaders,
+  or $OMASHADERS_STATE_DIR). Pictures set as wallpaper are kept in used/ (the wallpaper stepper reads it);
+  thumbs/ and full/ are caches with caps. The API allows 45 requests a minute: calls are spaced out here.
+"""
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+API = "https://wallhaven.cc/api/v1"
+STATE = os.environ.get("OMASHADERS_STATE_DIR") or os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy", "io.github.akton1.omashaders")
+WH = os.path.join(STATE, "wallhaven")
+THUMBS, FULL, USED = (os.path.join(WH, d) for d in ("thumbs", "full", "used"))
+MIN_GAP = 1.5            # seconds between API calls (limit is 45 a minute)
+THUMB_CAP = (500, 50 << 20)    # files, bytes
+FULL_CAP = (200, 400 << 20)
+MAX_FULL = 80 << 20      # refuse bigger downloads
+ID_RE = re.compile(r"^[a-z0-9]{6}$")
+SORTS = ("relevance", "random", "toplist", "views", "favorites", "date_added")
+
+
+class Error(Exception):
+    pass
+
+
+def version():
+    try:
+        return json.load(open(os.path.join(ROOT, "manifest.json")))["version"]
+    except Exception:
+        return "dev"
+
+
+def curl(args, timeout=30):
+    cmd = ["curl", "-sS", "-L", "--proto", "=https", "--proto-redir", "=https", "-m", str(timeout),
+           "-A", "OmaShaders/%s (+https://github.com/AktOn1/omashaders)" % version()] + args
+    try:
+        return subprocess.run(cmd, capture_output=True, text=False, timeout=timeout + 15)
+    except FileNotFoundError:
+        raise Error("curl is not installed")
+    except subprocess.TimeoutExpired:
+        raise Error("Wallhaven did not answer in time")
+
+
+def api_get(path, params=None):
+    os.makedirs(WH, exist_ok=True)
+    url = API + path
+    if params:
+        from urllib.parse import urlencode
+        url += "?" + urlencode(params)
+    with open(os.path.join(WH, "api.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        stamp = os.path.join(WH, "last-api")
+        try:
+            gap = time.time() - float(open(stamp).read())
+        except Exception:
+            gap = MIN_GAP
+        if 0 <= gap < MIN_GAP:
+            time.sleep(MIN_GAP - gap)
+        r = curl(["-w", "\n%{http_code}", url])
+        open(stamp, "w").write(str(time.time()))
+    body, _, code = r.stdout.rpartition(b"\n")
+    code = code.decode("ascii", "replace").strip()
+    if r.returncode != 0:
+        raise Error("No answer from Wallhaven (%s)" % (r.stderr.decode("utf-8", "replace").strip().splitlines() or ["network error"])[-1][:120])
+    if code == "429":
+        raise Error("Wallhaven says: too many requests. Wait a minute and try again")
+    if code == "404":
+        raise Error("Wallhaven has no such picture")
+    if code != "200":
+        raise Error("Wallhaven answered HTTP %s" % code)
+    try:
+        return json.loads(body.decode("utf-8"))
+    except ValueError:
+        raise Error("Wallhaven sent something that is not JSON")
+
+
+def touch(p):
+    try:
+        os.utime(p, None)
+    except OSError:
+        pass
+
+
+def prune_dir(d, cap, keep=()):
+    files = []
+    try:
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            if os.path.isfile(p):
+                st = os.stat(p)
+                files.append((st.st_mtime, st.st_size, p))
+    except OSError:
+        return
+    files.sort(reverse=True)  # newest first
+    n = size = 0
+    for mt, sz, p in files:
+        n += 1
+        size += sz
+        if (n > cap[0] or size > cap[1]) and p not in keep:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def current_wallpaper():
+    try:
+        return os.path.realpath(os.path.join(os.path.dirname(STATE), "current", "background"))
+    except Exception:
+        return ""
+
+
+def prune():
+    prune_dir(THUMBS, THUMB_CAP)
+    prune_dir(FULL, FULL_CAP, keep=(current_wallpaper(),))
+
+
+def host_ok(url, hosts):
+    m = re.match(r"^https://([a-z0-9.-]+)/", url or "")
+    return bool(m) and m.group(1) in hosts
+
+
+def short(d):
+    thumbs = d.get("thumbs") or {}
+    return {
+        "id": d.get("id"), "url": d.get("url"), "res": d.get("resolution"), "category": d.get("category"),
+        "favorites": d.get("favorites"), "views": d.get("views"), "colors": d.get("colors") or [],
+        "type": d.get("file_type"), "size": d.get("file_size"), "path": d.get("path"),
+        "thumb_url": thumbs.get("small") or "", "large_url": thumbs.get("large") or "",
+    }
+
+
+def fetch_thumbs(items, kind="small"):
+    """download thumbnails (CDN, not counted by the API limit) in parallel; sets item['thumb'] to a local file"""
+    os.makedirs(THUMBS, exist_ok=True)
+    todo = []
+    for it in items:
+        url = it.get("thumb_url") if kind == "small" else it.get("large_url")
+        if not (ID_RE.match(it.get("id") or "") and host_ok(url or "", ("th.wallhaven.cc",))):
+            continue
+        ext = os.path.splitext(url)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            ext = ".jpg"
+        dest = os.path.join(THUMBS, "%s-%s%s" % (it["id"], kind, ext))
+        it["thumb" if kind == "small" else "large"] = dest
+        if os.path.exists(dest) and os.path.getsize(dest) > 0:
+            touch(dest)
+        else:
+            todo.append((url, dest))
+    if todo:
+        cmd = ["-s", "--fail", "--parallel", "--parallel-max", "6", "-m", "30"]
+        for url, dest in todo:
+            cmd += ["-o", dest + ".part", url]
+        curl(cmd, timeout=60)
+        for url, dest in todo:
+            if os.path.exists(dest + ".part"):
+                if os.path.getsize(dest + ".part") > 0:
+                    os.replace(dest + ".part", dest)
+                else:
+                    os.remove(dest + ".part")
+    for it in items:
+        key = "thumb" if kind == "small" else "large"
+        if key in it and not os.path.exists(it[key]):
+            del it[key]
+
+
+def cmd_search(a):
+    q = {"purity": "100", "order": "desc"}  # SFW only, no toggle
+    query = []
+    it = iter(a)
+    as_json = False
+    for x in it:
+        if x == "--json":
+            as_json = True
+        elif x == "--q":
+            query.append(next(it, ""))
+        elif x in ("--cats", "--sort", "--atleast", "--ratio", "--color", "--page", "--seed"):
+            v = next(it, "")
+            key = {"--cats": "categories", "--sort": "sorting", "--atleast": "atleast", "--ratio": "ratios",
+                   "--color": "colors", "--page": "page", "--seed": "seed"}[x]
+            q[key] = v
+        else:
+            query.append(x)
+    text = " ".join(query).strip()
+    if text:
+        q["q"] = text[:100]
+    if "categories" in q and not re.fullmatch(r"[01]{3}", q["categories"]):
+        raise Error("--cats must be three digits like 110 (general, anime, people)")
+    if q.get("categories") == "000":
+        q["categories"] = "111"
+    if "sorting" in q and q["sorting"] not in SORTS:
+        raise Error("--sort is one of: " + ", ".join(SORTS))
+    if "atleast" in q and q["atleast"] and not re.fullmatch(r"\d{3,5}x\d{3,5}", q["atleast"]):
+        raise Error("--atleast looks like 1920x1080")
+    if "ratios" in q and q["ratios"] and not re.fullmatch(r"\d{1,2}x\d{1,2}", q["ratios"]):
+        raise Error("--ratio looks like 16x9")
+    if "colors" in q and q["colors"] and not re.fullmatch(r"[0-9a-fA-F]{6}", q["colors"]):
+        raise Error("--color is six hex digits")
+    if "page" in q and not re.fullmatch(r"\d{1,4}", q["page"] or ""):
+        raise Error("--page is a number")
+    if "seed" in q and not re.fullmatch(r"[A-Za-z0-9]{1,12}", q["seed"] or ""):
+        raise Error("--seed is up to 12 letters or digits")
+    q = {k: v for k, v in q.items() if v != ""}
+    d = api_get("/search", q)
+    items = [short(x) for x in d.get("data", []) if x.get("purity") == "sfw" and ID_RE.match(x.get("id") or "")]
+    fetch_thumbs(items)
+    prune_dir(THUMBS, THUMB_CAP)
+    meta = d.get("meta") or {}
+    out = {"query": text, "page": meta.get("current_page", 1), "last_page": meta.get("last_page", 1),
+           "total": meta.get("total", len(items)), "seed": meta.get("seed"), "results": items}
+    if as_json:
+        print(json.dumps(out))
+    else:
+        print("# %s results, page %s of %s%s" % (out["total"], out["page"], out["last_page"], " (seed %s)" % out["seed"] if out["seed"] else ""))
+        for x in items:
+            print("%s  %-10s %-8s %5s fav  %s" % (x["id"], x["res"], x["category"], x["favorites"], x["url"]))
+
+
+def info(wid):
+    if not ID_RE.match(wid or ""):
+        raise Error("a Wallhaven id has 6 letters or digits, like rqej8j")
+    d = api_get("/w/" + wid).get("data") or {}
+    if d.get("purity") != "sfw":
+        raise Error("Only safe-for-work pictures are supported")
+    out = short(d)
+    out["tags"] = [t.get("name") for t in (d.get("tags") or []) if t.get("name")][:30]
+    out["source"] = d.get("source") or ""
+    return out
+
+
+def cmd_info(a):
+    as_json = "--json" in a
+    ids = [x for x in a if not x.startswith("-")]
+    d = info(ids[0] if ids else "")
+    if as_json:
+        print(json.dumps(d))
+    else:
+        print("%s  %s  %s\n  %s\n  tags: %s\n  colours: %s" % (d["id"], d["res"], d["category"], d["url"], ", ".join(d["tags"]), " ".join(d["colors"])))
+
+
+def sniff(p):
+    with open(p, "rb") as f:
+        h = f.read(12)
+    if h[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if h[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    return ""
+
+
+def fetch(wid):
+    if not ID_RE.match(wid or ""):
+        raise Error("a Wallhaven id has 6 letters or digits, like rqej8j")
+    os.makedirs(FULL, exist_ok=True)
+    for ext in (".jpg", ".png"):
+        p = os.path.join(FULL, "wallhaven-%s%s" % (wid, ext))
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            touch(p)
+            return p
+        p = os.path.join(USED, "wallhaven-%s%s" % (wid, ext))
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            return p
+    d = info(wid)
+    url = d.get("path") or ""
+    if not host_ok(url, ("w.wallhaven.cc",)):
+        raise Error("Wallhaven sent an unexpected download address")
+    tmp = os.path.join(FULL, "wallhaven-%s.part" % wid)
+    r = curl(["--fail", "--max-filesize", str(MAX_FULL), "-o", tmp, url], timeout=240)
+    if r.returncode != 0 or not os.path.exists(tmp):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise Error("Download failed (%s)" % (r.stderr.decode("utf-8", "replace").strip().splitlines() or ["network error"])[-1][:120])
+    ext = sniff(tmp)
+    if not ext:
+        os.remove(tmp)
+        raise Error("The download is not a JPEG or PNG picture")
+    dest = os.path.join(FULL, "wallhaven-%s%s" % (wid, ext))
+    os.replace(tmp, dest)
+    note_attribution(d)
+    prune_dir(FULL, FULL_CAP, keep=(dest, current_wallpaper()))
+    return dest
+
+
+def note_attribution(d):
+    p = os.path.join(WH, "attribution.json")
+    try:
+        data = json.load(open(p))
+    except Exception:
+        data = {}
+    data[d["id"]] = {"url": d.get("url"), "source": d.get("source", ""), "res": d.get("res"), "tags": d.get("tags", [])[:10]}
+    if len(data) > 300:
+        for k in list(data)[: len(data) - 300]:
+            del data[k]
+    json.dump(data, open(p, "w"))
+
+
+def cmd_preview(a):
+    wid = a[0] if a else ""
+    if not ID_RE.match(wid):
+        raise Error("a Wallhaven id has 6 letters or digits, like rqej8j")
+    os.makedirs(THUMBS, exist_ok=True)
+    dest = os.path.join(THUMBS, "%s-large.jpg" % wid)
+    if not (os.path.exists(dest) and os.path.getsize(dest) > 0):
+        r = curl(["-s", "--fail", "-o", dest + ".part", "https://th.wallhaven.cc/lg/%s/%s.jpg" % (wid[:2], wid)], timeout=30)
+        if r.returncode != 0 or not os.path.exists(dest + ".part") or sniff(dest + ".part") != ".jpg":
+            if os.path.exists(dest + ".part"):
+                os.remove(dest + ".part")
+            raise Error("No preview available")
+        os.replace(dest + ".part", dest)
+    touch(dest)
+    print(dest)
+
+
+def cmd_fetch(a):
+    print(fetch(a[0] if a else ""))
+
+
+def cmd_use(a):
+    wid = a[0] if a else ""
+    p = fetch(wid)
+    os.makedirs(USED, exist_ok=True)
+    dest = os.path.join(USED, os.path.basename(p))
+    if os.path.realpath(p) != os.path.realpath(dest) and not os.path.exists(dest):
+        try:
+            os.link(p, dest)
+        except OSError:
+            shutil.copy2(p, dest)
+    prune_dir(USED, (60, 1 << 40), keep=(current_wallpaper(),))
+    step = os.path.join(HERE, "wallpaper-step")
+    r = subprocess.run([step, "set", dest], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Error((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "could not set the wallpaper")
+    print("Wallpaper set: Wallhaven %s (https://wallhaven.cc/w/%s)" % (wid, wid))
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    cmd, rest = a[0], a[1:]
+    try:
+        fn = {"search": cmd_search, "info": cmd_info, "fetch": cmd_fetch, "preview": cmd_preview, "use": cmd_use}.get(cmd)
+        if cmd == "prune":
+            prune()
+        elif fn:
+            fn(rest)
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+    except Error as e:
+        if "--json" in rest:
+            print(json.dumps({"error": str(e)}))
+        else:
+            print("wallhaven: %s" % e, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

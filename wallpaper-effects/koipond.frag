@@ -281,9 +281,9 @@ vec4 fxMain(vec2 mpx) {
   vec3 col = wall(clamp(uv + bend * 0.024 / vec2(asp, 1.0), 0.0, 1.0));
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   vec3 water = vec3(0.025, 0.115, 0.095);
-  col = mix(col, vec3(l) * vec3(0.30, 0.78, 0.60), 0.6) * 0.58 + water * 0.55;
+  col = mix(col, vec3(l) * vec3(0.55, 1.0, 0.80), 0.28) * 0.80 + water * 0.22;   // the picture's own colours, seen through a little green water
   float murk = fbm3(p * 2.1 + vec2(time * 0.006, -time * 0.004));
-  col *= 0.82 + 0.34 * murk;
+  col *= 0.90 + 0.20 * murk;
   col += vec3(0.060, 0.045, 0.030) * smoothstep(0.55, 0.0, uv.y) * 0.5;      // dusk sky glow on the far water
 
   // koi swim below the surface
@@ -291,8 +291,8 @@ vec4 fxMain(vec2 mpx) {
   for (int i = 0; i < 4; i++) {
     float under;
     vec4 k = kpKoi(pk, float(i) + 1.0, asp, mp, water, under);
-    col *= 1.0 - under;
-    col = mix(col, k.rgb, k.a);
+    col *= 1.0 - under * 0.6;
+    col = mix(col, k.rgb, k.a * 0.80);                                          // under the surface: the picture shows through
   }
 
   // a thin veil of reflected sky above them
@@ -301,18 +301,18 @@ vec4 fxMain(vec2 mpx) {
   // lily pads on the surface
   vec2 pp = p + bend * 0.004;
   float s1, s2;
-  vec4 padsA = kpPads(pp, mp, asp, 4.2, 0.0, 0.27, s1);
-  vec4 padsB = kpPads(pp + 2.7, mp, asp, 7.3, 17.0, 0.20, s2);
-  col *= 1.0 - max(s1, s2) * 0.8;
-  col = padsB.rgb + col * (1.0 - padsB.a);
-  col = padsA.rgb + col * (1.0 - padsA.a);
+  vec4 padsA = kpPads(pp, mp, asp, 4.2, 0.0, 0.13, s1);
+  vec4 padsB = kpPads(pp + 2.7, mp, asp, 7.3, 17.0, 0.09, s2);
+  col *= 1.0 - max(s1, s2) * 0.45;
+  col = padsB.rgb * 0.72 + col * (1.0 - padsB.a * 0.72);                      // pads are translucent: the wallpaper stays readable under them
+  col = padsA.rgb * 0.72 + col * (1.0 - padsA.a * 0.72);
 
   // ripple light: crests catch the dusk sky
   float spec = clamp(dot(bend, vec2(-0.6, -0.8)) * 0.9, 0.0, 1.0);
   col += vec3(0.55, 0.85, 0.75) * spec * 0.6;
   col += vec3(0.04, 0.07, 0.06) * clamp(rp.x * 90.0, -1.0, 1.0);
 
-  col *= 1.0 - 0.5 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.0);
+  col *= 1.0 - 0.32 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.0);
   fragColor = vec4(col, 1.0) * qt_Opacity;
   return fragColor;
 }

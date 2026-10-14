@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""The scripted terminal session shown in the share GIF (run inside the demo terminal by bin/gif-capture).
+
+  gif-demo --go FLAG --state DIR [--name THEME] [--plain]
+
+The session is the same on every machine: an empty prompt with a blinking cursor, then (once FLAG exists, which the
+recorder creates when the recording starts) `omashaders theme apply NAME` is typed, its answer lists the look's parts,
+a second command follows. Timing is 12 steps per second, like the preview GIFs this look comes from.
+"""
+import argparse, os, re, sys, time
+
+FPS, CPF = 12, 2  # steps per second, characters typed per step
+T_BLANK = 5
+FG, DIM, GREEN, OUT2, CURSOR = (232, 240, 255), (150, 175, 205), (126, 231, 135), (150, 220, 255), (140, 215, 235)
+PARTS = [  # label, state file, strength file, icon, plain icon, colour
+    ("screen", "current", "strength-effect", "\U000f01c4", "#", (127, 214, 255)),
+    ("colour", "color", "strength-color", "\U000f03d8", "#", (199, 146, 234)),
+    ("wallpaper", "wp-effect", "strength-wall", "\U000f02e9", "#", (94, 234, 212)),
+    ("cursor", "mouse", "strength-mouse", "\U000f037d", "#", (154, 215, 255)),
+]
+
+
+# Second command of the session: what a person would really type to get the look's feeling, answered by a small
+# made-up read-out (like the `depth` line of the Abyss preview GIF). If the NAME fits a topic below (word starts) the
+# topic supplies both; otherwise the command is a real-looking tool pointed at one word of the name, answered in
+# name words, moods and effects. With no name the word comes from the effect names.
+FLAVOURS = [
+    (("pumpkin", "halloween"), "./carve-pumpkin --grin wide", "teeth: 7 · candle: lit"),
+    (("taco",), "curl wttr.in/taco", "chance of tacos: 100%"),
+    (("jazz", "smoky", "blues", "sax"), "mpv --shuffle ~/music/smoky-jazz", "now playing: saxophone · smoke: 60%"),
+    (("marlboro", "speed", "racing", "redline"), "nice -n -20 ./redline", "speed: 312 · speedlines: 80%"),
+    (("fallout", "shelter", "vault", "bunker"), "systemctl status vault-door", "sealed · cans: 12 · morale: glowing"),
+    (("detective", "noir", "mystery", "crime", "sleuth"), 'grep -r "alibi" /var/log/rain.log', "0 matches · suspects: 3 · rain: steady"),
+    (("haunted", "ghost", "crypt", "witch", "gothic", "graveyard", "manor"), "./summon-ghosts.sh", "ghosts: 3 awake · temperature: -4°"),
+    (("abyss", "deep", "sea", "ocean", "reef", "plankton", "tide", "lagoon"), "dive --depth 4000m", "4000 m · 400 atm · light: none"),
+    (("pond", "lotus", "lake", "koi", "river", "water"), "tail -f /var/log/pond/ripples.log", "ripple +1 · frog: nearby · koi: smug"),
+    (("forest", "grove", "wood", "leaf", "moss", "jungle", "fern", "canopy", "pine"), "cat /dev/forest | less", "canopy: dense · birds: 14"),
+    (("space", "star", "galaxy", "nebula", "cosmos", "orbit", "void", "observ", "hyperdrive", "bridge"), "ping -c 3 andromeda", "no reply · lightyears: 2.5M"),
+    (("desert", "dune", "sand", "saloon", "canyon", "mirage"), "watch -n 5 cat /sys/class/thermal/sun", "42 °C · wind 18 km/h · shade: none"),
+    (("ember", "lava", "volcano", "fire", "magma", "hearth", "coal"), "systemctl --user start fireplace", "fire: low · logs: 2 · room: 24 °C"),
+    (("snow", "ice", "frost", "winter", "aurora", "glacier", "polar", "cabin"), "systemctl --user start snowfall", "-18 °C · wind 22 km/h · aurora: likely"),
+    (("sakura", "blossom", "petal", "bloom"), "tail -f /var/log/sakura/petals.log", "petal falling · wind: soft · day 6 of bloom"),
+    (("sunset", "dusk", "dawn", "golden", "horizon", "twilight", "honey"), "watch -n 60 date --sunset", "golden hour · 18:42"),
+    (("moon", "night sky", "midnight"), "curl wttr.in/moon", "phase: 87% · rise 21:14 · sky: clear"),
+    (("lantern", "izakaya", "alley", "tea"), "systemctl --user start lanterns", "lit: 24 · glow: warm red · crowd: quiet"),
+    (("ink", "washi", "brush", "wave", "aquarelle", "paper", "sketch"), "tail -f /var/log/brush/strokes.log", "stroke: slow · ink: sumi · paper: washi"),
+    (("lavender", "cloud", "sky"), "curl wttr.in/sky", "cloud cover 30% · wind: calm · view: far"),
+    (("mainframe", "matrix", "machine", "terminal", "hacker", "crt"), "uptime", "up 412 days · load: 0.04 · users: 1"),
+    (("city", "neon", "cyber", "synth", "skyline", "blade"), "tail -f /var/log/city/neon.log", "rain: yes · neon 87% · traffic: low"),
+    (("rain", "storm", "thunder", "drizzle", "monsoon"), "curl wttr.in/rain", "rain 4 mm/h · wind 12 km/h · umbrella: yes"),
+    (("library", "study", "lamp", "cafe", "lounge", "book"), "systemctl --user start reading-lamp", "bulb: warm · pages: many · tea: cooling"),
+]
+STOP = {"the", "a", "an", "of", "and", "my", "night", "hour", "calm", "light", "glow", "soft", "new"}
+
+
+def match(text):
+    for words, cmd, out in FLAVOURS:
+        if any(re.search(r"\b" + re.escape(w), text) for w in words):
+            return cmd, out
+    return None
+
+
+GENERIC = {"my", "theme", "look", "untitled", "new", "custom", "copy"}
+CMDS = [  # real tools pointed at one word of the name
+    "tail -f /var/log/{w}.log", "systemctl status {w}", "systemctl --user start {w}", "journalctl -u {w} -n 5",
+    "watch -n 5 cat /proc/{w}", "cat /etc/{w}.conf | less",
+]
+MOODS = [
+    "humming", "unreasonably cosy", "dangerously calm", "fully charged", "mildly smug", "on fire (the good kind)",
+    "perfectly fine", "suspiciously quiet", "extra crispy", "slightly haunted", "loaded", "dreaming", "in the zone",
+    "buffering", "very much alive", "plotting something", "ready", "unbothered",
+]
+
+
+def hashed(text):
+    return sum((i + 1) * ord(c) for i, c in enumerate(text))
+
+
+def made_up(name, rows):
+    """A real-looking command around one word of the name (or the effect names), answered in name words and effects."""
+    effects = [(re.sub(r"[^a-z0-9]+", " ", r[1].lower()).strip(), r[2]) for r in rows][:3]
+    words = [w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in STOP and w not in GENERIC and len(w) > 1]
+    named = bool(words)
+    if not words:
+        words = [w for e, _ in effects for w in e.split() if len(w) > 2 and w not in STOP]
+    if not words:
+        return None, None
+    seed = hashed(name.lower() + "|" + ",".join(e for e, _ in effects))
+    key = (max(words, key=len) if named else words[0])[:12]
+    cmd = "modprobe %s-glow" % key if not named else CMDS[seed % len(CMDS)].format(w=key)
+    fields = []
+    if named:
+        fields = ["%s: %s" % (w, MOODS[(seed + 5 * i + 3) % len(MOODS)]) for i, w in enumerate([w for w in words if w != key][:2])]
+        if not fields:
+            fields.append("%s: %s" % (key, MOODS[(seed + 3) % len(MOODS)]))
+    fields += [("%s %s" % (e, s)).strip() for e, s in effects if e]
+    out = fields[0]
+    for f in fields[1:]:
+        if len(out) + 3 + len(f) > 66:
+            break
+        out += " · " + f
+    return cmd, out
+
+
+def flavour(name, rows):
+    hit = match(name.lower())
+    if hit:
+        return hit
+    return made_up(name, rows)
+
+
+def rgb(c, bold=False):
+    return "\033[%s38;2;%d;%d;%dm" % ("1;" if bold else "", *c)
+
+
+def read(state, name):
+    try:
+        return open(os.path.join(state, name)).read().strip()
+    except OSError:
+        return ""
+
+
+def parts(state):
+    rows = []
+    for label, f, sf, icon, plain, col in PARTS:
+        v = read(state, f)
+        if v:
+            s = read(state, sf)
+            rows.append((label, v, (s + "%") if s.isdigit() else "", icon, plain, col))
+    return rows
+
+
+class Session:
+    def __init__(self, name, rows, plain):
+        self.name, self.rows, self.plain = name, rows, plain
+        self.cmd1 = "omashaders theme apply " + (('"%s"' % name) if " " in name else name)
+        self.cmd2, self.out2 = flavour(name, rows)
+        self.t_type1 = T_BLANK
+        self.t_enter1 = self.t_type1 + (len(self.cmd1) + CPF - 1) // CPF
+        self.t_apply = self.t_enter1 + 3
+        self.t_out1 = [self.t_apply + 3 + 3 * i for i in range(len(rows))]
+        self.t_done = (self.t_out1[-1] if rows else self.t_apply) + 4
+        self.t_type2 = self.t_done + 10
+        self.t_enter2 = self.t_type2 + ((len(self.cmd2) + CPF - 1) // CPF if self.cmd2 else 0)
+        self.t_out2 = self.t_enter2 + 4
+
+    def prompt(self, text, cursor):
+        s = rgb(DIM) + "~ " + rgb(GREEN, True) + "❯ " + "\033[0m" + rgb(FG) + text + "\033[0m"
+        if cursor:
+            s += "\033[48;2;%d;%d;%dm \033[0m" % CURSOR
+        return s
+
+    def frame(self, f):
+        blink = (f // 3) % 2 == 0
+        ic = lambda a, b: b if self.plain else a
+        lines = []
+        entered = f >= self.t_enter1
+        lines.append((rgb(DIM) + ic("\U000f018d", ">") + " " + self.name.lower() + " — omashaders" + "\033[0m") if entered else "")
+        n1 = len(self.cmd1) if entered else min(len(self.cmd1), max(0, (f - self.t_type1 + 1) * CPF))
+        lines.append(self.prompt(self.cmd1[:n1], blink and not entered))
+        if entered:
+            if f >= self.t_apply:
+                lines.append(rgb(GREEN) + ic("", "*") + " " + rgb(DIM) + 'applying theme "%s" ...' % self.name + "\033[0m")
+            else:
+                lines.append("")
+            width = max([11] + [len(r[1]) + 2 for r in self.rows])
+            for i, (label, v, s, icon, plain, col) in enumerate(self.rows):
+                if f < self.t_out1[i]:
+                    break
+                lines.append("  " + rgb(col) + ic(icon, plain) + " " + label.ljust(10) + "\033[0m" + rgb(FG) + v.ljust(width)
+                             + rgb(DIM) + s + "\033[0m")
+            if f >= self.t_done:
+                lines.append(rgb(GREEN) + ic("\uf00c", "v") + " " + rgb(DIM) + "done · %d layer%s applied" % (len(self.rows), "" if len(self.rows) == 1 else "s") + "\033[0m")
+                if not self.cmd2:
+                    lines.append(self.prompt("", blink) if f >= self.t_done + 3 else "")
+                elif f < self.t_type2:
+                    lines.append(self.prompt("", blink) if f >= self.t_done + 3 else "")
+                else:
+                    n2 = len(self.cmd2) if f >= self.t_enter2 else min(len(self.cmd2), (f - self.t_type2 + 1) * CPF)
+                    lines.append(self.prompt(self.cmd2[:n2], blink and f < self.t_enter2))
+                    if f >= self.t_out2:
+                        lines.append("  " + rgb(OUT2) + self.out2 + "\033[0m")
+                        lines.append(self.prompt("", blink and f >= self.t_out2 + 3) if f >= self.t_out2 + 3 else "")
+        return "\033[H" + "\r\n".join(l + "\033[K" for l in lines) + "\033[J"
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--go", default="")
+    p.add_argument("--duration", action="store_true", help="print how many seconds the session takes and exit")
+    p.add_argument("--state", required=True)
+    p.add_argument("--name", default="")
+    p.add_argument("--plain", action="store_true")
+    a = p.parse_args()
+    if a.duration:
+        sess = Session(a.name or "my theme", parts(a.state), False)
+        print("%.2f" % ((sess.t_out2 + 4) / FPS if sess.cmd2 else (sess.t_done + 4) / FPS))
+        return
+    if not a.go:
+        p.error("--go is required")
+    out = sys.stdout
+    out.write("\033[?25l\033[2J\033[H")
+    out.flush()
+    name = a.name or "my theme"
+    session = Session(name, [], a.plain)
+    start, t0, last = time.monotonic(), None, None
+    while True:
+        now = time.monotonic()
+        if t0 is None and os.path.exists(a.go):
+            t0 = now
+            session = Session(name, parts(a.state), a.plain)  # the look was applied after this terminal opened
+        f = int((now - t0) * FPS) if t0 is not None else int((now - start) * FPS) % 6
+        text = session.frame(f)
+        if text != last:
+            out.write(text)
+            out.flush()
+            last = text
+        time.sleep(0.01)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

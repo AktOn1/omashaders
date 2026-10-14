@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 
@@ -53,7 +54,7 @@ Item {
   readonly property string wallPreviewFile: stateDir + "/wp-preview"
   readonly property string wallFavFile: stateDir + "/wp-favorites"
   readonly property string mouseFavFile: stateDir + "/mouse-favorites"
-  readonly property string comboFile: stateDir + "/combos"
+  readonly property string themeFile: stateDir + "/themes"
   readonly property string sectionsFile: stateDir + "/sections"
   readonly property string shiftOnlyFile: stateDir + "/shift-only"
   readonly property string disabledFile: stateDir + "/disabled"
@@ -85,12 +86,28 @@ Item {
   readonly property string winColStrengthFile: stateDir + "/window-strength-color"
   readonly property int fps: Number(setting("fps", 30)) || 30
 
-  readonly property color fg: root.bar.barForeground
+  // popup text sits on Color.popups.background; bar.barForeground flips dark over a bright wallpaper (transparent bar) and made the menu unreadable
+  readonly property color fg: Color.popups.text
   function fgA(a) { return Qt.rgba(fg.r, fg.g, fg.b, a) }
+  function bgA(a) { var b = Color.popups.background; return Qt.rgba(b.r, b.g, b.b, a) }
+  function accA(a) { return Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, a) }
+  function kindHue(k) { return k === "screen" ? Qt.rgba(0.35, 0.60, 1.0, 1) : (k === "color" ? Qt.rgba(1.0, 0.55, 0.30, 1) : (k === "wall" ? Qt.rgba(0.35, 0.80, 0.55, 1) : (k === "mouse" ? Qt.rgba(0.75, 0.50, 1.0, 1) : Qt.rgba(0.95, 0.80, 0.30, 1)))) }
+  function prettyId(id) { var t = String(id).replace(/[-_]+/g, " "); return t.charAt(0).toUpperCase() + t.slice(1) }
   readonly property string boxOn: "󰄲"
   readonly property string boxOff: "󰄱"
   readonly property string checkGlyph: "󰄬"
   readonly property string barGlyph: "󰍹"
+  readonly property string favGlyph: "󰓎"
+  function rowGlyph(id) {
+    if (id === "fav") return favGlyph
+    if (id === "@random" || id === "surprise" || String(id).indexOf("@rand:") === 0) return "󰒟"
+    if (id === "@off" || String(id).indexOf("@clear:") === 0) return "󰐥"
+    if (id === "themes") return "󰏘"
+    if (id === "@share") return "󰒗"
+    if (id === "@import") return "󰋺"
+    if (id === "@ai") return "󰁨"
+    return ""
+  }
 
   function writeFile(file, content) {
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$(dirname "$1")" && printf %s "$2" > "$1"', "bash", file, content])
@@ -98,60 +115,70 @@ Item {
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
 
   // ---------------------------------------------------------------- which menus are shown
-  property bool showScreen: true
-  property bool showColor: true
-  property bool showWall: true
+  // Themes are always on the left; the other parts open to its right when the user picks them
+  property bool showScreen: false
+  property bool showColor: false
+  property bool showWall: false
   property bool showMouse: false
-  property bool showCombo: false
+  property bool showTheme: true
   property bool showWin: false
-  property string activeKind: "screen"
-  function isShown(k) { return k === "screen" ? showScreen : (k === "color" ? showColor : (k === "wall" ? showWall : (k === "mouse" ? showMouse : (k === "win" ? showWin : showCombo)))) }
-  function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : (k === "win" ? winSec : comboSec)))) }
+  property string activeKind: "theme"
+  function isShown(k) { return k === "screen" ? showScreen : (k === "color" ? showColor : (k === "wall" ? showWall : (k === "mouse" ? showMouse : (k === "win" ? showWin : true)))) }
+  function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : (k === "win" ? winSec : themeSec)))) }
   function kindIcon(k) { return k === "screen" ? "󰍹" : (k === "color" ? "󰏘" : (k === "wall" ? "󰋩" : (k === "mouse" ? "󰍽" : (k === "win" ? "󰖲" : "󰽗")))) }
-  function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : (k === "win" ? "Windows" : "Combos")))) }
-  // every column is always drawn; the ticks in the header (showX) only choose what Surprise all / Clear all act on
-  readonly property var visibleKinds: ["screen", "color", "wall", "mouse", "win", "combo"]
-  readonly property int nVis: visibleKinds.length
-  // effect menus that "off" and "surprise" act on; with only Combos shown they act on all three
-  readonly property var effectKinds: {
-    var k = visibleKinds.filter(function(x) { return x !== "combo" && isShown(x) })
-    return k.length > 0 ? k : ["screen", "color", "wall", "mouse"]
+  function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : (k === "win" ? "Windows" : "Themes")))) }
+  function kindKey(k) { return k === "screen" ? "s" : (k === "color" ? "C" : (k === "wall" ? "w" : (k === "mouse" ? "c" : (k === "win" ? "W" : "m")))) }
+  function kindAbout(k) {
+    return k === "screen" ? "The whole display gets an effect on top: old CRT look, glow, glitch, blur"
+         : (k === "color" ? "Changes the colours of everything you see: warm, cold, black-and-white, neon"
+         : (k === "wall" ? "The desktop background behind your windows, animated, can follow your mouse"
+         : (k === "mouse" ? "The mouse pointer: it leaves a trail, sparks or a glow"
+         : (k === "win" ? "Effects on single app windows (a terminal, a browser) instead of the whole screen" : "Complete looks"))))
   }
-  readonly property int nEffectVis: effectKinds.length
-  readonly property real comboWeight: 1
-  readonly property real colorWeight: 0.85
-  readonly property real widthUnits: 4 + colorWeight + comboWeight
-  readonly property string focusKind: visibleKinds.indexOf(activeKind) >= 0 ? activeKind : (visibleKinds[0] || "screen")
+  readonly property var partKinds: ["screen", "color", "wall", "mouse", "win"]
+  readonly property string partWord: "Effects"
+  // Themes first, then the parts the user has opened
+  readonly property var openParts: partKinds.filter(function(x) { return isShown(x) })
+  readonly property var visibleKinds: ["theme"].concat(openParts)
+  readonly property int nVis: visibleKinds.length
+  readonly property int nOpen: openParts.length
+  // the keys and the Surprise menu act on these four (Windows has its own per-app logic)
+  readonly property var effectKinds: ["screen", "color", "wall", "mouse"]
+  readonly property real themeWeight: 1.55
+  // the parts pane has one fixed width; open parts stack inside it and scroll
+  readonly property real partsUnits: 1.7
+  readonly property real widthUnits: themeWeight + partsUnits
+  readonly property string focusKind: visibleKinds.indexOf(activeKind) >= 0 ? activeKind : "theme"
   readonly property var activeSec: secOf(focusKind)
 
+  // one part is open at a time; if several are asked for, the first in this order wins
   function setShown(s, w, m, persist, c, k, x) {
-    if (c === undefined) c = showCombo
     if (k === undefined) k = showColor
     if (x === undefined) x = showWin
-    if (!s && !w && !m && !c && !k && !x) return
-    showScreen = s
-    showColor = k
-    showWall = w
-    showMouse = m
-    showCombo = c
-    showWin = x
-    if (persist) writeFile(sectionsFile, ["screen", "color", "wall", "mouse", "win", "combo"].filter(isShown).join(" "))
+    var want = { screen: s, color: k, wall: w, mouse: m, win: x }
+    var one = partKinds.filter(function(n) { return want[n] })[0] || ""
+    showScreen = one === "screen"
+    showColor = one === "color"
+    showWall = one === "wall"
+    showMouse = one === "mouse"
+    showWin = one === "win"
+    if (persist) writeFile(sectionsFile, [one, "theme"].filter(function(n) { return n !== "" }).join(" "))
+  }
+  function openOnly(kind, persist) {
+    setShown(kind === "screen", kind === "wall", kind === "mouse", persist, true, kind === "color", kind === "win")
   }
   function toggleSection(kind) {
-    setShown(kind === "screen" ? !showScreen : showScreen,
-             kind === "wall" ? !showWall : showWall,
-             kind === "mouse" ? !showMouse : showMouse, true,
-             kind === "combo" ? !showCombo : showCombo,
-             kind === "color" ? !showColor : showColor,
-             kind === "win" ? !showWin : showWin)
+    if (kind === "theme") return
+    var on = !isShown(kind)
+    openOnly(on ? kind : "", true)
+    activeKind = on ? kind : "theme"
   }
   function setSections(mode) {
     var w = String(mode).toLowerCase().split(/[\s,+]+/)
     var all = w.indexOf("all") >= 0
     var both = all || w.indexOf("both") >= 0
     setShown(both || w.indexOf("screen") >= 0, both || w.indexOf("wall") >= 0 || w.indexOf("wallpaper") >= 0,
-             all || w.indexOf("mouse") >= 0 || w.indexOf("cursor") >= 0, true,
-             all || w.indexOf("combo") >= 0 || w.indexOf("combos") >= 0,
+             all || w.indexOf("mouse") >= 0 || w.indexOf("cursor") >= 0, true, true,
              both || w.indexOf("color") >= 0 || w.indexOf("colour") >= 0,
              all || w.indexOf("win") >= 0)
   }
@@ -162,9 +189,7 @@ Item {
     onFileChanged: reload()
     onLoaded: {
       var t = String(text() || "")
-      var s = t.indexOf("screen") >= 0, w = t.indexOf("wall") >= 0, m = t.indexOf("mouse") >= 0, c = t.indexOf("combo") >= 0, k = t.indexOf("color") >= 0, x = t.indexOf("win") >= 0
-      if (!s && !w && !m && !c && !k && !x) { s = true; k = true; w = true }
-      root.setShown(s, w, m, false, c, k, x)
+      root.setShown(t.indexOf("screen") >= 0, t.indexOf("wall") >= 0, t.indexOf("mouse") >= 0, false, true, t.indexOf("color") >= 0, t.indexOf("win") >= 0)
     }
   }
 
@@ -350,13 +375,13 @@ Item {
   function strengthLiveOf(kind) { return kind === "color" ? colorOn : (kind === "wall" ? wallOn : (kind === "mouse" ? mouseOn : (kind === "winfx" ? winEffectOnS : (kind === "wincol" ? winColorOnS : shaderOn)))) }
   function strengthOf(kind) { return kind === "color" ? colStrength : (kind === "wall" ? wallStrength : (kind === "mouse" ? mouseStrength : (kind === "winfx" ? winFxStrengthS : (kind === "wincol" ? winColStrengthS : fxStrength)))) }
   function nudgeStrength(delta) {
-    if (focusKind === "combo") return
+    if (focusKind === "theme") return
     var kind = strengthKind(focusKind)
     if (!strengthLiveOf(kind)) return
     setStrength(kind, strengthOf(kind) + delta)
   }
   function resetStrength() {
-    if (focusKind === "combo") return
+    if (focusKind === "theme") return
     var kind = strengthKind(focusKind)
     if (!strengthLiveOf(kind)) return
     if (kind === "wall" || kind === "mouse") setStrength(kind, 100)
@@ -364,7 +389,8 @@ Item {
     else Quickshell.execDetached([root.script, "strength", kind, "reset"])
   }
   function setPower(mode) { Quickshell.execDetached([root.script, "power", mode]) }
-  function togglePause() { setPower(paused ? "on" : "off") }
+  property bool keysOpen: false
+  function togglePause() { setPower("toggle") }
   FileView {
     path: root.fxStrengthFile
     watchChanges: true
@@ -678,8 +704,7 @@ Item {
   // ---------------------------------------------------------------- screen shaders (Hyprland)
   property var allEntries: []          // { name, animated, motion, cat, desc, section, dflt = start strength in percent }
   property string current: ""
-  property string animatedFlag: ""
-  readonly property bool includeAnimated: animatedFlag !== "" ? animatedFlag === "1" : setting("includeAnimated", false) === true
+  // animated screen effects are always listed; the GPU strip shows what they cost
   readonly property bool shaderOn: current !== ""
   property var screenFavs: []
   property string screenOrigin: ""
@@ -688,14 +713,15 @@ Item {
 
   readonly property var screenEntries: allEntries.filter(function(e) { return e.section === "screen" })
   function screenItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: e.animated ? "heavy" : "" } }
-  readonly property var screenItems: screenEntries.filter(function(e) { return includeAnimated || !e.animated }).map(screenItem)
+  readonly property var screenItems: screenEntries.map(screenItem)
   readonly property var screenCats: {
     var out = [{ id: "fav", label: "Favorites", items: favList(screenItems, screenFavs), note: favNote }]
     catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
       out.push({ id: c, label: c,
-                 items: screenEntries.filter(function(e) { return e.cat === c && (includeAnimated || !e.animated) }).map(screenItem),
-                 note: (!includeAnimated && screenEntries.some(function(e) { return e.cat === c && e.animated })) ? "Heavy GPU use. Press a to turn animated screen effects on." : "" })
+                 items: screenEntries.filter(function(e) { return e.cat === c }).map(screenItem),
+                 note: "" })
     })
+    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
@@ -719,12 +745,9 @@ Item {
     screenPreviewed = false
     if (!keep) popupOpen = false
   }
-  function setAnimated() {
-    Quickshell.execDetached([root.script, "animated", root.includeAnimated ? "off" : "on"])
-  }
   function screenStep(verb) {
     var cmd = [root.script, verb]
-    if (root.includeAnimated && (verb === "next" || verb === "prev")) cmd.push("-a")
+    if (verb === "next" || verb === "prev") cmd.push("-a")
     Quickshell.execDetached(cmd)
   }
 
@@ -741,16 +764,9 @@ Item {
         var first = root.allEntries.length !== out.length
         root.allEntries = out
         if (first && root.popupOpen) { screenSec.sync(); colorSec.sync(); mouseSec.sync() }
+        if (root.afterList) { var f = root.afterList; root.afterList = null; f() }
       }
     }
-  }
-  FileView {
-    path: root.animatedFile
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
-    onLoaded: root.animatedFlag = String(text() || "").trim()
-    onLoadFailed: root.animatedFlag = ""
   }
   FileView {
     path: root.stateFile
@@ -774,6 +790,7 @@ Item {
       if (event.name === "configreloaded" && (root.shaderOn || root.colorOn)) reapplyTimer.restart()
       else if ((event.name === "openwindow" || event.name === "openlayer") && root.winAll && (root.winEffectOn || root.winColorOn)) winSyncTimer.restart()
       if (event.name === "configreloaded" && root.winFrameOn) frameReloadTimer.restart()
+      if (event.name === "configreloaded") pauseBindTimer.restart()
     }
   }
   Timer { id: frameReloadTimer; interval: 500; onTriggered: Quickshell.execDetached([root.script, "window", "frame", "reload"]) }
@@ -791,7 +808,7 @@ Item {
   readonly property var colorEntries: allEntries.filter(function(e) { return e.section === "color" })
   function colorItem(e) { return { id: e.name, label: e.name, desc: e.desc, hint: "" } }
   readonly property var colorItems: colorEntries.map(colorItem)
-  // a custom colour is the generated grade "custom-RRGGBB" (bin/compose-shader --custom), so it works with strength, favorites and combos like any other
+  // a custom colour is the generated grade "custom-RRGGBB" (bin/compose-shader --custom), so it works with strength, favorites and themes like any other
   readonly property var customRe: /^custom-[0-9a-f]{6}$/
   function colorFavItems() {
     var out = []
@@ -850,6 +867,7 @@ Item {
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
       out.push({ id: c, label: c, items: colorEntries.filter(function(e) { return e.cat === c }).map(colorItem), note: "" })
     })
+    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
@@ -946,9 +964,8 @@ Item {
 
   function winFxItem(e) { return { id: "e:" + e.name, label: e.name, desc: e.desc, hint: e.section === "winfx" ? "window" : (e.animated ? "heavy" : "") } }
   function winColItem(e) { return { id: "c:" + e.name, label: e.name, desc: e.desc, hint: "" } }
-  function winShownFx(e) { return e.section === "winfx" || includeAnimated || !e.animated }
   readonly property var winfxEntries: allEntries.filter(function(e) { return e.section === "winfx" })
-  readonly property var winEffectItems: winfxEntries.concat(screenEntries).filter(winShownFx).map(winFxItem)
+  readonly property var winEffectItems: winfxEntries.concat(screenEntries).map(winFxItem)
   readonly property var winAppItems: {
     var gsum = [winEffect, winColor].filter(function(x) { return x !== "" }).join(" + ")
     var out = [{ id: "t:*", label: "All windows", desc: "The setting for every window. Apps that have their own setting keep it.", hint: gsum }]
@@ -975,7 +992,7 @@ Item {
       if (items.length > 0) out.push({ id: "e:" + c, label: c, items: items, note: "Made for windows: they react to focus, the pointer and each window's own size." })
     })
     catList(screenEntries, ["Lens", "Retro", "Devices", "Art", "Mood", "Ambient", "Motion"]).forEach(function(c) {
-      var items = screenEntries.filter(function(e) { return e.cat === c && winShownFx(e) }).map(winFxItem)
+      var items = screenEntries.filter(function(e) { return e.cat === c }).map(winFxItem)
       if (items.length > 0) out.push({ id: "e:" + c, label: c, items: items, note: "" })
     })
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
@@ -983,6 +1000,7 @@ Item {
     })
     if (winScope === "*") winFrameCats.forEach(function(c) { out.push(c) })
     else out.push({ id: "@inherit", label: "Follow All windows", action: true })
+    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
@@ -1158,6 +1176,7 @@ Item {
     catList(mouseEntries, ["Focus", "Glow", "Trail", "Bend"]).forEach(function(c) {
       out.push({ id: c, label: c, items: mouseEntries.filter(function(e) { return e.cat === c }).map(mouseItem), note: "" })
     })
+    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
@@ -1209,6 +1228,7 @@ Item {
   readonly property var wallBase: [
     { id: "wall", label: "Wallpaper", items: [
       { id: "@pick", label: "Pick an image…", hint: root.wallStatus },
+      { id: "@wallhaven", label: "Wallhaven…", hint: "search and download" },
       { id: "@next", label: "Next wallpaper", hint: "" },
       { id: "@prev", label: "Previous wallpaper", hint: "" }
     ] },
@@ -1288,7 +1308,10 @@ Item {
       if (byKey[key] === undefined) { byKey[key] = groups.length; groups.push({ id: "wallcat:" + key, label: label, items: [] }) }
       return groups[byKey[key]]
     }
-    var out = wallBase.map(function(g) { return { id: g.id, label: g.label, items: g.items.slice() } })
+    var have = {}, loaded = allEntries.length > 0
+    allEntries.forEach(function(e) { if (e.section === "wall") have[e.name] = true })
+    // an effect the developer deleted (or a file that is missing) leaves the list; before the first listing everything shows
+    var out = wallBase.map(function(g, gi) { return { id: g.id, label: g.label, items: g.items.filter(function(it) { return gi === 0 || !loaded || have[it.id] === true }) } })
     var extraByLabel = {}
     for (var j = 1; j < out.length; j++) { extraByLabel[out[j].label.toLowerCase()] = out[j]; extraByLabel[out[j].id.toLowerCase()] = out[j] }
     var more = []
@@ -1313,6 +1336,7 @@ Item {
   readonly property var wallCats: {
     var out = [wallBase[0], { id: "fav", label: "Favorites", items: favList(wallEffects, wallFavs), note: favNote }]
     for (var i = 1; i < wallAll.length; i++) out.push(wallAll[i])
+    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
@@ -1365,6 +1389,7 @@ Item {
   function chooseWall(it, keep) {
     if (!it) return
     if (it.id === "@pick") pickWallpaper()
+    else if (it.id === "@wallhaven") openWallhaven()
     else if (it.id === "@next") wallStep("next")
     else if (it.id === "@prev") wallStep("prev")
     else setWall(it.id, keep)
@@ -1381,6 +1406,259 @@ Item {
     if (stepProc.running) return
     stepProc.command = [root.stepScript, action]
     stepProc.running = true
+  }
+  // the Wallhaven browser (Wallhaven.qml) is loaded the first time it opens
+  property bool whOpen: false
+  property bool whLoaded: false
+  property bool aiAvailable: false
+  function openWallhaven() {
+    popupOpen = false
+    whLoaded = true
+    Qt.callLater(function() { root.whOpen = true })
+  }
+  function wallhavenUsed(id) {
+    wallStatus = "Wallhaven " + id
+    resolver.running = true
+  }
+  function aiThemeFromWallhaven(id) { openDialog("ai", id, 0) }
+
+  // the theme dialog (ThemeDialog.qml: AI theme, share code, import code) is loaded the first time it opens
+  property bool dlgOpen: false
+  property bool dlgLoaded: false
+  property string dlgMode: "ai"
+  property string dlgWh: ""
+  property int dlgNum: 0
+  property string dlgJob: ""
+  function openDialog(mode, whId, num, jobId) {
+    popupOpen = false
+    whOpen = false
+    dlgMode = mode
+    dlgWh = whId
+    dlgNum = num
+    dlgJob = jobId || ""
+    refreshJobs()
+    dlgLoaded = true
+    Qt.callLater(function() { root.dlgOpen = true })
+  }
+  // Share: the selected saved theme, else the look that is on now; the dialog lets you pick which parts go into the code
+  function startShare() {
+    var it = themeSec.selected
+    var n = it && it.id.charAt(0) !== "@" ? themes.indexOf(it.id) + 1 : 0
+    if (n < 1 && themeNow === "|||") { flash("Nothing to share: every effect is off. Pick a theme or switch something on first"); return }
+    openDialog("share", "", n)
+  }
+  // Save: a small window asks for the name (F)
+  function startSave() {
+    if (themeNow === "|||") { flash("Nothing to save: every effect is off"); return }
+    var dup = themes.filter(function(c) { return themeMatchesNow(c) })
+    if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return }
+    openDialog("save", "", 0)
+  }
+  // Record GIF: bin/gif-capture clears the desktop, counts down (gifCount drives the number below), records and restores
+  property int gifCount: 0
+  property string gifMonitor: ""
+  readonly property string gifScript: path("bin/gif-capture")
+  function gifName() {
+    for (var i = 0; i < themes.length; i++) {
+      if (!themeMatchesNow(themes[i])) continue
+      var nm = themes[i].split("|")[4]
+      if (nm) return nm
+    }
+    return ""
+  }
+  function recordGif(seconds, out) {
+    popupOpen = false
+    whOpen = false
+    var cmd = ["python3", gifScript, "--name", gifName()]
+    if (seconds > 0) cmd = cmd.concat(["--seconds", String(seconds)])
+    if (out !== "") cmd = cmd.concat(["--out", out])
+    Quickshell.execDetached(cmd)
+  }
+  // Share GIF: put the shared look on, record it with the code in the borders (bin/gif-capture --share), then bring the old look back
+  property string gifRestoreLine: ""
+  function recordShareGif(line, payloadFile, name) {
+    popupOpen = false
+    whOpen = false
+    dlgOpen = false
+    gifRestoreLine = lookLine()
+    if (line.replace(/\|/g, "") !== "" && !themeMatchesNow(line)) applyTheme(themeItem(line), true)
+    Quickshell.execDetached(["python3", gifScript, "--share", payloadFile, "--name", name])
+  }
+  function gifFinished() {
+    var l = gifRestoreLine
+    gifRestoreLine = ""
+    if (l !== "") restoreLook(l)
+  }
+  Variants {
+    model: root.gifCount > 0 ? Quickshell.screens : []
+    PanelWindow {
+      id: gifWin
+      required property var modelData
+      screen: modelData
+      visible: modelData.name === root.gifMonitor
+      color: "transparent"
+      exclusionMode: ExclusionMode.Ignore
+      anchors { top: true; bottom: true; left: true; right: true }
+      mask: Region {}
+      WlrLayershell.layer: WlrLayer.Overlay
+      WlrLayershell.namespace: "omashaders-gif-countdown"
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+      Item {
+        anchors.fill: parent
+        focus: true
+        Keys.onPressed: function(event) {
+          if (event.key === Qt.Key_Escape) { Quickshell.execDetached([root.gifScript, "cancel"]); event.accepted = true }
+        }
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(96)
+          height: width
+          radius: width / 2
+          color: root.bgA(0.8)
+          border.width: Style.space(2)
+          border.color: root.fgA(0.5)
+          Text {
+            anchors.centerIn: parent
+            text: String(root.gifCount)
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.space(56)
+            font.bold: true
+          }
+        }
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: parent.height / 2 + Style.space(64)
+          text: "Recording a GIF, Esc cancels"
+          color: root.fg
+          style: Text.Outline
+          styleColor: root.bgA(0.9)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+        }
+      }
+    }
+  }
+  FxHost {
+    active: root.dlgLoaded
+    source: root.sub("ThemeDialog.qml")
+    props: ({ core: root, open: root.dlgOpen, mode: root.dlgMode, whId: root.dlgWh, number: root.dlgNum })
+  }
+  // the AI provider: the theme dialog remembers the last pick (bin/ai-theme use); the plugin settings aiProvider / aiModel / aiCommand
+  // seed it, and changing a setting updates the remembered pick. bin/ai-theme check says whether it can run
+  readonly property string aiCommand: String(setting("aiCommand", "") || "")
+  readonly property string aiProviderSetting: String(setting("aiProvider", "Remembered choice") || "")
+  readonly property string aiModelSetting: String(setting("aiModel", "") || "")
+  readonly property var aiProviderIds: ({ "Claude Code": "claude", "Codex": "codex", "Gemini CLI": "gemini", "OpenCode": "opencode", "Ollama (local)": "ollama", "Custom command": "custom" })
+  property string aiHint: ""
+  property bool aiStrong: true
+  property string aiProviderNow: "claude"
+  property string aiModelNow: ""
+  property var afterList: null
+  function reloadList(fn) { if (fn) afterList = fn; lister.running = true }
+  function lookLine() {
+    var q = themeNow.split("|")
+    return themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", "", q[5] || "", q[6] || "", q[7] || "", currentOpts())
+  }
+  function restoreLook(line) {
+    if (String(line).replace(/\|/g, "") === "") offAll()
+    else applyTheme(themeItem(line), true)
+  }
+  function refreshAi() { if (!aiCheck.running) aiCheck.running = true }
+  function aiEnv() { return ({ OMASHADERS_AI_CMD: root.aiCommand, OMASHADERS_AI_PROVIDER: root.aiProviderIds[root.aiProviderSetting] || "", OMASHADERS_AI_MODEL: root.aiModelSetting }) }
+  function pushAiSetting() {
+    var id = root.aiProviderIds[root.aiProviderSetting]
+    var cmd = [root.python, root.path("bin/ai-theme"), "use"]
+    if (id) { cmd.push(id); if (root.aiModelSetting !== "") { cmd.push("--model"); cmd.push(root.aiModelSetting) } }
+    else if (root.aiModelSetting !== "") { cmd.push("--model"); cmd.push(root.aiModelSetting) }
+    else if (root.aiCommand === "") return
+    if (root.aiCommand !== "") { cmd.push("--custom"); cmd.push(root.aiCommand) }
+    Quickshell.execDetached(cmd)
+    aiRefreshTimer.restart()
+  }
+  readonly property string python: "python3"
+  Timer { id: aiRefreshTimer; interval: 700; onTriggered: root.refreshAi() }
+  onAiCommandChanged: if (root.ready) pushAiSetting(); else refreshAi()
+  onAiProviderSettingChanged: if (root.ready) pushAiSetting()
+  onAiModelSettingChanged: if (root.ready) pushAiSetting()
+  Process {
+    id: aiCheck
+    command: ["python3", root.path("bin/ai-theme"), "check", "--json"]
+    environment: root.aiEnv()
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim())
+          root.aiAvailable = d.available === true; root.aiHint = String(d.hint || "")
+          root.aiStrong = d.strong !== false; root.aiProviderNow = String(d.provider || "claude"); root.aiModelNow = String(d.model || "")
+        }
+        catch (e) { root.aiAvailable = false; root.aiHint = "Could not run bin/ai-theme." }
+      }
+    }
+  }
+
+  // ---- the AI theme creator as background jobs (bin/aijobs.py). The jobs run outside the shell and the dialog; Core only asks how they are doing.
+  // A finished theme waits as a draft (Made by AI) until it is saved or discarded; ThemeDialog.qml attaches to a job by id.
+  property var jobs: []
+  property var jobRows: []          // [{ id, sig }]: changes only when a job appears, ends or changes state, so the Themes rows are not rebuilt on every poll
+  property var jobsForm: ({})       // the prompt and settings the dialog restores
+  property var jobLook: ({})        // job id -> { prev: the look before its draft was shown, applied: bool, key: which draft is on screen }
+  property real jobClock: Date.now()
+  readonly property int jobsRunning: { var n = 0; for (var i = 0; i < jobs.length; i++) if (jobs[i].alive) n++; return n }
+  readonly property string jobsPath: path("bin/aijobs.py")
+  function jobById(id) { for (var i = 0; i < jobs.length; i++) if (jobs[i].id === id) return jobs[i]; return null }
+  function refreshJobs() { if (!jobsProc.running) jobsProc.running = true }
+  function jobTitle(j) { return j.name !== "" ? j.name : (j.request !== "" ? j.request : "Surprise me") }
+  function clockText(sec) { sec = Math.max(0, Math.floor(sec)); return Math.floor(sec / 60) + ":" + (sec % 60 < 10 ? "0" : "") + (sec % 60) }
+  function jobElapsed(j) { return j.alive ? Math.max(0, Math.floor(root.jobClock / 1000) - (j.run_started || j.started)) : j.elapsed }
+  function jobRowText(j) {
+    if (j.alive) return "Making: " + jobTitle(j) + "…  step " + j.step + "/" + j.steps_total + ", " + clockText(jobElapsed(j))
+    if (j.has_result) return "Made by AI: " + jobTitle(j) + " (review)"
+    return (j.state === "interrupted" ? "Interrupted: " : "Failed: ") + jobTitle(j) + " (retry)"
+  }
+  // what Themes shows: running, finished and stopped jobs (a cancelled one is gone from view)
+  function jobCats() {
+    var out = []
+    for (var i = 0; i < jobRows.length; i++) out.push({ id: "@job:" + jobRows[i].id, label: "Made by AI", job: jobRows[i].id, action: true })
+    return out
+  }
+  function jobTip(id) { var j = jobById(id); return j ? jobRowText(j) + (j.alive ? ". It keeps running if you close the menu. Enter opens it." : ". Enter opens it.") : "" }
+  function notify(title, body) { Quickshell.execDetached(["notify-send", "-a", "OmaShaders", "-t", "5000", "-i", "applications-graphics", title, body]) }
+  Process {
+    id: jobsProc
+    command: [root.python, root.jobsPath, "list", "--json"]
+    environment: root.aiEnv()
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var d = null
+        try { d = JSON.parse(String(text).trim()) } catch (e) { d = null }
+        if (!d || !d.ok) return
+        var l = d.jobs.filter(function(j) { return j.state !== "cancelled" })
+        var sig = l.map(function(j) { return j.id + ":" + j.state + ":" + j.turn }).join(",")
+        root.jobs = l
+        root.jobsForm = d.form || ({})
+        root.jobsMax = d.max || 2
+        root.jobClock = Date.now()
+        if (sig !== root.jobSig) { root.jobSig = sig; root.jobRows = l.map(function(j) { return { id: j.id } }) }
+      }
+    }
+  }
+  property string jobSig: ""
+  property int jobsMax: 2
+  Timer {
+    interval: root.jobsRunning > 0 ? 2000 : 12000
+    running: root.ready
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.refreshJobs()
+  }
+  Timer { interval: 1000; running: root.jobsRunning > 0; repeat: true; onTriggered: root.jobClock = Date.now() }
+  FxHost {
+    active: root.whLoaded
+    source: root.sub("Wallhaven.qml")
+    props: ({ core: root, open: root.whOpen })
   }
   function pickWallpaper() {
     popupOpen = false
@@ -1486,6 +1764,7 @@ Item {
   FxHost {
     source: root.sub("WallpaperFx.qml")
     props: ({
+      genDir: "file://" + root.stateDir + "/generated",
       strength: root.wallStrength / 100,
       react: root.wallReact / 100,
       speed: root.wallSpeed / 100,
@@ -1501,7 +1780,7 @@ Item {
       mixMode: root.wallMixMode,
       mixAmount: root.wallMixAmt / 100,
       wallpaper: root.wallpaperPath,
-      mouse: root.cursorLive ? root.cursor : Qt.point(-10000, -10000),
+      mouse: root.cursor,
       fps: root.fps,
       cBg: root.pal("background", "#050318"),
       cBlue: root.pal("bright_blue", "#7a8cff"),
@@ -1531,6 +1810,15 @@ Item {
       appid: "omashaders"
       name: "shift"
       onPressed: root.shiftDown = true
+      onReleased: root.shiftDown = false
+    }
+  }
+  Loader {
+    active: root.fxHost && root.shiftOnly
+    sourceComponent: GlobalShortcut {
+      appid: "omashaders"
+      name: "shiftup"
+      onPressed: root.shiftDown = false
       onReleased: root.shiftDown = false
     }
   }
@@ -1573,6 +1861,7 @@ Item {
   FxHost {
     source: root.sub("MouseFx.qml")
     props: ({
+      genDir: "file://" + root.stateDir + "/generated",
       strength: root.mouseStrength / 100,
       effect: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : "",
       motion: root.mouseMotion,
@@ -1616,85 +1905,159 @@ Item {
   }
 
   // ---------------------------------------------------------------- combination favorites
-  // A combo is the Screen effect, Wallpaper effect, Cursor effect and Color together, plus optionally the Windows effect, colour and frame; one line per combo
+  // A theme is the Screen effect, Wallpaper effect, Cursor effect and Color together, plus optionally the Windows effect, colour and frame; one line per theme
   // in the state file: "screen|wall|mouse|color", "...|name" or "...|name|winEffect|winColor|winFrame" (an empty part means off; older 3-part lines have no colour; the name is optional, set with n;
-  // lines without the window fields leave the Windows settings as they are when applied).
-  property var combos: []
-  property string comboFlash: ""
-  function comboCompose(s, w, m, c, name, wf, wc, wr) {
-    var win = (wf || wc || wr) ? true : false
+  // lines without the window fields turn the Windows effect, colour and frame off when applied: an empty part is always empty).
+  // An optional 9th field holds numbers: "fx=60,col=70,wall=65,cur=70,wspeed=100,wzoom=100,wh=ID" (strengths, wallpaper speed and zoom, the
+  // Wallhaven picture id); applying a theme sets the ones that are there. Lines without it leave the strengths alone.
+  property var themes: []
+  property string themeFlash: ""
+  function themeCompose(s, w, m, c, name, wf, wc, wr, opts) {
+    var win = (wf || wc || wr || opts) ? true : false
     var out = [s, w, m, c]
     if (name || win) out.push(name || "")
     if (win) out.push(wf || "", wc || "", wr || "")
+    if (opts) out.push(opts)
     return out.join("|")
   }
-  function comboKey(s, w, m, c, wf, wc, wr) { return comboCompose(s, w, m, c, "", wf, wc, wr) }
-  function comboBase(line) {
+  function themeKey(s, w, m, c, wf, wc, wr) { return themeCompose(s, w, m, c, "", wf, wc, wr) }
+  function themeBase(line) {
     var p = line.split("|")
-    return comboCompose(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", p[5] || "", p[6] || "", p[7] || "")
+    return themeCompose(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", p[5] || "", p[6] || "", p[7] || "")
   }
-  function comboHasWin(line) { var p = line.split("|"); return (p[5] || p[6] || p[7]) ? true : false }
-  function comboMatchesNow(line) {
+  function themeHasWin(line) { var p = line.split("|"); return (p[5] || p[6] || p[7]) ? true : false }
+  function themeMatchesNow(line) {
     var p = line.split("|")
-    var a = comboKey(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", "", "")
-    var b = comboKey(current, wallShown, mouseCurrent, colorCurrent, "", "", "")
+    var a = themeKey(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", "", "")
+    var b = themeKey(current, wallShown, mouseCurrent, colorCurrent, "", "", "")
     if (a !== b) return false
-    return !comboHasWin(line) || ((p[5] || "") === winEffect && (p[6] || "") === winColor && (p[7] || "") === winFrame)
+    return !themeHasWin(line) || ((p[5] || "") === winEffect && (p[6] || "") === winColor && (p[7] || "") === winFrame)
   }
-  function comboItem(line) {
+  readonly property var optRanges: ({ fx: [0, 100], col: [0, 100], wall: [0, 100], cur: [0, 100], wspeed: [0, 300], wzoom: [25, 300] })
+  function parseOpts(str) {
+    var o = {}
+    String(str || "").split(",").forEach(function(part) {
+      var kv = part.split("=")
+      if (kv.length !== 2) return
+      if (optRanges[kv[0]] !== undefined && /^[0-9]{1,3}$/.test(kv[1])) o[kv[0]] = clamp(parseInt(kv[1]), optRanges[kv[0]][0], optRanges[kv[0]][1])
+      else if (kv[0] === "wh" && /^[a-z0-9]{6}$/.test(kv[1])) o.wh = kv[1]
+    })
+    return o
+  }
+  // the numbers of the current look, in the 9th theme field form; "wh" only when the wallpaper image came from Wallhaven
+  function currentOpts() {
+    var o = []
+    if (shaderOn) o.push("fx=" + fxStrength)
+    if (colorOn) o.push("col=" + colStrength)
+    if (wallOn) {
+      o.push("wall=" + wallStrength)
+      if (wallSpeed !== 100) o.push("wspeed=" + wallSpeed)
+      if (wallZoom !== 100) o.push("wzoom=" + wallZoom)
+    }
+    if (mouseOn) o.push("cur=" + mouseStrength)
+    var m = /\/wallhaven-([a-z0-9]{6})\.[A-Za-z]+$/.exec(wallpaperPath)
+    if (m) o.push("wh=" + m[1])
+    return o.join(",")
+  }
+  // ids that exist now, by kind; a theme part whose effect was deleted counts as empty, so the theme still applies cleanly
+  readonly property var haveIds: {
+    var h = { shader: {}, color: {}, wall: {}, mouse: {}, frame: {}, loaded: allEntries.length > 0 }
+    allEntries.forEach(function(e) {
+      var k = (e.section === "screen" || e.section === "winfx") ? "shader" : e.section
+      if (h[k]) h[k][e.name] = true
+    })
+    return h
+  }
+  function partOr(kind, id) {
+    if (id === "" || !haveIds.loaded) return id
+    if (kind === "color" && /^custom-[0-9a-fA-F]{6}$/.test(id)) return id
+    return haveIds[kind][id] === true ? id : ""
+  }
+  function themeItem(line) {
     var p = line.split("|")
-    var s = p[0] || "", w = p[1] || "", m = p[2] || "", c = p[3] || "", name = p[4] || ""
-    var wf = p[5] || "", wc = p[6] || "", wr = p[7] || "", hasWin = comboHasWin(line)
+    var s = partOr("shader", p[0] || ""), w = partOr("wall", p[1] || ""), m = partOr("mouse", p[2] || ""), c = partOr("color", p[3] || ""), name = p[4] || ""
+    var wf = partOr("shader", p[5] || ""), wc = partOr("color", p[6] || ""), wr = partOr("frame", p[7] || ""), hasWin = (wf || wc || wr) ? true : false
+    var opts = parseOpts(p[8] || "")
     var winNames = [wf, wc, wr].filter(function(x) { return x !== "" })
     var names = [s, c, w !== "" ? wallLabel(w) : "", m].concat(winNames).filter(function(x) { return x !== "" })
     var parts = "Screen " + (s || "off") + " · Color " + (c || "off") + " · Wallpaper " + (w !== "" ? wallLabel(w) : "off") + " · Cursor " + (m || "off")
                 + (hasWin ? " · Windows " + winNames.join(" + ") : "")
-    return { id: line, screen: s, wall: w, mouse: m, color: c, name: name, hasWin: hasWin, winFx: wf, winCol: wc, winFrame: wr,
+    var pieces = []
+    if (s !== "") pieces.push({ kind: "screen", text: prettyId(s) })
+    if (w !== "") pieces.push({ kind: "wall", text: wallLabel(w) })
+    if (c !== "") pieces.push({ kind: "color", text: prettyId(c) })
+    if (m !== "") pieces.push({ kind: "mouse", text: prettyId(m) })
+    if (hasWin) pieces.push({ kind: "win", text: winNames.map(prettyId).join(" + ") })
+    return { id: line, screen: s, wall: w, mouse: m, color: c, name: name, hasWin: hasWin, winFx: wf, winCol: wc, winFrame: wr, opts: opts, pieces: pieces,
              label: name !== "" ? name : names.join(" + "), desc: parts }
   }
-  readonly property var comboItems: combos.map(comboItem)
-  readonly property string comboNow: comboKey(current, wallShown, mouseCurrent, colorCurrent, winEffect, winColor, winFrame)
-  readonly property string comboNowId: {
-    for (var i = 0; i < combos.length; i++) if (comboMatchesNow(combos[i])) return combos[i]
-    return comboNow
+  readonly property var themeItems: themes.map(themeItem)
+  readonly property string themeNow: themeKey(current, wallShown, mouseCurrent, colorCurrent, winEffect, winColor, winFrame)
+  readonly property string themeNowId: {
+    for (var i = 0; i < themes.length; i++) if (themeMatchesNow(themes[i])) return themes[i]
+    return themeNow
   }
   property bool renaming: false
   property string renameId: ""
-  readonly property var comboCats: [
-    { id: "combos", label: "Saved", items: comboItems,
-      note: "No combos yet. Set up Screen, Color, Wallpaper and Cursor the way you like, then press F." },
-    { id: "@save", label: "Save current  (F)", action: true }
-  ]
-  function flash(msg) { comboFlash = msg; comboFlashTimer.restart() }
-  Timer { id: comboFlashTimer; interval: 3000; onTriggered: root.comboFlash = "" }
+  // "Surprise me" lives here instead of in the header: pick what should be shuffled
+  readonly property var surpriseItems: {
+    var out = [
+      { id: "@rand:theme", label: "A random complete theme", desc: "Applies one of the themes in the list" },
+      { id: "@rand:all", label: "Surprise: everything", desc: "A new random Screen effect, Color grade, Wallpaper and Cursor" }
+    ]
+    effectKinds.forEach(function(k) { out.push({ id: "@rand:" + k, label: "Surprise: only " + kindTitle(k), desc: "Shuffles just the " + kindTitle(k) + " part and leaves the rest as it is" }) })
+    if (winPlugin !== "missing") out.push({ id: "@rand:win", label: "Surprise: only Windows", desc: "Shuffles the effect on all windows" })
+    out.push({ id: "@clear:all", label: "Clear everything", desc: "Switches Screen, Color, Wallpaper and Cursor off (a saved theme brings them back)" })
+    return out
+  }
+  function runSurprise(id) {
+    var w = id.split(":")[1]
+    var isClear = id.indexOf("@clear:") === 0
+    if (isClear) { offAll(); flash("Cleared: Screen, Color, Wallpaper, Cursor"); return }
+    if (w === "theme") {
+      var pool = themeItems.filter(function(t) { return !themeMatchesNow(t.id) })
+      if (pool.length > 0) { var t = pool[Math.floor(Math.random() * pool.length)]; applyTheme(t, true); flash("Random theme: " + t.label) }
+    } else if (w === "all") { randomAll(); flash("Surprise: everything shuffled") }
+    else { randomIn(w); flash("Surprise: " + kindTitle(w) + " shuffled") }
+  }
+  readonly property var themeCats: [
+    { id: "themes", label: "All themes", items: themeItems,
+      note: "No themes yet. Set up Screen, Color, Wallpaper and Cursor the way you like, then press F." },
+    { id: "surprise", label: "Surprise me  (R)", items: surpriseItems, note: "" }
+  ].concat(jobCats()).concat([
+    { id: "@share", label: "Share  (S)", action: true },
+    { id: "@import", label: "Import theme  (i)", action: true },
+    { id: "@ai", label: "Create with AI (T)", action: true }
+  ])
+  function flash(msg, ms) { themeFlash = msg; themeFlashTimer.interval = ms || 3000; themeFlashTimer.restart() }
+  Timer { id: themeFlashTimer; interval: 3000; onTriggered: root.themeFlash = "" }
 
-  // the developer's own copy ships what they save: with a "dev-export" file in the state folder, every save or remove also rewrites starter-combos
-  function writeCombos() {
+  // the developer's own copy ships what they save: with a "dev-export" file in the state folder, every save or remove also rewrites starter-themes
+  function writeThemes() {
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1" && printf %s "$2" > "$3" && [ -e "$1/dev-export" ] && printf %s "$2" > "$4"; true', "bash",
-                             stateDir, combos.join("\n"), comboFile, path("starter-combos")])
+                             stateDir, themes.join("\n"), themeFile, path("starter-themes")])
   }
-  function saveCombo() {
-    var key = comboNow
+  function saveTheme(name) {
+    var key = themeNow
     if (key === "|||") { flash("Nothing to save: every effect is off"); return }
-    var label = comboItem(key).label
-    var dup = combos.filter(function(c) { return comboMatchesNow(c) })
-    if (dup.length > 0) { flash("Already saved: " + comboItem(dup[0]).label); return }
-    combos = combos.concat([key])
-    writeCombos()
-    flash("Saved combo: " + label)
+    var nm = String(name || "").replace(/[|\r\n]/g, " ").trim().slice(0, 40)
+    var dup = themes.filter(function(c) { return themeMatchesNow(c) })
+    if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return }
+    var opts = currentOpts()
+    var q = key.split("|")
+    if (opts !== "" || nm !== "") key = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", nm, q[5] || "", q[6] || "", q[7] || "", opts)
+    themes = themes.concat([key])
+    writeThemes()
+    flash("Saved theme: " + themeItem(key).label)
   }
-  function deleteCombo(id) {
-    if (combos.indexOf(id) < 0) return
-    combos = combos.filter(function(c) { return c !== id })
-    writeCombos()
-    var s = comboSec
-    if (s.curItems.length === 0) s.col = 0
-    else s.itemIdx = clamp(s.itemIdx, 0, s.curItems.length - 1)
-    flash("Removed combo: " + comboItem(id).label)
+  // delete a theme: bin/oms-delete refuses the built-in ones ("Built-in theme, cannot be deleted") unless the developer switch is on
+  function deleteTheme(id) {
+    if (themes.indexOf(id) < 0) return
+    delRun.start(["rm", "theme", "--line", id, "--yes"], "theme:" + id)
   }
   function startRename() {
-    if (focusKind !== "combo") return
-    var it = comboSec.selected
+    if (focusKind !== "theme") return
+    var it = themeSec.selected
     if (!it || it.id.charAt(0) === "@") return
     renameId = it.id
     renameField.text = it.name
@@ -1707,51 +2070,104 @@ Item {
     renaming = false
     renameId = ""
     leaveSearch()
-    if (save) renameCombo(id, renameField.text)
+    if (save) renameTheme(id, renameField.text)
   }
-  function renameCombo(id, name) {
-    var i = combos.indexOf(id)
+  function renameTheme(id, name) {
+    if (themes.indexOf(id) < 0) return
+    renameCheck.pendingId = id
+    renameCheck.pendingName = String(name)
+    renameCheck.command = ["python3", root.path("bin/oms-delete"), "check", "theme", "--line", id, "--json"]
+    renameCheck.running = true
+  }
+  // a built-in theme is never changed: renaming it saves a copy under the new name (the developer switch renames it in place)
+  Process {
+    id: renameCheck
+    property string pendingId: ""
+    property string pendingName: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var builtinCopy = false
+        try { var d = JSON.parse(String(text).trim()); builtinCopy = d.builtin === true && d.dev !== true } catch (e) { builtinCopy = false }
+        root.applyRename(renameCheck.pendingId, renameCheck.pendingName, builtinCopy)
+      }
+    }
+  }
+  function applyRename(id, name, asCopy) {
+    var i = themes.indexOf(id)
     if (i < 0) return
     var n = String(name).replace(/[|\r\n]/g, " ").trim().slice(0, 40)
     var q = id.split("|")
-    var line = comboCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", n, q[5] || "", q[6] || "", q[7] || "")
-    var next = combos.slice()
+    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", n, q[5] || "", q[6] || "", q[7] || "", q[8] || "")
+    if (asCopy) {
+      if (line === id || themes.indexOf(line) >= 0) { flash("Built-in theme, kept as it is"); return }
+      var withCopy = themes.slice()
+      withCopy.splice(i + 1, 0, line)
+      themes = withCopy
+      writeThemes()
+      flash("Built-in theme kept. Saved your own copy: " + themeItem(line).label)
+      return
+    }
+    var next = themes.slice()
     next[i] = line
-    combos = next
-    writeCombos()
-    flash(n !== "" ? "Renamed combo: " + n : "Name cleared: " + comboItem(line).label)
+    themes = next
+    writeThemes()
+    flash(n !== "" ? "Renamed theme: " + n : "Name cleared: " + themeItem(line).label)
   }
-  function previewCombo(it) {
+  function previewTheme(it) {
     if (!it || it.id.charAt(0) === "@") return
     previewScreen({ id: it.screen })
     previewColor({ id: it.color })
     previewMouse({ id: it.mouse })
     if (it.wall !== "") previewWall({ id: it.wall })
   }
-  function applyCombo(it, keep) {
+  function applyTheme(it, keep) {
     if (!it || it.id.charAt(0) === "@") return
     chooseScreen({ id: it.screen }, true)
     chooseColor({ id: it.color }, true)
     chooseMouse({ id: it.mouse }, true)
+    wallMixSet("")
     setWall(it.wall, true)
-    if (it.hasWin) {
+    if (it.hasWin || winEffect !== "" || winColor !== "" || winFrame !== "") {
       Quickshell.execDetached(["bash", "-c", 'w() { if [ -n "$3" ]; then "$1" window "$2" set "$3"; else "$1" window "$2" off; fi; }; w "$1" effect "$2" >/dev/null 2>&1; w "$1" color "$3" >/dev/null 2>&1; w "$1" frame "$4" >/dev/null 2>&1; true',
                                "bash", root.script, it.winFx, it.winCol, it.winFrame])
     }
+    if (it.opts && Object.keys(it.opts).length > 0) { pendingOpts = it.opts; optsTimer.restart() }
     if (!keep) popupOpen = false
   }
-  function comboAt(n) {
+  // choosing an effect resets its strength to the start value a moment later, so the theme's numbers go on last
+  property var pendingOpts: ({})
+  Timer {
+    id: optsTimer
+    interval: 1200
+    onTriggered: {
+      var o = root.pendingOpts
+      if (o.fx !== undefined && root.shaderOn) root.setStrength("effect", o.fx)
+      if (o.col !== undefined && root.colorOn) root.setStrength("color", o.col)
+      if (o.wall !== undefined && root.wallOn) root.setStrength("wall", o.wall)
+      if (o.cur !== undefined && root.mouseOn) root.setStrength("mouse", o.cur)
+      if (o.wspeed !== undefined && root.wallOn) root.setWallSpeed(o.wspeed)
+      if (o.wzoom !== undefined && root.wallOn) root.setWallZoom(o.wzoom)
+      root.pendingOpts = ({})
+    }
+  }
+  function applyThemeLine(line) {
+    var it = themeItem(line)
+    applyTheme(it, true)
+    flash("Applied: " + it.label)
+  }
+  function themeAt(n) {
     var i = Math.floor(Number(n)) - 1
-    return i >= 0 && i < combos.length ? comboItem(combos[i]) : null
+    return i >= 0 && i < themes.length ? themeItem(themes[i]) : null
   }
   FileView {
-    path: root.comboFile
+    path: root.themeFile
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.combos = String(text() || "").split("\n").map(function(l) { return l.split("|").length === 3 ? l + "|" : l })
-                                .filter(function(l) { var n = l.split("|").length; return (n === 4 || n === 5 || n === 8) && root.comboBase(l) !== "|||" })
-                                .map(function(l) { return l.split("|").length === 5 && l.split("|")[4] === "" ? root.comboBase(l) : l })
+    onLoaded: root.themes = String(text() || "").split("\n").map(function(l) { return l.split("|").length === 3 ? l + "|" : l })
+                                .filter(function(l) { var n = l.split("|").length; return (n === 4 || n === 5 || n === 8 || n === 9) && root.themeBase(l) !== "|||" })
+                                .map(function(l) { return l.split("|").length === 5 && l.split("|")[4] === "" ? root.themeBase(l) : l })
   }
 
   // ---------------------------------------------------------------- measured cost (bin/perf-log) and the "Active now" list
@@ -1777,30 +2193,254 @@ Item {
   function perfName(n) { return n.indexOf("custom-") === 0 ? "custom" : n }
   readonly property var activeNow: {
     var a = []
-    function add(sec, key, text) { a.push({ sec: sec, key: key, text: text }) }
+    function add(sec, key, text, kind, name, label) { a.push({ sec: sec, key: key, text: text, kind: kind || "", name: name || "", label: label || text }) }
     if (shaderOn) {
-      add("screen", "screen", current + " " + fxStrength + "%" + costTag("screen", current))
-      if (mixSecondOf("screen") !== "") add("screen", "screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2))
+      add("screen", "screen", current + " " + fxStrength + "%" + costTag("screen", current), "screen", current, current + " " + fxStrength + "%")
+      if (mixSecondOf("screen") !== "") add("screen", "screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2), "screen", effect2, (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%")
     }
     if (colorOn) {
-      add("color", "color", colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)))
+      add("color", "color", colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)), "color", perfName(colorCurrent), colorCurrent + " " + colStrength + "%")
       if (mixSecondOf("color") !== "") add("color", "color2", (mixColorMode === "blend" ? "~ " : "+ ") + color2 + " " + mixColorAmt + "%")
     }
     if (wallOn) {
-      add("wall", "wall", wallLabel(wallShown) + costTag("wall", wallShown))
-      if (mixSecondOf("wall") !== "") add("wall", "wall2", (wallMixMode === "blend" ? "~ " : "+ ") + wallLabel(wall2) + " " + wallMixAmt + "%" + costTag("wall", wall2))
+      add("wall", "wall", wallLabel(wallShown) + costTag("wall", wallShown), "wall", wallShown, wallLabel(wallShown))
+      if (mixSecondOf("wall") !== "") add("wall", "wall2", (wallMixMode === "blend" ? "~ " : "+ ") + wallLabel(wall2) + " " + wallMixAmt + "%" + costTag("wall", wall2), "wall", wall2, (wallMixMode === "blend" ? "~ " : "+ ") + wallLabel(wall2) + " " + wallMixAmt + "%")
     }
-    if (mouseOn) add("mouse", "mouse", mouseCurrent + costTag("cursor", mouseCurrent))
+    if (mouseOn) add("mouse", "mouse", mouseCurrent + costTag("cursor", mouseCurrent), "cursor", mouseCurrent, mouseCurrent)
     var gm = winMix["*"] || { fx2: "", col2: "", fxMode: "stack", fxAmt: 100, colMode: "stack", colAmt: 100 }
-    if (winEffectOn) add("win", "winfx", "effect " + winEffect + costTag("win", winEffect))
+    if (winEffectOn) add("win", "winfx", "effect " + winEffect + costTag("win", winEffect), "win", winEffect, "effect " + winEffect)
     if (winEffectOn && gm.fx2 !== "") add("win", "winfx2", (gm.fxMode === "blend" ? "~ " : "+ ") + gm.fx2 + " " + gm.fxAmt + "%")
-    if (winColorOn) add("win", "wincol", "color " + winColor + costTag("wincolor", perfName(winColor)))
+    if (winColorOn) add("win", "wincol", "color " + winColor + costTag("wincolor", perfName(winColor)), "wincolor", perfName(winColor), "color " + winColor)
     if (winColorOn && gm.col2 !== "") add("win", "wincol2", (gm.colMode === "blend" ? "~ " : "+ ") + gm.col2 + " " + gm.colAmt + "%")
     if (winFrameOn) add("win", "winframe", "frame " + winFrame)
     Object.keys(winApps).forEach(function(c) { add("win", "app:" + c, (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c)) })
     return a
   }
-  readonly property int secH: Math.max(screenSec.implicitHeight, colorSec.implicitHeight, wallSec.implicitHeight, mouseSec.implicitHeight, winSec.implicitHeight, comboSec.implicitHeight)
+  // ---------------------------------------------------------------- "what is using my GPU" and the hotkey sheet
+  readonly property var loadItems: activeNow.filter(function(c) { return c.kind !== "" }).map(function(c) {
+    var r = perfCost[c.kind + ":" + c.name]
+    var anim = c.kind === "screen" && screenEntries.some(function(e) { return e.name === c.name && e.animated })
+    return { key: c.key, label: c.label, rating: r ? r.rating : (anim ? "animated" : ""), cost: r ? Number(r.cost) : -1 }
+  })
+  function loadColor(rating, a) {
+    return rating === "heavy" || rating === "rework" ? Qt.rgba(0.95, 0.3, 0.28, a)
+         : (rating === "moderate" || rating === "animated" ? Qt.rgba(0.97, 0.75, 0.2, a)
+         : (rating === "light" ? Qt.rgba(0.35, 0.8, 0.4, a) : fgA(a * 0.6)))
+  }
+  function loadWord(c) {
+    if (c.rating === "") return "not measured yet"
+    if (c.rating === "animated") return "animated"
+    if (c.rating === "heavy" || c.rating === "rework") return "heavy"
+    return c.rating === "moderate" ? "medium" : c.rating
+  }
+  readonly property string loadVerdict: {
+    if (paused) return "Paused: nothing is drawn, so no GPU is used."
+    if (loadItems.length === 0) return activeNow.length === 0 ? "No effect is on." : "Only window settings are on."
+    var heavy = loadItems.filter(function(c) { return c.rating === "heavy" || c.rating === "rework" })
+    var mid = loadItems.filter(function(c) { return c.rating === "moderate" || c.rating === "animated" })
+    function names(l) { return l.map(function(c) { return c.label.replace(/\s+\d+%$/, "") }).join(", ") }
+    if (heavy.length > 0) return "Heavy: " + names(heavy) + ". If your system lags, click it below to switch it off, or press p to pause everything."
+    if (mid.length > 0) return "Medium load: " + names(mid) + ". Fine for most systems; switch it off if things stutter."
+    return loadItems.some(function(c) { return c.rating === "" }) ? "Nothing heavy is on (some effects are not measured yet)." : "Light: everything that is on is cheap."
+  }
+  // the keys of a global pause bind, so a black screen can be undone without the menu (found by looking at Hyprland's bindings)
+  property string panicKey: ""
+  Process {
+    id: panicProc
+    command: ["python3", root.path("bin/pause-key")]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.panicKey = String(text).trim()
+    }
+  }
+  // the default pause key: bin/pause-bind binds it in Hyprland at runtime (the setting "pauseKey", empty = none); a config reload forgets it, so it is bound again then
+  readonly property string pauseKeySetting: String(setting("pauseKey", "CTRL + ALT + P"))
+  Process {
+    id: pauseBindProc
+    command: ["python3", root.path("bin/pause-bind"), "apply", root.pauseKeySetting]
+    onExited: panicProc.running = true
+  }
+  function applyPauseKey() { if (fxHost && !pauseBindProc.running) pauseBindProc.running = true }
+  Timer { id: pauseBindTimer; interval: 2500; onTriggered: root.applyPauseKey() }
+  onPauseKeySettingChanged: if (ready) pauseBindTimer.restart()
+  readonly property var hotkeyGroups: [
+    { name: "MOVE", keys: [
+      { k: ["↑", "↓", "←", "→"], t: "move (or h j k l)" },
+      { k: ["Tab"], t: "next pane (from the filter: to the results)" },
+      { k: ["g", "G"], t: "first / last" },
+      { k: ["1-9"], t: "jump to category" },
+      { k: ["/"], t: "filter" },
+      { k: ["m"], t: "back to Themes" },
+      { k: ["Esc", "q"], t: "close" },
+      { k: ["?"], t: "show / hide this list" } ] },
+    { name: "OPEN", keys: [
+      { k: ["s"], t: "Screen" }, { k: ["C"], t: "Color" }, { k: ["w"], t: "Wallpaper" },
+      { k: ["c"], t: "Cursor" }, { k: ["W"], t: "Windows" }, { k: ["A"], t: "pick the app (Windows)" } ] },
+    { name: "CHANGE", keys: [
+      { k: ["⏎"], t: "apply and close" },
+      { k: ["Space"], t: "apply, stay open" },
+      { k: ["[", "]"], t: "strength -5 / +5" },
+      { k: ["{", "}"], t: "-1 / +1" },
+      { k: ["d"], t: "default strength" },
+      { k: ["Ctrl+⏎"], t: "mix a second one" },
+      { k: ["t"], t: "stack / blend" },
+      { k: [",", "."], t: "mix amount" },
+      { k: ["⌫"], t: "remove mix" },
+      { k: ["v", "V"], t: "speed" },
+      { k: ["z", "Z"], t: "zoom / size" },
+      { k: ["(", ")"], t: "mouse reaction" },
+      { k: ["u", "U"], t: "custom colour / favorite it" },
+      { k: ["f"], t: "favorite" },
+      { k: ["Del"], t: "delete" } ] },
+    { name: "THEMES", keys: [
+      { k: ["r"], t: "surprise this part" },
+      { k: ["R"], t: "surprise everything" },
+      { k: ["o"], t: "clear this part" },
+      { k: ["O"], t: "clear everything" },
+      { k: ["F"], t: "save as theme" },
+      { k: ["n"], t: "rename" },
+      { k: ["T"], t: "AI theme" },
+      { k: ["S"], t: "share" },
+      { k: ["i"], t: "import" } ] },
+    { name: "ALWAYS", keys: [
+      { k: ["p"], t: "PAUSE / RESUME EVERYTHING", strong: true },
+      { k: ["e"], t: "pause in fullscreen" },
+      { k: ["U"], t: "what's new / update" },
+      { k: ["x"], t: "cursor only with Shift" },
+      { k: ["Right-click bar icon"], t: "pause from the desktop", strong: true },
+      panicKey !== "" ? { k: [panicKey], t: "pause without the menu", strong: true } : { k: ["no key set"], t: "pick one in the plugin settings (Pause key)" } ] }
+  ]
+  // one tab of the right-hand pane: the open one is joined to the content below it, the others sit behind the line
+  component PartTab: Item {
+    id: pt
+    required property string kind
+    readonly property bool opened: root.isShown(kind)
+    readonly property var chipList: root.chipsOf(kind)
+    readonly property int found: root.secOf(kind).matchCount
+    readonly property bool missing: kind === "win" && root.winPlugin === "missing"
+    width: root.tabW
+    height: root.tabH + 1
+    clip: true
+    opacity: missing ? 0.45 : (root.query.trim() !== "" && found === 0 && !opened ? 0.45 : 1)
+    Rectangle {
+      y: pt.opened ? 0 : Style.space(4)
+      width: parent.width
+      height: root.tabH + Style.space(12)
+      radius: Style.space(7)
+      color: pt.opened ? root.fgA(0.16) : root.fgA(tabMouse.containsMouse ? 0.12 : 0.05)
+      border.width: 1
+      border.color: root.fgA(pt.opened ? 0.45 : 0.18)
+    }
+    Text {
+      id: tabTitle
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: Style.space(6)
+      anchors.rightMargin: Style.space(6)
+      y: Style.space(pt.opened ? 6 : 9)
+      horizontalAlignment: Text.AlignHCenter
+      elide: Text.ElideRight
+      textFormat: Text.PlainText
+      text: root.kindIcon(pt.kind) + " " + root.kindTitle(pt.kind)
+      color: root.fg
+      opacity: pt.opened ? 1 : 0.75
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body
+      font.bold: pt.opened
+    }
+    Text {
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: Style.space(6)
+      anchors.rightMargin: Style.space(6)
+      y: tabTitle.y + Style.space(19)
+      horizontalAlignment: Text.AlignHCenter
+      elide: Text.ElideRight
+      textFormat: Text.PlainText
+      text: pt.missing ? "needs a plugin"
+            : (root.query.trim() !== "" ? pt.found + " found"
+               : (pt.chipList.length > 0 ? "\u25CF on  \u00B7  " : "\u25CB off  \u00B7  ") + root.kindKey(pt.kind))
+      color: root.fg
+      opacity: pt.chipList.length > 0 ? 0.9 : 0.5
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body * 0.75
+    }
+    MouseArea {
+      id: tabMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.toggleSection(pt.kind)
+    }
+  }
+
+  component HotKey: Row {
+    id: hk
+    property var keys: []
+    property string label: ""
+    property bool strong: false
+    spacing: Style.space(4)
+    height: Style.space(22)
+    Repeater {
+      model: hk.keys
+      delegate: Rectangle {
+        required property var modelData
+        y: Style.space(1)
+        height: Style.space(20)
+        width: Math.max(Style.space(20), capText.implicitWidth + Style.space(10))
+        radius: Style.space(4)
+        color: root.fgA(hk.strong ? 0.28 : 0.13)
+        border.width: 1
+        border.color: root.fgA(hk.strong ? 0.85 : 0.4)
+        Text {
+          id: capText
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: parent.modelData
+          color: root.fg
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body * 0.9
+          font.bold: true
+        }
+      }
+    }
+    Text {
+      height: hk.height
+      leftPadding: Style.space(2)
+      verticalAlignment: Text.AlignVCenter
+      textFormat: Text.PlainText
+      text: hk.label
+      color: root.fg
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body * 0.9
+      font.bold: hk.strong
+    }
+  }
+
+  // list rows shrink on small screens so the whole menu, hotkeys included, stays on screen
+  readonly property real chromeBase: header.height + searchRow.height + stepRow.height + loadBox.implicitHeight + detailText.height + 6 * 1 + 10 * Style.space(4) + Style.space(30)
+  readonly property real rowStep: Style.space(28) + Style.space(2)
+  readonly property real cardRoom: popup.availableCardHeight > 0 ? popup.availableCardHeight - popup.verticalContentInset : 100000
+  readonly property bool denseKeys: chromeBase + Style.space(32) + keyBox.implicitHeight + maxExtra + Math.max(4 * rowStep, Style.space(300)) > cardRoom
+  readonly property real chromeH: chromeBase + keyArea.implicitHeight
+  readonly property real rowSpace: cardRoom - chromeH
+  readonly property var denseKeyList: {
+    var out = []
+    hotkeyGroups.forEach(function(g) {
+      out.push({ k: [], t: g.name.toLowerCase() + ":", head: true })
+      g.keys.forEach(function(e) { out.push(e) })
+    })
+    return out
+  }
+  readonly property real maxExtra: themeSec.extraH + Style.space(34)
+  readonly property int rowsFit: Math.max(3, Math.min(40, Math.floor((rowSpace - maxExtra) / rowStep)))
+  readonly property int secH: Math.max(themeSec.implicitHeight, Style.space(300))
+  // the right-hand pane: a fixed row of tabs, one line saying what the open tab changes, then its list
+  readonly property real tabH: Style.space(42)
+  readonly property real aboutH: Style.space(24)
+  readonly property real tabW: Math.floor((partsHead.width - 4 * Style.space(3)) / 5)
+  readonly property real paneGap: Style.space(4)
+  readonly property real paneRoom: secH - tabH - aboutH - 4 * paneGap
   function chipsOf(k) { return activeNow.filter(function(c) { return c.sec === k }) }
   function removeActive(key) {
     if (key === "screen") offIn("screen")
@@ -1821,11 +2461,9 @@ Item {
     var l = Object.keys(winApps).map(function(c) { return (c.indexOf("layer:") === 0 ? c.slice(6) : c) + ": " + winAppSummary(c) })
     return l.length > 0 ? "(own: " + l.join(", ") + ") " : ""
   }
-  function costReport() { Quickshell.execDetached(["bash", "-c", 'python3 "$1" report --notify >/dev/null 2>&1', "bash", root.path("bin/perf-log")]) }
 
   // ---------------------------------------------------------------- GPU use (only while the menu is open)
   property string gpuText: ""
-  function pct(v) { return v === "na" ? "–" : v + "%" }
   Process {
     id: gpuProc
     command: [root.gpuScript]
@@ -1834,8 +2472,7 @@ Item {
       onStreamFinished: {
         var p = String(text).trim().split(/\s+/)
         if (p.length !== 5) { root.gpuText = ""; return }
-        var vram = p[3] === "na" ? "" : " · VRAM " + (p[3] / 1024).toFixed(1) + "/" + (p[4] / 1024).toFixed(1) + "G"
-        root.gpuText = "GPU: this shell " + root.pct(p[1]) + " · Hyprland " + root.pct(p[2]) + " · all apps " + root.pct(p[0]) + vram
+        root.gpuText = p[0] === "na" ? "" : "Your graphics card is " + p[0] + "% busy right now (all programs together)."
       }
     }
   }
@@ -1848,6 +2485,66 @@ Item {
     onTriggered: if (!gpuProc.running) gpuProc.running = true
   }
 
+  // ---------------------------------------------------------------- plugin updates (omarchy plugin update)
+  readonly property string pluginId: "io.github.akton1.omashaders"
+  property bool updAvail: false
+  property bool updOpen: false
+  property bool updBusy: false
+  property string updState: ""        // "", "ok" or "fail" after an update run
+  property string updOut: ""
+  property string updCur: ""
+  property string updLatest: ""
+  property bool updDirty: false
+  property var updChanges: []
+  property var updRecent: []
+  readonly property string updCmd: "omarchy plugin update " + pluginId + " --yes"
+  property double updCheckedAt: 0
+  function checkUpdates() {
+    if (updBusy || updCheck.running) return
+    updCheckedAt = Date.now()
+    updCheck.running = true
+  }
+  function runUpdate() {
+    if (updBusy) return
+    updBusy = true
+    updState = ""
+    updOut = ""
+    updRun.running = true
+  }
+  function toggleUpdate() {
+    updOpen = !updOpen
+    if (updOpen && !updAvail && updState === "") checkUpdates()
+  }
+  Process {
+    id: updCheck
+    command: ["python3", root.path("bin/update-check"), root.path(".")]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim())
+          root.updAvail = d.available === true
+          root.updCur = String(d.current || ""); root.updLatest = String(d.latest || "")
+          root.updChanges = d.changes || []; root.updRecent = d.recent || []; root.updDirty = d.dirty === true
+        } catch (e) { }
+      }
+    }
+  }
+  Process {
+    id: updRun
+    command: ["bash", "-c", 'omarchy plugin update "$1" --yes 2>&1', "bash", root.pluginId]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.updOut = String(text).trim().split("\n").slice(-4).join("\n")
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.updBusy = false
+      root.updState = exitCode === 0 ? "ok" : "fail"
+      if (exitCode === 0) root.updAvail = false
+    }
+  }
+  Timer { id: updFirstCheck; interval: 25000; running: true; onTriggered: root.checkUpdates() }
+
   // ---------------------------------------------------------------- menu actions
   property bool popupOpen: false
   property bool viaEnter: false
@@ -1859,9 +2556,15 @@ Item {
   function clearSearch() { searchField.text = ""; leaveSearch() }
   function applyQuery() {
     Qt.callLater(function() {
-      ["screen", "color", "wall", "mouse", "win", "combo"].forEach(function(k) { secOf(k).resetForQuery() })
+      ["screen", "color", "wall", "mouse", "win", "theme"].forEach(function(k) { secOf(k).resetForQuery() })
       if (query.trim() !== "" && secOf(focusKind).cats.length === 0) {
-        for (var i = 0; i < visibleKinds.length; i++) if (secOf(visibleKinds[i]).cats.length > 0) { activeKind = visibleKinds[i]; break }
+        var order = ["theme"].concat(partKinds)
+        for (var i = 0; i < order.length; i++) {
+          if (secOf(order[i]).cats.length === 0 || (order[i] === "win" && winPlugin === "missing")) continue
+          if (order[i] !== "theme" && !isShown(order[i])) openOnly(order[i], false)
+          activeKind = order[i]
+          break
+        }
       }
     })
   }
@@ -1888,8 +2591,11 @@ Item {
   }
   onPopupOpenChanged: {
     if (!popupOpen) renaming = false
+    if (!popupOpen) updOpen = false
     if (popupOpen) {
+      if (Date.now() - updCheckedAt > 1800000) checkUpdates()
       lister.running = true
+      panicProc.running = true
       screenOrigin = current
       colorOrigin = colorCurrent
       mouseOrigin = mouseCurrent
@@ -1914,7 +2620,7 @@ Item {
       wallSec.sync()
       mouseSec.sync()
       winSec.sync()
-      comboSec.sync()
+      themeSec.sync()
     } else {
       screenTimer.stop()
       colorTimer.stop()
@@ -1939,13 +2645,13 @@ Item {
     else chooseMouse(it, keep)
   }
   function offIn(k) {
-    if (k === "combo") offAll()
+    if (k === "theme") offAll()
     else if (k === "wall") setWall("", true)
     else if (k === "win") { if (winScope === "*") winRun(["off"]); else winRunS(["off"]) }
     else chooseIn(k, { id: "" }, true)
   }
   function randomIn(k) {
-    if (k === "combo") { randomAll(); return }
+    if (k === "theme") { randomAll(); return }
     var cur = k === "wall" ? wallShown : savedOf(k)
     var pool = itemsOf(k).filter(function(e) { return e.id !== cur })
     if (pool.length > 0) chooseIn(k, pool[Math.floor(Math.random() * pool.length)], true)
@@ -1953,17 +2659,89 @@ Item {
   function randomAll() { effectKinds.forEach(randomIn) }
   function offAll() { effectKinds.forEach(offIn) }
   function runAction(k, id) {
-    if (k === "combo") { if (id === "@save") saveCombo(); return }
+    if (k === "theme") {
+      if (id === "@share") startShare()
+      else if (id === "@import") openDialog("import", "", 0)
+      else if (id === "@ai") openDialog("ai", "", 0)
+      else if (id.indexOf("@job:") === 0) openDialog("ai", "", 0, id.substring(5))
+      return
+    }
     if (k === "win" && id === "@copy") { Quickshell.execDetached(["wl-copy", installCmd]); flash("Copied: " + installCmd); return }
     if (k === "win" && id === "@inherit") { winRunS(["inherit"]); return }
     if (k === "win" && id === "@off" && winScope !== "*") { winRunS(["off"]); return }
-    if (id === "@off") offIn(k)
+    if (id === "@delete") deleteSelected(true)
+    else if (id === "@off") offIn(k)
     else if (id === "@random") randomIn(k)
+  }
+  // Delete the selected element (a shader) or theme. bin/oms-delete decides: built-in ones are refused (a note), the others ask first
+  // ("Used by theme: Abyss, Moon Lake. Delete anyway?") and Delete again confirms. A theme that loses an element just has that part empty.
+  property string delAsk: ""
+  function deleteTarget(k, it) {
+    if (k === "theme") return ["theme", "--line", it.id]
+    var id = String(it.id), pre = id.substring(0, 2)
+    if (k === "win") {
+      if (pre === "c:") return ["element", "color", id.substring(2)]
+      if (pre === "f:") return ["element", "frame", id.substring(2)]
+      return ["element", "window", id.substring(2)]
+    }
+    return ["element", k === "screen" ? "screen" : (k === "color" ? "color" : (k === "wall" ? "wallpaper" : "cursor")), id]
+  }
+  function deleteSelected(fromMenu) {
+    var k = focusKind, s = secOf(k)
+    var it = s ? (s.selected ? s.selected : (fromMenu ? s.lastItem : null)) : null
+    if (!it || it.id.charAt(0) === "@") { flash("Pick one first, then press Delete to delete it"); return }
+    var key = k + ":" + it.id
+    if (delAsk === key) { delAsk = ""; delRun.start(["rm"].concat(deleteTarget(k, it)).concat(["--yes"]), key); return }
+    delAsk = ""
+    delCheck.start(["check"].concat(deleteTarget(k, it)), key)
+  }
+  Timer { id: delAskTimer; interval: 7000; onTriggered: root.delAsk = "" }
+  Process {
+    id: delCheck
+    property string key: ""
+    function start(args, key) { delCheck.key = key; delCheck.command = ["python3", root.path("bin/oms-delete")].concat(args).concat(["--json"]); delCheck.running = true }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim())
+          if (d.ok === false && d.error) { root.flash(d.error); return }
+          if (!d.can_delete) { root.flash(d.message); return }
+          root.delAsk = delCheck.key
+          delAskTimer.restart()
+          root.flash(d.prompt + "  (Delete again = yes)", 7000)
+        } catch (e) { root.flash("Could not check it") }
+      }
+    }
+  }
+  Process {
+    id: delRun
+    property string key: ""
+    function start(args, key) { delRun.key = key; delRun.command = ["python3", root.path("bin/oms-delete")].concat(args).concat(["--json"]); delRun.running = true }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim())
+          if (d.ok !== true) { root.flash(d.error || "Could not delete it"); return }
+          if (d.type === "theme") {
+            root.themes = root.themes.filter(function(c) { return c !== d.line })
+            var ts = root.themeSec
+            if (ts.curItems.length === 0) ts.col = 0
+            else ts.itemIdx = root.clamp(ts.itemIdx, 0, ts.curItems.length - 1)
+            root.flash("Removed theme: " + d.name)
+          } else {
+            root.flash("Deleted " + d.name + (d.used_by.length > 0 ? " (" + d.used_by.length + " theme" + (d.used_by.length > 1 ? "s" : "") + " keep the rest and skip this part)" : ""))
+          }
+        } catch (e) { root.flash("Could not delete it") }
+        lister.running = true
+      }
+    }
   }
   function toggleFav(k) {
     var s = secOf(k), it = s.selected
     if (!it || it.id.charAt(0) === "@" || k === "win") return
-    if (k === "combo") { deleteCombo(it.id); return }
+    if (k === "theme") { deleteTheme(it.id); return }
     var next = favsOf(k).filter(function(f) { return f !== it.id })
     if (next.length === favsOf(k).length) next.push(it.id)
     if (k === "screen") screenFavs = next
@@ -1982,6 +2760,7 @@ Item {
   }
   function moveKeys(dx, dy) {
     hoverPreviewing = false
+    if (updOpen) { if (dy !== 0) updFlick.scrollBy(dy * Style.space(60)); return }
     if (winPickOpen) {
       if (dy !== 0) winSec.pickerIdx = clamp(winSec.pickerIdx + dy, 0, winAppItems.length - 1)
       else if (dx < 0) winPickOpen = false
@@ -2003,19 +2782,23 @@ Item {
     else if (winPickOpen) { if (t === "q") close(); else if (t === "g") winSec.pickerIdx = 0; else if (t === "G") winSec.pickerIdx = winAppItems.length - 1 }
     else if (t === "/") focusSearch()
     else if (t === "q") close()
-    else if (t === "a") setAnimated()
+    else if (t === "U") toggleUpdate()
+    else if (t === "?") keysOpen = !keysOpen
     else if (t === "o" || t === "0") offIn(k)
     else if (t === "O") offAll()
-    else if (t === "P") costReport()
     else if (t === "r") randomIn(k)
     else if (t === "R") randomAll()
     else if (t === "g") s.jump(false)
     else if (t === "G") s.jump(true)
     else if (t === "f") toggleFav(k)
-    else if (t === "F") saveCombo()
+    else if (t === "F") startSave()
     else if (t === "n") startRename()
-    else if (t === "m") activeKind = "combo"
+    else if (t === "m") activeKind = "theme"
     else if (t === "s") toggleSection("screen")
+    else if (t === "S") startShare()
+    else if (t === "i") openDialog("import", "", 0)
+    else if (t === "T") openDialog("ai", "", 0)
+    else if (t === "\x7f") deleteSelected(false)
     else if (t === "C") toggleSection("color")
     else if (t === "w") toggleSection("wall")
     else if (t === "W") toggleSection("win")
@@ -2040,7 +2823,7 @@ Item {
     else if (t === "<") nudgeMix(-1)
     else if (t === "t") toggleMixMode()
     else if (t === "D") resetMix()
-    else if (t === "\b" || t === "\x7f") clearMix()
+    else if (t === "\b") clearMix()
     else if (t === "u") {
       if (focusKind === "wall" && wallReactorOn) wallSec.focusTarget()
       else { activeKind = "color"; colorSec.focusHex() }
@@ -2052,6 +2835,13 @@ Item {
   IpcHandler {
     target: "io.github.akton1.omashaders"
     function toggle(): void { root.toggle() }
+    function wallhaven(): void { root.openWallhaven() }
+    function aiTheme(): void { root.openDialog("ai", "", 0) }
+    function importTheme(): void { root.openDialog("import", "", 0) }
+    function shareTheme(which: string): void { root.openDialog("share", "", Math.floor(Number(which)) || 1) }
+    function gif(seconds: string, out: string): void { root.recordGif(Number(seconds) || 0, out) }
+    function gifFinished(): void { root.gifFinished() }
+    function gifCount(n: string, monitor: string): void { root.gifMonitor = monitor; root.gifCount = Math.max(0, Math.floor(Number(n)) || 0) }
     function open(): void { root.open() }
     function close(): void { root.close() }
     function set(name: string): void { root.applyScreen(name === "off" ? "" : name) }
@@ -2060,27 +2850,40 @@ Item {
     function wallpaper(name: string): void { root.setWall(name === "off" ? "" : name, true) }
     function sections(mode: string): void { root.setSections(mode) }
     function windows(args: string): void { root.winRun(args.split(" ").filter(function(a) { return a !== "" })) }
-    function combo(which: string): void { if (which === "save") root.saveCombo(); else root.applyCombo(root.comboAt(which), true) }
-    function comboRename(which: string, name: string): void { var it = root.comboAt(which); if (it) root.renameCombo(it.id, name) }
+    function theme(which: string): void { if (which === "save") root.saveTheme(); else root.applyTheme(root.themeAt(which), true) }
+    function themeRename(which: string, name: string): void { var it = root.themeAt(which); if (it) root.renameTheme(it.id, name) }
+    // old names, kept so existing key bindings keep working
+    function combo(which: string): void { theme(which) }
+    function comboRename(which: string, name: string): void { themeRename(which, name) }
+    function importCombo(): void { importTheme() }
+    function shareCombo(which: string): void { shareTheme(which) }
     function power(mode: string): void { root.setPower(mode === "" ? "toggle" : mode) }
     function strength(kind: string, value: string): void { Quickshell.execDetached([root.script, "strength", kind, value]) }
     function shiftOnly(mode: string): void { root.setShiftOnly(mode === "toggle" ? !root.shiftOnly : (mode === "on" || mode === "1")) }
   }
 
+  property bool ready: false
+  Timer { interval: 4000; running: true; onTriggered: root.ready = true }
+
   Component.onCompleted: {
+    refreshAi()
     Quickshell.execDetached(["python3", root.path("bin/perf-log"), "run"])
     lister.running = true
     resolver.running = true
+    pauseBindTimer.restart()
     wallStep("status")
     winRun(["apply"])
     winRun(["frame", "sync"])
     Quickshell.execDetached([root.script, "fullscreen", "resume"])
+    Quickshell.execDetached([root.script, "gif", "restore"])
+    Quickshell.execDetached([root.script, "animated", "on"])
     // a watch on a missing file never fires, so the state files must exist; the preview file starts empty
-    // starter combos: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new combos
-    // and a combo the user removed does not come back
-    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
-                             root.stateDir, root.wallPreviewFile, root.comboFile, root.path("starter-combos"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallSpeedFile, root.wallZoomFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
-                             root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.comboFile, root.fsPauseFile, root.mouseSizeFile, root.mouseSpeedFile])
+    // the saved looks were called combos before 1.31: the user's file is moved to themes once (a copy stays as combos.pre-themes)
+    // starter themes: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new themes
+    // and a theme the user removed does not come back
+    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; if [ -s "$1/combos" ] && [ ! -s "$3" ]; then cp -p "$1/combos" "$1/.themes.$$" && mv -f "$1/.themes.$$" "$3" && mv -f "$1/combos" "$1/combos.pre-themes"; fi; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
+                             root.stateDir, root.wallPreviewFile, root.themeFile, root.path("starter-themes"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallSpeedFile, root.wallZoomFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
+                             root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.themeFile, root.fsPauseFile, root.mouseSizeFile, root.mouseSpeedFile])
   }
 
   // ---------------------------------------------------------------- the bar icon
@@ -2099,6 +2902,7 @@ Item {
                  + "\nWindows: " + (root.winAnyOn ? root.winOwnText() + [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
                  + (root.wallStatus !== "" ? "\nWallpaper image: " + root.wallStatus.replace(/[<>&]/g, "?") : "")
+                 + (root.jobsRunning > 0 ? "\nAI theme: " + root.jobsRunning + " being made in the background" : "")
                  + "\nclick: menu (hjkl) · right-click: pause / resume effects · middle-click: next wallpaper · scroll: step"
     onPressed: function(b) {
       if (b === Qt.RightButton) root.togglePause()
@@ -2111,6 +2915,25 @@ Item {
       if (Math.abs(root.wheelAccum) < 120) return
       root.wallStep(root.wheelAccum > 0 ? "prev" : "next")
       root.wheelAccum = 0
+    }
+  }
+
+  // busy dot on the bar icon while the AI theme creator works in the background
+  Rectangle {
+    visible: root.jobsRunning > 0
+    width: Style.space(7)
+    height: width
+    radius: width / 2
+    anchors.top: parent.top
+    anchors.right: parent.right
+    anchors.topMargin: Style.space(2)
+    anchors.rightMargin: Style.space(2)
+    color: root.bar.barForeground  // bar-icon
+    SequentialAnimation on opacity {
+      running: root.jobsRunning > 0
+      loops: Animation.Infinite
+      NumberAnimation { to: 0.25; duration: 700 }
+      NumberAnimation { to: 1; duration: 700 }
     }
   }
 
@@ -2267,6 +3090,9 @@ Item {
     id: sec
     property string title: ""
     property string icon: ""
+    property bool special: false     // the Themes column: accent panel, bigger rows, parts as chips
+    property bool inPane: false      // inside the right-hand pane: the open tab above is the title, rows fill the room left
+    property string subtitle: ""
     property var rawCats: []
     readonly property bool filtering: root.query.trim() !== ""
     readonly property var cats: {
@@ -2352,21 +3178,51 @@ Item {
     function focusTarget() { targetField.forceActiveFocus(); targetField.selectAll() }
     property int col: 0
     property int catIdx: 0
+    readonly property bool hasCatIcons: { for (var i = 0; i < cats.length; i++) if (root.rowGlyph(cats[i].id) !== "") return true; return false }
     property int itemIdx: 0
     property point lastPt: Qt.point(-100, -100)
-    readonly property int rowH: Style.space(28)
-    readonly property int rowGap: Style.space(2)
-    readonly property int visibleRows: 13
+    readonly property int rowH: Style.space(special ? 38 : 28)
+    readonly property int rowGap: Style.space(special ? 3 : 2)
+    readonly property int visibleRows: special ? Math.max(4, Math.floor(root.rowsFit * (Style.space(28) + Style.space(2)) / (rowH + rowGap)))
+                                                : (inPane ? Math.max(3, Math.floor((root.paneRoom - extraH - Style.space(40)) / (rowH + rowGap))) : root.rowsFit)
+    readonly property int titleH: inPane ? (hasPicker ? Style.space(28) : 0) : Style.space(special ? 32 : 24)
     readonly property var curCat: cats.length > 0 ? cats[root.clamp(catIdx, 0, cats.length - 1)] : null
     readonly property var curItems: (curCat && curCat.items) ? curCat.items : []
     readonly property var selected: (col === 1 && itemIdx >= 0 && itemIdx < curItems.length) ? curItems[itemIdx] : null
+    property var lastItem: null   // the item last pointed at; the "Delete selected" row acts on it
+    onSelectedChanged: if (selected) lastItem = selected
     signal pointed(var item)
     signal chosen(var item, bool keep)
     signal acted(string id)
     signal focusRequested()
 
-    readonly property int baseH: Style.space(24) + visibleRows * (rowH + rowGap) + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 5 * (rowH + Style.space(4)) : 0) + (hasMouseOpts ? 2 * (rowH + Style.space(4)) : 0)
+    readonly property int extraH: titleH + (hasStrength ? rowH + Style.space(6) : 0) + (hasMix ? rowH + Style.space(4) : 0) + (hasCustom ? 2 * rowH + Style.space(8) : 0) + (hasWallOpts ? 5 * (rowH + Style.space(4)) : 0) + (hasMouseOpts ? 2 * (rowH + Style.space(4)) : 0)
+    readonly property int baseH: extraH + visibleRows * (rowH + rowGap)
     implicitHeight: baseH + Style.space(8) + chipFlow.implicitHeight
+
+    // the Themes column is a panel of its own: accent border and glow, a soft accent wash
+    Rectangle {
+      visible: sec.special
+      x: -Style.space(5); y: -Style.space(3)
+      width: sec.width + Style.space(10); height: root.secH + Style.space(6)
+      radius: Style.space(12)
+      color: "transparent"
+      border.width: 1
+      border.color: root.accA(sec.focused ? 0.28 : 0.14)
+    }
+    Rectangle {
+      visible: sec.special
+      x: -Style.space(3); y: -Style.space(1)
+      width: sec.width + Style.space(6); height: root.secH + Style.space(2)
+      radius: Style.space(10)
+      border.width: 1
+      border.color: root.accA(sec.focused ? 0.85 : 0.5)
+      gradient: Gradient {
+        GradientStop { position: 0.0; color: root.accA(sec.focused ? 0.20 : 0.13) }
+        GradientStop { position: 0.35; color: root.accA(0.06) }
+        GradientStop { position: 1.0; color: root.accA(0.03) }
+      }
+    }
 
     Flow {
       id: chipFlow
@@ -2512,23 +3368,36 @@ Item {
 
     Text {
       id: titleText
-      height: Style.space(24)
+      visible: !sec.inPane
+      height: sec.titleH
       verticalAlignment: Text.AlignVCenter
       leftPadding: Style.space(10)
       textFormat: Text.PlainText
       text: (sec.icon !== "" ? sec.icon + "  " : "") + sec.title.toUpperCase()
-      opacity: sec.focused ? 0.95 : 0.45
+      opacity: sec.special ? 1 : (sec.focused ? 0.95 : 0.45)
+      color: sec.special ? Color.accent : root.fg
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body * (sec.special ? 1.05 : 0.8)
+      font.bold: true
+      font.letterSpacing: sec.special ? 2 : 1
+    }
+    Text {
+      visible: sec.special && sec.subtitle !== ""
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: titleText.verticalCenter
+      textFormat: Text.PlainText
+      text: sec.subtitle
+      opacity: 0.6
       color: root.fg
       font.family: root.bar.fontFamily
-      font.pixelSize: Style.font.body * 0.8
-      font.bold: true
-      font.letterSpacing: 1
+      font.pixelSize: Style.font.body * 0.75
     }
 
     Rectangle {
       id: pickerBtn
       visible: sec.hasPicker
-      x: titleText.implicitWidth + Style.space(6)
+      x: sec.inPane ? Style.space(4) : titleText.implicitWidth + Style.space(6)
       y: Style.space(2)
       height: titleText.height - Style.space(4)
       width: Math.min(sec.width - x - Style.space(4), pickerLabel.implicitWidth + Style.space(20))
@@ -2573,6 +3442,15 @@ Item {
       border.color: root.fgA(0.3)
       ListView {
         id: pickerView
+        // Qt's own wheel step is tiny (~70 px a notch): move ~150 px a notch like a browser.
+        WheelHandler {
+          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+          onWheel: function(event) {
+            var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 1.25
+            pickerView.cancelFlick()
+            pickerView.contentY = Math.max(pickerView.originY, Math.min(Math.max(pickerView.originY, pickerView.originY + pickerView.contentHeight - pickerView.height), pickerView.contentY - d))
+          }
+        }
         anchors.fill: parent
         anchors.margins: Style.space(4)
         spacing: sec.rowGap
@@ -2638,7 +3516,16 @@ Item {
 
       Flickable {
         id: catFlick
-        width: Math.round(sec.width * 0.34)
+        // Qt's own wheel step is tiny (~70 px a notch): move ~150 px a notch like a browser.
+        WheelHandler {
+          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+          onWheel: function(event) {
+            var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 1.25
+            catFlick.cancelFlick()
+            catFlick.contentY = Math.max(catFlick.originY, Math.min(Math.max(catFlick.originY, catFlick.originY + catFlick.contentHeight - catFlick.height), catFlick.contentY - d))
+          }
+        }
+        width: Math.round(sec.width * (sec.special ? 0.30 : 0.34))
         height: sec.visibleRows * (sec.rowH + sec.rowGap)
         contentHeight: catCol.height
         clip: true
@@ -2662,16 +3549,31 @@ Item {
             width: catCol.width
             height: sec.rowH
             radius: Style.space(6)
-            color: selected ? root.fgA(sec.col === 0 && sec.focused ? 0.2 : 0.09) : (catMouse.containsMouse ? root.fgA(0.04) : "transparent")
+            color: selected ? (sec.special ? root.accA(sec.col === 0 && sec.focused ? 0.34 : 0.16) : root.fgA(sec.col === 0 && sec.focused ? 0.2 : 0.09)) : (catMouse.containsMouse ? root.fgA(0.04) : "transparent")
 
             Text {
+              id: catIcon
+              visible: sec.hasCatIcons
               anchors.left: parent.left
               anchors.leftMargin: Style.space(10)
+              width: Style.space(15)
+              anchors.verticalCenter: parent.verticalCenter
+              horizontalAlignment: Text.AlignHCenter
+              textFormat: Text.PlainText
+              text: root.rowGlyph(catRow.modelData.id)
+              opacity: 0.8
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              anchors.left: sec.hasCatIcons ? catIcon.right : parent.left
+              anchors.leftMargin: sec.hasCatIcons ? Style.space(5) : Style.space(10)
               anchors.right: marker.left
               anchors.verticalCenter: parent.verticalCenter
               elide: Text.ElideRight
               textFormat: Text.PlainText
-              text: catRow.modelData.label
+              text: catRow.modelData.job !== undefined ? root.jobRowText(root.jobById(catRow.modelData.job) || { name: "", request: "", alive: false, has_result: false, state: "failed" }) : catRow.modelData.label
               color: root.fg
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
@@ -2707,6 +3609,18 @@ Item {
 
       ListView {
         id: list
+        // Qt's own wheel step is tiny (~70 px a notch): move ~150 px a notch like a browser.
+        WheelHandler {
+          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+          onWheel: function(event) {
+            var d = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 1.25
+            list.cancelFlick()
+            var lo = list.originY, hi = Math.max(list.originY, list.originY + list.contentHeight - list.height)
+            var atEdge = d > 0 ? list.contentY <= lo : list.contentY >= hi
+            if (atEdge && !sec.special) partsFlick.wheelBy(d)
+            else list.contentY = Math.max(lo, Math.min(hi, list.contentY - d))
+          }
+        }
         width: panes.width - catFlick.width - panes.spacing
         height: sec.visibleRows * (sec.rowH + sec.rowGap)
         spacing: sec.rowGap
@@ -2724,22 +3638,118 @@ Item {
           width: list.width
           height: sec.rowH
           radius: Style.space(6)
-          color: selected ? root.fgA(sec.col === 1 && sec.focused ? 0.2 : 0.07) : "transparent"
+          color: selected ? (sec.special ? root.accA(sec.col === 1 && sec.focused ? 0.34 : 0.14) : root.fgA(sec.col === 1 && sec.focused ? 0.2 : 0.07)) : (sec.special ? root.fgA(itemMouse.containsMouse ? 0.09 : 0.04) : "transparent")
+
+          // Themes: the name on top, the parts it is made of as small coloured chips below
+          Item {
+            visible: sec.special
+            anchors.fill: parent
+            Rectangle {
+              visible: itemRow.isSaved || itemRow.selected
+              width: Style.space(3); radius: width / 2
+              anchors.left: parent.left; anchors.leftMargin: Style.space(3)
+              anchors.top: parent.top; anchors.topMargin: Style.space(6)
+              anchors.bottom: parent.bottom; anchors.bottomMargin: Style.space(6)
+              color: Color.accent
+              opacity: itemRow.isSaved ? 1 : 0.5
+            }
+            Text {
+              id: themeName
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(12)
+              anchors.right: themeMark.left
+              anchors.rightMargin: Style.space(6)
+              y: Style.space(4)
+              height: Style.space(18)
+              verticalAlignment: Text.AlignVCenter
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+              text: (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? root.favGlyph + " " : (root.rowGlyph(itemRow.modelData.id) !== "" ? root.rowGlyph(itemRow.modelData.id) + " " : "")) + itemRow.modelData.label
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body * 1.05
+              font.bold: true
+            }
+            Text {
+              id: themeMark
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: themeName.verticalCenter
+              textFormat: Text.PlainText
+              text: itemRow.isSecond ? "+ " + sec.mixMode : (itemRow.isSaved ? root.checkGlyph : "")
+              color: Color.accent
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              visible: itemRow.modelData.pieces === undefined
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(12)
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(6)
+              y: Style.space(22)
+              height: Style.space(14)
+              verticalAlignment: Text.AlignVCenter
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+              text: itemRow.modelData.desc || ""
+              color: root.fg
+              opacity: 0.7
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body * 0.8
+            }
+            Row {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(12)
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(6)
+              y: Style.space(23)
+              height: Style.space(13)
+              spacing: Style.space(3)
+              clip: true
+              Repeater {
+                model: itemRow.modelData.pieces || []
+                delegate: Rectangle {
+                  required property var modelData
+                  height: Style.space(13)
+                  width: Math.min(pieceText.implicitWidth + Style.space(10), Style.space(70))
+                  radius: height / 2
+                  color: Qt.rgba(root.kindHue(modelData.kind).r, root.kindHue(modelData.kind).g, root.kindHue(modelData.kind).b, 0.30)
+                  Text {
+                    id: pieceText
+                    anchors.fill: parent
+                    anchors.leftMargin: Style.space(5)
+                    anchors.rightMargin: Style.space(5)
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: modelData.text
+                    color: root.fg
+                    opacity: 0.9
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body * 0.7
+                  }
+                }
+              }
+            }
+          }
 
           Text {
             id: itemLabel
+            visible: !sec.special
             anchors.left: parent.left
             anchors.leftMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
             width: Math.min(implicitWidth, parent.width - Style.space(60))
             elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? "★ " : "") + itemRow.modelData.label
+            text: (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? root.favGlyph + " " : "") + itemRow.modelData.label
             color: root.fg
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
           }
           Text {
+            visible: !sec.special
             anchors.left: itemLabel.right
             anchors.leftMargin: Style.space(8)
             anchors.right: parent.right
@@ -3280,7 +4290,7 @@ Item {
     owner: root
     open: root.popupOpen
     focusTarget: keys
-    contentWidth: popup.fittedContentWidth(Style.space(Math.round(540 * Math.max(1, root.widthUnits) + 20 * (root.nVis - 1))))
+    contentWidth: popup.fittedContentWidth(Style.space(Math.round(540 * root.widthUnits + 17)))
     contentHeight: popup.fittedContentHeight(body.implicitHeight)
 
     PanelKeyCatcher {
@@ -3296,7 +4306,7 @@ Item {
         else root.activeSec.activate(!root.viaEnter, root.ctrlDown)
         root.viaEnter = false
       }
-      onCloseRequested: { if (root.winPickOpen) root.winPickOpen = false; else if (root.query !== "") root.clearSearch(); else root.close() }
+      onCloseRequested: { if (root.updOpen) root.updOpen = false; else if (root.winPickOpen) root.winPickOpen = false; else if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
       Keys.forwardTo: [shiftWatcher]
       Item {
@@ -3316,84 +4326,80 @@ Item {
         width: parent.width
         spacing: Style.space(4)
 
-        Row {
+        readonly property real gap: Style.space(8)
+        readonly property real sepSpan: 2 * gap + 1
+        // one width unit: the Themes pane is 1.55 units, the open parts 1 each (Color 0.85)
+        readonly property real unitW: Math.floor((width - sepSpan) / root.widthUnits)
+        readonly property real themeW: Math.floor(unitW * root.themeWeight)
+        readonly property real rightW: width - themeW - sepSpan
+
+        Item {
           id: header
           width: body.width
-          height: Style.space(28)
-          spacing: Style.space(6)
-          readonly property real cell: (width - spacing * 10 - 1) / 10
+          height: Style.space(32)
 
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: !root.paused
-            label: (root.paused ? root.boxOff : root.boxOn) + " 󰐥 Enabled (p)"
-            onClicked: root.togglePause()
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.showScreen
-            label: (root.showScreen ? root.boxOn : root.boxOff) + " " + root.kindIcon("screen") + " Screen (s)"
-            onClicked: root.toggleSection("screen")
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.showColor
-            label: (root.showColor ? root.boxOn : root.boxOff) + " " + root.kindIcon("color") + " Color (C)"
-            onClicked: root.toggleSection("color")
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.showWall
-            label: (root.showWall ? root.boxOn : root.boxOff) + " " + root.kindIcon("wall") + " Wallpaper (w)"
-            onClicked: root.toggleSection("wall")
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.showMouse
-            label: (root.showMouse ? root.boxOn : root.boxOff) + " " + root.kindIcon("mouse") + " Cursor (c)"
-            onClicked: root.toggleSection("mouse")
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.showWin
-            label: (root.showWin ? root.boxOn : root.boxOff) + " " + root.kindIcon("win") + " Windows (W)"
-            onClicked: root.toggleSection("win")
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.includeAnimated
-            dim: !root.showScreen
-            label: (root.includeAnimated ? root.boxOn : root.boxOff) + " 󰙴 Animated (a)"
-            onClicked: root.setAnimated()
-          }
-          MenuRow {
-            width: header.cell
-            toggle: true
-            checked: root.fsPauseOn
-            label: (root.fsPauseOn ? root.boxOn : root.boxOff) + " 󰊓 Fullscreen pause (e)"
-            onClicked: root.setFsPause(!root.fsPauseOn)
+          Text {
+            id: pauseHint
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, header.width - pauseBtn.width - fsBtn.width - (updBtn.visible ? updBtn.width : 0) - 4 * Style.space(8))
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: root.paused ? "Effects are off. Press p" + (root.panicKey !== "" ? " or " + root.panicKey : "") + " to bring them back."
+                              : "Screen black or laggy? Press p" + (root.panicKey !== "" ? " or " + root.panicKey + " anywhere." : ".")
+            opacity: root.paused ? 1 : 0.75
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.9
           }
           Rectangle {
-            width: 1
+            id: pauseBtn
+            anchors.left: pauseHint.right
+            anchors.leftMargin: Style.space(10)
+            width: pauseLabel.implicitWidth + Style.space(32)
             height: header.height
-            color: root.fgA(0.3)
+            radius: Style.space(6)
+            color: root.fgA(root.paused ? (pauseMouse.containsMouse ? 0.4 : 0.32) : (pauseMouse.containsMouse ? 0.3 : 0.2))
+            border.width: 1
+            border.color: root.fgA(root.paused ? 0.9 : 0.45)
+            Text {
+              id: pauseLabel
+              anchors.centerIn: parent
+              textFormat: Text.PlainText
+              text: root.paused ? "󰐊  PAUSED  ·  resume (p)" : "󰏤  Pause all effects  (p)"
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+            MouseArea {
+              id: pauseMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.togglePause()
+            }
           }
           MenuRow {
-            width: header.cell
-            label: (root.nEffectVis > 1 ? "Surprise all" : "Surprise me") + "  (R)"
-            onClicked: root.randomAll()
+            id: fsBtn
+            anchors.left: pauseBtn.right
+            anchors.leftMargin: Style.space(8)
+            width: Style.space(250)
+            height: header.height
+            toggle: true
+            checked: root.fsPauseOn
+            label: (root.fsPauseOn ? root.boxOn : root.boxOff) + " 󰊓 Pause in fullscreen (e)"
+            onClicked: root.setFsPause(!root.fsPauseOn)
           }
           MenuRow {
-            width: header.cell
-            label: (root.nEffectVis > 1 ? "Clear all" : "Clear") + "  (O)"
-            onClicked: root.offAll()
+            id: updBtn
+            anchors.right: parent.right
+            width: Style.space(190)
+            height: header.height
+            label: root.updState === "ok" ? "󰚰 Updated, see below"
+                   : (root.updAvail ? "󰚰 Update " + root.updLatest + " (u)" : "󰋽 What's new (u)")
+            onClicked: root.toggleUpdate()
           }
         }
 
@@ -3406,10 +4412,10 @@ Item {
           TextField {
             id: renameField
             visible: root.renaming
-            width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
+            width: searchRow.width - matchText.width - searchRow.spacing
             height: searchRow.height
             verticalPadding: Style.space(2)
-            placeholderText: "name this combo, ⏎ keeps it, empty = automatic name, esc cancels"
+            placeholderText: "name this theme, ⏎ keeps it, empty = automatic name, esc cancels"
             foreground: root.fg
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -3422,10 +4428,10 @@ Item {
           TextField {
             id: searchField
             visible: !root.renaming
-            width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
+            width: searchRow.width - matchText.width - searchRow.spacing
             height: searchRow.height
             verticalPadding: Style.space(2)
-            placeholderText: "/  filter every column"
+            placeholderText: "/  filter themes and effects   (Tab or ⏎ = go to the results, then j k ⏎)"
             foreground: root.fg
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -3435,23 +4441,8 @@ Item {
               else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.leaveSearch(); event.accepted = true }
               else if (event.key === Qt.Key_Down) { root.moveKeys(0, 1); event.accepted = true }
               else if (event.key === Qt.Key_Up) { root.moveKeys(0, -1); event.accepted = true }
-              else if (event.key === Qt.Key_Tab) { root.cycleKind(1); event.accepted = true }
-              else if (event.key === Qt.Key_Backtab) { root.cycleKind(-1); event.accepted = true }
+              else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) { root.leaveSearch(); event.accepted = true }
             }
-          }
-          Text {
-            id: randHint
-            width: Style.space(330)
-            height: searchRow.height
-            verticalAlignment: Text.AlignVCenter
-            horizontalAlignment: Text.AlignRight
-            textFormat: Text.PlainText
-            elide: Text.ElideLeft
-            text: "ticks above = what Surprise all / Clear all use"
-            opacity: 0.5
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 0.85
           }
           Text {
             id: matchText
@@ -3470,226 +4461,65 @@ Item {
 
         Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
 
+        // left: complete themes, right: the parts to fine-tune
+        Row {
+          id: stepRow
+          width: body.width
+          height: Style.space(30)
+          spacing: body.sepSpan
+
+          Text {
+            width: body.themeW
+            height: stepRow.height
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: Style.space(10)
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: "Themes  (a combination of " + root.partWord.toLowerCase() + ")"
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 1.05
+            font.bold: true
+          }
+          Text {
+            width: body.rightW
+            height: stepRow.height
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: Style.space(10)
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: root.partWord + "  (pick a tab to fine-tune it)"
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 1.05
+            font.bold: true
+          }
+        }
+
         Row {
           id: secRow
           width: body.width
-          spacing: Style.space(8)
-          readonly property real secWidth: Math.floor((width - (2 * root.nVis - 2) * spacing - (root.nVis - 1)) / root.widthUnits)
+          spacing: body.gap
 
           SectionMenu {
-            id: screenSec
-            chips: root.chipsOf("screen")
-            width: secRow.secWidth
-            title: "Screen"
-            icon: root.kindIcon("screen")
-            rawCats: root.screenCats
-            saved: root.current
-            favs: root.screenFavs
-            focused: root.focusKind === "screen"
-            defaultCat: 1
-            hasStrength: true
-            strengthLive: root.shaderOn
-            strength: root.fxStrength
-            strengthDefault: root.defaultStrengthOf("screen", root.current)
-            alsoSaved: root.screenMarks
-            hasMix: true
-            mixNoun: "effect"
-            mixLive: root.mixSecondOf("screen") !== ""
-            mixName: root.effect2
-            mixMode: root.mixEffectMode
-            mixValue: root.mixEffectAmt
-            mixDefault: root.mixDefaultOf("screen")
-            onMixPicked: function(v) { root.setMixAmount("screen", v) }
-            onMixModeToggled: { root.activeKind = "screen"; root.toggleMixMode() }
-            onMixChosen: function(item, keep) { root.pickSecond("screen", item, keep) }
-            onStrengthPicked: function(v) { root.setStrength("effect", v) }
-            onPointed: function(item) { root.previewScreen(item) }
-            onChosen: function(item, keep) { root.chooseScreen(item, keep) }
-            onActed: function(id) { root.runAction("screen", id) }
-            onFocusRequested: root.activeKind = "screen"
-          }
-
-          Rectangle {
-            width: 1
-            height: root.secH
-            color: root.fgA(0.2)
-          }
-
-          SectionMenu {
-            id: colorSec
-            chips: root.chipsOf("color")
-            width: Math.floor(secRow.secWidth * root.colorWeight)
-            title: "Color"
-            icon: root.kindIcon("color")
-            rawCats: root.colorCats
-            saved: root.colorCurrent
-            favs: root.colorFavs
-            focused: root.focusKind === "color"
-            defaultCat: 1
-            hasStrength: true
-            strengthLive: root.colorOn
-            strength: root.colStrength
-            strengthDefault: root.defaultStrengthOf("color", root.colorCurrent)
-            alsoSaved: root.colorMarks
-            hasMix: true
-            mixNoun: "colour grade"
-            mixLive: root.mixSecondOf("color") !== ""
-            mixName: root.color2
-            mixMode: root.mixColorMode
-            mixValue: root.mixColorAmt
-            mixDefault: root.mixDefaultOf("color")
-            onMixPicked: function(v) { root.setMixAmount("color", v) }
-            onMixModeToggled: { root.activeKind = "color"; root.toggleMixMode() }
-            onMixChosen: function(item, keep) { root.pickSecond("color", item, keep) }
-            hasCustom: true
-            customHex: root.customHex
-            customH: root.customH
-            customS: root.customS
-            customV: root.customV
-            customFav: root.customIsFav
-            customActive: root.customActive
-            onCustomHsv: function(h, sat, v) { root.setCustomHsv(h, sat, v) }
-            onCustomHexEntered: function(t) { root.setCustomHex(t) }
-            onCustomFavToggled: root.toggleCustomFav()
-            onStrengthPicked: function(v) { root.setStrength("color", v) }
-            onPointed: function(item) { root.previewColor(item) }
-            onChosen: function(item, keep) { root.chooseColor(item, keep) }
-            onActed: function(id) { root.runAction("color", id) }
-            onFocusRequested: root.activeKind = "color"
-          }
-
-          Rectangle {
-            width: 1
-            height: root.secH
-            color: root.fgA(0.2)
-          }
-
-          SectionMenu {
-            id: wallSec
-            chips: root.chipsOf("wall")
-            width: secRow.secWidth
-            title: "Wallpaper"
-            icon: root.kindIcon("wall")
-            rawCats: root.wallCats
-            saved: root.wallShown
-            favs: root.wallFavs
-            focused: root.focusKind === "wall"
-            defaultCat: 2
-            hasStrength: true
-            strengthLive: root.wallOn
-            strength: root.wallStrength
-            strengthDefault: 100
-            hasWallOpts: true
-            reactValue: root.wallReact
-            reactLive: root.wallOn
-            rangeValue: root.wallRange
-            targetHex: root.wallTarget
-            targetLive: root.wallReactorOn
-            speedValue: root.wallSpeed
-            zoomValue: root.wallZoom
-            onSpeedPicked: function(v) { root.setWallSpeed(v) }
-            onZoomPicked: function(v) { root.setWallZoom(v) }
-            onReactPicked: function(v) { root.setWallReact(v) }
-            onRangePicked: function(v) { root.setWallRange(v) }
-            onTargetHexEntered: function(t) { root.setWallTarget(t) }
-            onTargetPickRequested: root.pickWallTarget()
-            onStrengthPicked: function(v) { root.setStrength("wall", v) }
-            hasMix: true
-            mixNoun: "effect"
-            mixLive: root.mixSecondOf("wall") !== ""
-            mixName: root.mixSecondOf("wall")
-            mixMode: root.wallMixMode
-            mixValue: root.wallMixAmt
-            mixDefault: root.mixDefaultOf("wall")
-            alsoSaved: root.mixSecondOf("wall") !== "" ? [root.wall2] : []
-            onMixPicked: function(v) { root.setMixAmount("wall", v) }
-            onMixModeToggled: { root.activeKind = "wall"; root.toggleMixMode() }
-            onMixChosen: function(item, keep) { root.pickSecond("wall", item, keep) }
-            onPointed: function(item) { root.previewWall(item) }
-            onChosen: function(item, keep) { root.chooseWall(item, keep) }
-            onActed: function(id) { root.runAction("wall", id) }
-            onFocusRequested: root.activeKind = "wall"
-          }
-
-          Rectangle {
-            width: 1
-            height: root.secH
-            color: root.fgA(0.2)
-          }
-
-          SectionMenu {
-            id: mouseSec
-            chips: root.chipsOf("mouse")
-            width: secRow.secWidth
-            title: "Cursor"
-            icon: root.kindIcon("mouse")
-            rawCats: root.mouseCats
-            saved: root.mouseCurrent
-            favs: root.mouseFavs
-            focused: root.focusKind === "mouse"
-            defaultCat: 1
-            hasStrength: true
-            strengthLive: root.mouseOn
-            strength: root.mouseStrength
-            strengthDefault: 100
-            onStrengthPicked: function(v) { root.setStrength("mouse", v) }
-            hasMouseOpts: true
-            reactLive: root.mouseOn && !root.mouseBend
-            speedValue: root.mouseSpeed
-            zoomValue: root.mouseSize
-            onSpeedPicked: function(v) { root.setMouseSpeed(v) }
-            onZoomPicked: function(v) { root.setMouseSize(v) }
-            onPointed: function(item) { root.previewMouse(item) }
-            onChosen: function(item, keep) { root.chooseMouse(item, keep) }
-            onActed: function(id) { root.runAction("mouse", id) }
-            onFocusRequested: root.activeKind = "mouse"
-          }
-
-          Rectangle {
-            width: 1
-            height: root.secH
-            color: root.fgA(0.2)
-          }
-
-          SectionMenu {
-            id: winSec
-            chips: root.chipsOf("win")
-            width: secRow.secWidth
-            title: "Windows"
-            icon: root.kindIcon("win")
-            hasPicker: root.winPlugin !== "missing"
-            pickerText: root.winScope === "*" ? "All windows" : root.winScopeLabel
-            pickerItems: root.winAppItems
-            pickerCurrent: "t:" + root.winScope
-            pickerOpen: root.winPickOpen
-            onPickerToggled: root.toggleWinPicker()
-            onPickerChosen: function(item) { root.pickWinApp(item) }
-            rawCats: root.winCats
-            saved: root.savedOf("win")
-            alsoSaved: root.winMarks
+            id: themeSec
+            width: body.themeW
+            title: "Themes"
+            icon: root.kindIcon("theme")
+            special: true
+            subtitle: root.themeItems.length + " looks"
+            rawCats: root.themeCats
+            saved: root.themeNowId
             favs: []
-            focused: root.focusKind === "win"
+            focused: root.focusKind === "theme"
             defaultCat: 0
-            hasStrength: root.winPart !== "frame"
-            strengthLabel: root.winPart === "color" ? "Color strength" : "Effect strength"
-            strengthLive: root.winPart === "color" ? root.winColorOnS : root.winEffectOnS
-            strength: root.winPart === "color" ? root.winColStrengthS : root.winFxStrengthS
-            strengthDefault: root.winPart === "color" ? root.defaultStrengthOf("color", root.winColorS) : root.defaultStrengthOf("screen", root.winEffectS)
-            onStrengthPicked: function(v) { root.setStrength(root.winPart === "color" ? "wincol" : "winfx", v) }
-            hasMix: root.winPart !== "frame"
-            mixNoun: root.winPart === "color" ? "color" : "effect"
-            mixLive: root.mixSecondOf("win") !== ""
-            mixName: root.mixSecondOf("win") === "" ? "" : (root.winPart === "color" ? "c:" : "e:") + root.mixSecondOf("win")
-            mixMode: root.mixModeOf("win")
-            mixValue: root.mixAmtOf("win")
-            mixDefault: root.mixDefaultOf("win")
-            onMixPicked: function(v) { root.setMixAmount("win", v) }
-            onMixModeToggled: { root.activeKind = "win"; root.toggleMixMode() }
-            onMixChosen: function(item, keep) { root.pickSecond("win", item, keep) }
-            onPointed: function(item) { root.previewWin(item) }
-            onChosen: function(item, keep) { root.chooseWin(item, keep) }
-            onActed: function(id) { root.runAction("win", id) }
-            onFocusRequested: root.activeKind = "win"
+            onPointed: function(item) { root.previewTheme(item) }
+            onChosen: function(item, keep) {
+              if (item.id.indexOf("@rand:") === 0 || item.id.indexOf("@clear:") === 0) { root.runSurprise(item.id); if (!keep) root.popupOpen = false }
+              else root.applyTheme(item, keep)
+            }
+            onActed: function(id) { root.runAction("theme", id) }
+            onFocusRequested: root.activeKind = "theme"
           }
 
           Rectangle {
@@ -3698,56 +4528,410 @@ Item {
             color: root.fgA(0.2)
           }
 
-          SectionMenu {
-            id: comboSec
-            width: Math.floor(secRow.secWidth * root.comboWeight)
-            title: "Combos"
-            icon: root.kindIcon("combo")
-            rawCats: root.comboCats
-            saved: root.comboNowId
-            favs: []
-            focused: root.focusKind === "combo"
-            defaultCat: 0
-            onPointed: function(item) { root.previewCombo(item) }
-            onChosen: function(item, keep) { root.applyCombo(item, keep) }
-            onActed: function(id) { root.runAction("combo", id) }
-            onFocusRequested: root.activeKind = "combo"
+          Item {
+            id: rightArea
+            width: body.rightW
+            height: root.secH
+
+            Column {
+              id: partsHead
+              width: rightArea.width - Style.space(10)
+              spacing: root.paneGap
+              Item {
+                width: partsHead.width
+                height: root.tabH + 1
+                Rectangle { y: root.tabH; width: parent.width; height: 1; color: root.fgA(0.3) }
+                Row {
+                  spacing: Style.space(3)
+                  PartTab { kind: "screen" }
+                  PartTab { kind: "color" }
+                  PartTab { kind: "wall" }
+                  PartTab { kind: "mouse" }
+                  PartTab { kind: "win" }
+                }
+              }
+              Text {
+                visible: root.nOpen > 0
+                width: partsHead.width
+                height: root.aboutH
+                leftPadding: Style.space(10)
+                rightPadding: Style.space(10)
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: root.nOpen > 0 ? root.kindAbout(root.openParts[0]) : ""
+                opacity: 0.65
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.85
+              }
+            }
+
+            Flickable {
+              id: partsFlick
+              anchors.fill: parent
+              anchors.topMargin: partsHead.height + root.paneGap
+              clip: true
+              contentWidth: width
+              contentHeight: partsCol.height
+              boundsBehavior: Flickable.StopAtBounds
+              function wheelBy(d) {
+                cancelFlick()
+                contentY = Math.max(0, Math.min(Math.max(0, contentHeight - height), contentY - d))
+              }
+              function reveal(s) {
+                if (!s || !s.visible) return
+                if (s.y < contentY || s.height >= height) contentY = Math.max(0, Math.min(s.y, contentHeight - height))
+                else if (s.y + s.height > contentY + height) contentY = Math.min(s.y + s.height - height, contentHeight - height)
+              }
+              WheelHandler {
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: function(event) { partsFlick.wheelBy(event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 1.25) }
+              }
+              Connections {
+                target: root
+                function onFocusKindChanged() { Qt.callLater(function() { partsFlick.reveal(root.secOf(root.focusKind)) }) }
+              }
+              Rectangle {
+                visible: partsFlick.contentHeight > partsFlick.height
+                x: partsFlick.width - width
+                y: partsFlick.contentY + partsFlick.contentY / Math.max(1, partsFlick.contentHeight - partsFlick.height) * (partsFlick.height - height)
+                width: Style.space(4)
+                height: Math.max(Style.space(30), partsFlick.height * partsFlick.height / partsFlick.contentHeight)
+                radius: width / 2
+                color: root.fgA(0.4)
+                z: 5
+              }
+
+              Column {
+                id: partsCol
+                width: partsFlick.width - Style.space(10)
+                spacing: root.paneGap
+              SectionMenu {
+                id: screenSec
+                inPane: true
+                visible: root.showScreen
+                chips: root.chipsOf("screen")
+                width: partsCol.width
+                title: "Screen"
+                icon: root.kindIcon("screen")
+                rawCats: root.screenCats
+                saved: root.current
+                favs: root.screenFavs
+                focused: root.focusKind === "screen"
+                defaultCat: 1
+                hasStrength: true
+                strengthLive: root.shaderOn
+                strength: root.fxStrength
+                strengthDefault: root.defaultStrengthOf("screen", root.current)
+                alsoSaved: root.screenMarks
+                hasMix: true
+                mixNoun: "effect"
+                mixLive: root.mixSecondOf("screen") !== ""
+                mixName: root.effect2
+                mixMode: root.mixEffectMode
+                mixValue: root.mixEffectAmt
+                mixDefault: root.mixDefaultOf("screen")
+                onMixPicked: function(v) { root.setMixAmount("screen", v) }
+                onMixModeToggled: { root.activeKind = "screen"; root.toggleMixMode() }
+                onMixChosen: function(item, keep) { root.pickSecond("screen", item, keep) }
+                onStrengthPicked: function(v) { root.setStrength("effect", v) }
+                onPointed: function(item) { root.previewScreen(item) }
+                onChosen: function(item, keep) { root.chooseScreen(item, keep) }
+                onActed: function(id) { root.runAction("screen", id) }
+                onFocusRequested: root.activeKind = "screen"
+              }
+
+              SectionMenu {
+                id: colorSec
+                inPane: true
+                visible: root.showColor
+                chips: root.chipsOf("color")
+                width: partsCol.width
+                title: "Color"
+                icon: root.kindIcon("color")
+                rawCats: root.colorCats
+                saved: root.colorCurrent
+                favs: root.colorFavs
+                focused: root.focusKind === "color"
+                defaultCat: 1
+                hasStrength: true
+                strengthLive: root.colorOn
+                strength: root.colStrength
+                strengthDefault: root.defaultStrengthOf("color", root.colorCurrent)
+                alsoSaved: root.colorMarks
+                hasMix: true
+                mixNoun: "colour grade"
+                mixLive: root.mixSecondOf("color") !== ""
+                mixName: root.color2
+                mixMode: root.mixColorMode
+                mixValue: root.mixColorAmt
+                mixDefault: root.mixDefaultOf("color")
+                onMixPicked: function(v) { root.setMixAmount("color", v) }
+                onMixModeToggled: { root.activeKind = "color"; root.toggleMixMode() }
+                onMixChosen: function(item, keep) { root.pickSecond("color", item, keep) }
+                hasCustom: true
+                customHex: root.customHex
+                customH: root.customH
+                customS: root.customS
+                customV: root.customV
+                customFav: root.customIsFav
+                customActive: root.customActive
+                onCustomHsv: function(h, sat, v) { root.setCustomHsv(h, sat, v) }
+                onCustomHexEntered: function(t) { root.setCustomHex(t) }
+                onCustomFavToggled: root.toggleCustomFav()
+                onStrengthPicked: function(v) { root.setStrength("color", v) }
+                onPointed: function(item) { root.previewColor(item) }
+                onChosen: function(item, keep) { root.chooseColor(item, keep) }
+                onActed: function(id) { root.runAction("color", id) }
+                onFocusRequested: root.activeKind = "color"
+              }
+
+              SectionMenu {
+                id: wallSec
+                inPane: true
+                visible: root.showWall
+                chips: root.chipsOf("wall")
+                width: partsCol.width
+                title: "Wallpaper"
+                icon: root.kindIcon("wall")
+                rawCats: root.wallCats
+                saved: root.wallShown
+                favs: root.wallFavs
+                focused: root.focusKind === "wall"
+                defaultCat: 2
+                hasStrength: true
+                strengthLive: root.wallOn
+                strength: root.wallStrength
+                strengthDefault: 100
+                hasWallOpts: true
+                reactValue: root.wallReact
+                reactLive: root.wallOn
+                rangeValue: root.wallRange
+                targetHex: root.wallTarget
+                targetLive: root.wallReactorOn
+                speedValue: root.wallSpeed
+                zoomValue: root.wallZoom
+                onSpeedPicked: function(v) { root.setWallSpeed(v) }
+                onZoomPicked: function(v) { root.setWallZoom(v) }
+                onReactPicked: function(v) { root.setWallReact(v) }
+                onRangePicked: function(v) { root.setWallRange(v) }
+                onTargetHexEntered: function(t) { root.setWallTarget(t) }
+                onTargetPickRequested: root.pickWallTarget()
+                onStrengthPicked: function(v) { root.setStrength("wall", v) }
+                hasMix: true
+                mixNoun: "effect"
+                mixLive: root.mixSecondOf("wall") !== ""
+                mixName: root.mixSecondOf("wall")
+                mixMode: root.wallMixMode
+                mixValue: root.wallMixAmt
+                mixDefault: root.mixDefaultOf("wall")
+                alsoSaved: root.mixSecondOf("wall") !== "" ? [root.wall2] : []
+                onMixPicked: function(v) { root.setMixAmount("wall", v) }
+                onMixModeToggled: { root.activeKind = "wall"; root.toggleMixMode() }
+                onMixChosen: function(item, keep) { root.pickSecond("wall", item, keep) }
+                onPointed: function(item) { root.previewWall(item) }
+                onChosen: function(item, keep) { root.chooseWall(item, keep) }
+                onActed: function(id) { root.runAction("wall", id) }
+                onFocusRequested: root.activeKind = "wall"
+              }
+
+              SectionMenu {
+                id: mouseSec
+                inPane: true
+                visible: root.showMouse
+                chips: root.chipsOf("mouse")
+                width: partsCol.width
+                title: "Cursor"
+                icon: root.kindIcon("mouse")
+                rawCats: root.mouseCats
+                saved: root.mouseCurrent
+                favs: root.mouseFavs
+                focused: root.focusKind === "mouse"
+                defaultCat: 1
+                hasStrength: true
+                strengthLive: root.mouseOn
+                strength: root.mouseStrength
+                strengthDefault: 100
+                onStrengthPicked: function(v) { root.setStrength("mouse", v) }
+                hasMouseOpts: true
+                reactLive: root.mouseOn && !root.mouseBend
+                speedValue: root.mouseSpeed
+                zoomValue: root.mouseSize
+                onSpeedPicked: function(v) { root.setMouseSpeed(v) }
+                onZoomPicked: function(v) { root.setMouseSize(v) }
+                onPointed: function(item) { root.previewMouse(item) }
+                onChosen: function(item, keep) { root.chooseMouse(item, keep) }
+                onActed: function(id) { root.runAction("mouse", id) }
+                onFocusRequested: root.activeKind = "mouse"
+              }
+
+              SectionMenu {
+                id: winSec
+                inPane: true
+                visible: root.showWin
+                chips: root.chipsOf("win")
+                width: partsCol.width
+                title: "Windows"
+                icon: root.kindIcon("win")
+                hasPicker: root.winPlugin !== "missing"
+                pickerText: root.winScope === "*" ? "All windows" : root.winScopeLabel
+                pickerItems: root.winAppItems
+                pickerCurrent: "t:" + root.winScope
+                pickerOpen: root.winPickOpen
+                onPickerToggled: root.toggleWinPicker()
+                onPickerChosen: function(item) { root.pickWinApp(item) }
+                rawCats: root.winCats
+                saved: root.savedOf("win")
+                alsoSaved: root.winMarks
+                favs: []
+                focused: root.focusKind === "win"
+                defaultCat: 0
+                hasStrength: root.winPart !== "frame"
+                strengthLabel: root.winPart === "color" ? "Color strength" : "Effect strength"
+                strengthLive: root.winPart === "color" ? root.winColorOnS : root.winEffectOnS
+                strength: root.winPart === "color" ? root.winColStrengthS : root.winFxStrengthS
+                strengthDefault: root.winPart === "color" ? root.defaultStrengthOf("color", root.winColorS) : root.defaultStrengthOf("screen", root.winEffectS)
+                onStrengthPicked: function(v) { root.setStrength(root.winPart === "color" ? "wincol" : "winfx", v) }
+                hasMix: root.winPart !== "frame"
+                mixNoun: root.winPart === "color" ? "color" : "effect"
+                mixLive: root.mixSecondOf("win") !== ""
+                mixName: root.mixSecondOf("win") === "" ? "" : (root.winPart === "color" ? "c:" : "e:") + root.mixSecondOf("win")
+                mixMode: root.mixModeOf("win")
+                mixValue: root.mixAmtOf("win")
+                mixDefault: root.mixDefaultOf("win")
+                onMixPicked: function(v) { root.setMixAmount("win", v) }
+                onMixModeToggled: { root.activeKind = "win"; root.toggleMixMode() }
+                onMixChosen: function(item, keep) { root.pickSecond("win", item, keep) }
+                onPointed: function(item) { root.previewWin(item) }
+                onChosen: function(item, keep) { root.chooseWin(item, keep) }
+                onActed: function(id) { root.runAction("win", id) }
+                onFocusRequested: root.activeKind = "win"
+              }
+
+              Text {
+                visible: root.nOpen === 0
+                width: partsCol.width
+                topPadding: Style.space(8)
+                leftPadding: Style.space(10)
+                rightPadding: Style.space(10)
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                lineHeight: 1.3
+                text: "A theme mixes all of these. Pick a tab to change just that one: pick an effect, set its strength, mix two.\n\n" + root.partKinds.map(function(k) { return root.kindTitle(k) + ": " + root.kindAbout(k) }).join("\n")
+                opacity: 0.6
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.9
+              }
+              }
+            }
           }
         }
 
         Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
 
-        Row {
-          id: activeRow
+        // what is on and what it costs: the answer to "why is my system slow?"
+        Column {
+          id: loadBox
           width: body.width
-          spacing: Style.space(6)
+          spacing: Style.space(3)
 
-          Flow {
-            id: activeFlow
-            width: activeRow.width - reportBtn.width - activeRow.spacing
-            spacing: Style.space(4)
-            leftPadding: Style.space(10)
-
+          Row {
+            id: loadHead
+            width: loadBox.width
+            height: Style.space(26)
+            spacing: Style.space(8)
             Text {
-              height: Style.space(24)
+              id: loadTitle
+              height: loadHead.height
               verticalAlignment: Text.AlignVCenter
+              leftPadding: Style.space(10)
               textFormat: Text.PlainText
-              visible: root.paused
-              text: "PAUSED (p to resume)"
+              text: "󰓅 What is using my GPU"
               color: root.fg
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
+              font.bold: true
             }
           }
-          MenuRow {
-            id: reportBtn
-            width: header.cell * 1.6
-            label: "Cost report  (P)"
-            onClicked: root.costReport()
+          Text {
+            width: loadBox.width
+            leftPadding: Style.space(10)
+            rightPadding: Style.space(10)
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.loadVerdict
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.95
+          }
+          Flow {
+            width: loadBox.width
+            spacing: Style.space(5)
+            leftPadding: Style.space(10)
+            visible: root.loadItems.length > 0 && !root.paused
+            Repeater {
+              model: root.loadItems
+              delegate: Rectangle {
+                id: loadChip
+                required property var modelData
+                width: loadChipRow.implicitWidth + Style.space(20)
+                height: Style.space(24)
+                radius: Style.space(12)
+                color: loadMouse.containsMouse ? root.fgA(0.24) : root.fgA(0.1)
+                border.width: 1
+                border.color: root.loadColor(loadChip.modelData.rating, 0.7)
+                Row {
+                  id: loadChipRow
+                  anchors.centerIn: parent
+                  spacing: Style.space(6)
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: "●"
+                    color: root.loadColor(loadChip.modelData.rating, 1)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body * 0.9
+                  }
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: loadChip.modelData.label + ": " + root.loadWord(loadChip.modelData) + "  ✕"
+                    color: root.fg
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body * 0.9
+                  }
+                }
+                MouseArea {
+                  id: loadMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.removeActive(loadChip.modelData.key)
+                }
+              }
+            }
+          }
+          Text {
+            width: loadBox.width
+            height: Style.space(18)
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: Style.space(10)
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: root.gpuText
+            opacity: 0.8
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.85
           }
         }
 
+        Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
+
         Text {
+          id: detailText
           width: body.width
           height: Style.space(24)
           verticalAlignment: Text.AlignVCenter
@@ -3755,7 +4939,9 @@ Item {
           elide: Text.ElideRight
           textFormat: Text.PlainText
           text: {
-            if (root.comboFlash !== "") return root.comboFlash
+            if (root.themeFlash !== "") return root.themeFlash
+            var cc = root.focusKind === "theme" ? root.activeSec.curCat : null
+            if (cc && cc.job !== undefined) return root.jobTip(cc.job)
             var it = root.activeSec.selected
             if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
             return "Move to an item for details"
@@ -3764,31 +4950,259 @@ Item {
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
         }
-        Text {
+
+        Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
+
+        // hotkeys: folded away behind one button (or the ? key); keys are drawn as caps so they stand out from their descriptions
+        Column {
+          id: keyArea
           width: body.width
-          height: Style.space(20)
-          verticalAlignment: Text.AlignVCenter
-          leftPadding: Style.space(10)
-          elide: Text.ElideRight
-          textFormat: Text.PlainText
-          text: "/ filter · hjkl move · ⏎ apply · space try · tab menu · [ ] strength ({ } fine, d default) · Ctrl+⏎ mix a second (t stack/blend, , . amount, ⌫ remove) · p pause · e pause in fullscreen · v/V speed and z/Z zoom (Wallpaper) or size (Cursor) · u custom colour (U to favorite it) · f fav · F save combo · n name a combo · r/R surprise · o/O off · P cost report · s C w c W m menus · A pick the app (Windows) · esc clears filter, then undoes"
-          opacity: 0.6
-          color: root.fg
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.body * 0.85
+          spacing: Style.space(3)
+
+        Row {
+          id: keyToggleRow
+          width: keyArea.width
+          height: Style.space(28)
+          spacing: Style.space(10)
+          MenuRow {
+            id: keyToggle
+            width: Style.space(230)
+            toggle: true
+            checked: root.keysOpen
+            label: (root.keysOpen ? "▾ " : "▸ ") + "Hotkeys  (?)"
+            onClicked: root.keysOpen = !root.keysOpen
+          }
+          Text {
+            height: keyToggleRow.height
+            verticalAlignment: Text.AlignVCenter
+            textFormat: Text.PlainText
+            text: "Move: arrows · Open: s C w c W · Pause everything: p" + (root.panicKey !== "" ? " or " + root.panicKey + " anywhere" : "") + " · Close: Esc"
+            opacity: 0.8
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.9
+          }
         }
-        Text {
+
+        Item {
+          id: keySheet
+          visible: root.keysOpen
           width: body.width
-          height: Style.space(20)
-          verticalAlignment: Text.AlignVCenter
+          implicitHeight: root.denseKeys ? denseFlow.implicitHeight : keyBox.implicitHeight
+          height: implicitHeight
+
+        Flow {
+          id: denseFlow
+          visible: root.denseKeys
+          width: body.width
           leftPadding: Style.space(10)
-          elide: Text.ElideRight
-          textFormat: Text.PlainText
-          text: root.gpuText
-          opacity: 0.6
-          color: root.fg
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.body * 0.85
+          Repeater {
+            model: root.denseKeys ? root.denseKeyList : []
+            delegate: Item {
+              required property var modelData
+              width: denseKey.width + Style.space(modelData.head === true ? 6 : 12)
+              height: denseKey.height
+              HotKey {
+                id: denseKey
+                keys: parent.modelData.k
+                label: parent.modelData.t
+                strong: parent.modelData.strong === true || parent.modelData.head === true
+              }
+            }
+          }
+        }
+
+        Column {
+          id: keyBox
+          visible: !root.denseKeys
+          width: body.width
+          spacing: Style.space(3)
+
+          Repeater {
+            model: root.hotkeyGroups
+            delegate: Row {
+              id: keyGroup
+              required property var modelData
+              width: keyBox.width
+              spacing: Style.space(6)
+              Text {
+                id: groupName
+                width: Style.space(120)
+                height: Style.space(24)
+                leftPadding: Style.space(10)
+                verticalAlignment: Text.AlignVCenter
+                textFormat: Text.PlainText
+                text: keyGroup.modelData.name
+                color: root.fg
+                opacity: 0.8
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.85
+                font.bold: true
+              }
+              Flow {
+                width: keyGroup.width - groupName.width - keyGroup.spacing
+                spacing: 0
+                Repeater {
+                  model: keyGroup.modelData.keys
+                  delegate: Item {
+                    required property var modelData
+                    width: hotKey.width + Style.space(16)
+                    height: hotKey.height
+                    HotKey {
+                      id: hotKey
+                      keys: parent.modelData.k
+                      label: parent.modelData.t
+                      strong: parent.modelData.strong === true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        }
+        }
+      }
+
+      // update flyout: what changed, and the button that runs `omarchy plugin update`
+      Rectangle {
+        id: updFly
+        visible: root.updOpen
+        z: 20
+        width: Math.min(parent.width - Style.space(20), Style.space(560))
+        height: updCol.implicitHeight + Style.space(24)
+        x: parent.width - width - Style.space(10)
+        y: Style.space(38)
+        radius: Style.space(8)
+        color: root.bgA(1)
+        border.width: 1
+        border.color: root.fgA(0.6)
+
+        Column {
+          id: updCol
+          x: Style.space(12)
+          y: Style.space(12)
+          width: parent.width - Style.space(24)
+          spacing: Style.space(8)
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.updState === "ok" ? "Updated" + (root.updLatest !== "" ? " to " + root.updLatest : "")
+                  : (root.updState === "fail" ? "The update did not finish"
+                  : (root.updAvail ? "Update available" + (root.updLatest !== "" ? ": " + (root.updCur !== "" ? root.updCur + " to " : "") + root.updLatest : "")
+                  : "Latest updates" + (root.updCur !== "" ? " (you have " + root.updCur + ")" : "")))
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 1.1
+            font.bold: true
+          }
+          Text {
+            visible: root.updState === ""
+            width: parent.width
+            textFormat: Text.PlainText
+            text: root.updAvail ? "What changed (scroll for more)" : "All updates so far, newest first (scroll)"
+            opacity: 0.7
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.9
+          }
+          Flickable {
+            id: updFlick
+            visible: root.updState === ""
+            width: parent.width
+            height: Math.min(contentHeight, Math.round(updFly.parent.height * 0.5))
+            contentWidth: width
+            contentHeight: updList.height
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            function scrollBy(d) {
+              cancelFlick()
+              contentY = Math.max(0, Math.min(Math.max(0, contentHeight - height), contentY + d))
+            }
+            WheelHandler {
+              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+              onWheel: function(event) { updFlick.scrollBy(-(event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 1.25)) }
+            }
+            Rectangle {
+              visible: updFlick.contentHeight > updFlick.height
+              x: updFlick.width - width
+              y: updFlick.contentY + updFlick.contentY / Math.max(1, updFlick.contentHeight - updFlick.height) * (updFlick.height - height)
+              width: Style.space(4)
+              height: Math.max(Style.space(30), updFlick.height * updFlick.height / updFlick.contentHeight)
+              radius: width / 2
+              color: root.fgA(0.4)
+              z: 5
+            }
+            Column {
+              id: updList
+              width: updFlick.width - Style.space(10)
+              spacing: Style.space(3)
+              Repeater {
+                model: root.updAvail ? root.updChanges : root.updRecent
+                delegate: Text {
+                  required property string modelData
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  textFormat: Text.PlainText
+                  text: "·  " + modelData
+                  color: root.fg
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body * 0.95
+                }
+              }
+            }
+          }
+          Text {
+            visible: root.updState === "" && root.updDirty
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: "This copy has local edits. The update may refuse to run until they are saved or undone."
+            color: root.fg
+            opacity: 0.85
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.9
+          }
+          Text {
+            visible: root.updState !== ""
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.updState === "ok" ? "Restart the shell to load the new version. The bar is gone for a minute or two." : root.updOut
+            color: root.fg
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body * 0.95
+          }
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            MenuRow {
+              visible: root.updAvail && (root.updState === "" || root.updState === "fail")
+              width: Math.floor((parent.width - parent.spacing * 2) / 3)
+              label: root.updBusy ? "Updating..." : (root.updState === "fail" ? "Try again" : "Update now")
+              dim: root.updBusy
+              onClicked: root.runUpdate()
+            }
+            MenuRow {
+              visible: root.updAvail && root.updState !== "ok"
+              width: Math.floor((parent.width - parent.spacing * 2) / 3)
+              label: "Copy command"
+              onClicked: { Quickshell.execDetached(["wl-copy", root.updCmd]); root.flash("Copied: " + root.updCmd) }
+            }
+            MenuRow {
+              visible: root.updState === "ok"
+              width: Math.floor((parent.width - parent.spacing) / 2)
+              label: "Restart the shell now"
+              onClicked: Quickshell.execDetached(["omarchy-restart-shell"])
+            }
+            MenuRow {
+              width: root.updAvail && root.updState !== "ok" ? Math.floor((parent.width - parent.spacing * 2) / 3) : Math.floor((parent.width - parent.spacing) / 2)
+              label: root.updState === "ok" ? "Later" : (root.updAvail ? "Not now" : "Close")
+              onClicked: root.updOpen = false
+            }
+          }
         }
       }
     }

@@ -12,7 +12,7 @@ BarWidget {
   id: root
   moduleName: "io.github.akton1.omashaders"
 
-  readonly property var files: ["Core.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml"]
+  readonly property var files: ["Core.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml", "Wallhaven.qml", "ThemeDialog.qml"]
   property int reloads: 0
   property string reloadError: ""
   property var core: null

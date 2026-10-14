@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# check-public-wording: fail (file:line) when anything in this plugin names things that must not ship (internal tool,
+# company or role names, task numbers, personal paths). The word list lives in the maintainer's own tools, not in this tree;
+# without those tools this check says so and passes.
+here=$(cd "$(dirname "$0")" && pwd)
+tool=$(cd "$here/../../../bin" 2>/dev/null && pwd)/check-public-wording
+[ -x "$tool" ] || { echo "public wording check skipped (maintainer tools not found)"; exit 0; }
+exec "$tool" "$@" "$here/.."

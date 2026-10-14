@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+# pause-bind: gives "pause / resume every effect" a Hyprland key without touching the user's config files.
+#   pause-bind apply "CTRL + ALT + P"    bind it now (Hyprland forgets runtime binds on a config reload, so the shell calls this again then)
+#   pause-bind apply ""                  remove the key this script bound before; bind nothing
+# A key that something else already uses is never taken over; the previous key of this script is released first.
+# The bound key is remembered in the plugin's state folder (pause-bind.key). Prints one line: bound / already / taken / removed / error.
+import json
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+STATE = os.environ.get("OMASHADERS_STATE_DIR") or os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy", "io.github.akton1.omashaders")
+REMEMBER = os.path.join(STATE, "pause-bind.key")
+MODS = {"SHIFT": 1, "CTRL": 4, "CONTROL": 4, "ALT": 8, "SUPER": 64, "MOD4": 64, "MOD1": 8}
+
+
+def parse(spec):
+    """'CTRL + ALT + P' -> (modmask, 'P', normalised spec) or None"""
+    parts = [p for p in re.split(r"\s*\+\s*|\s+", spec.strip()) if p]
+    if not parts:
+        return None
+    mask = 0
+    for p in parts[:-1]:
+        if p.upper() not in MODS:
+            return None
+        mask |= MODS[p.upper()]
+    key = parts[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,24}", key) or key.upper() in MODS:
+        return None
+    norm = " + ".join([p.upper() for p in parts[:-1]] + [key.upper() if len(key) == 1 else key])
+    return mask, key.upper() if len(key) == 1 else key, norm
+
+
+def hypr(*args):
+    return subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=6)
+
+
+def binds():
+    try:
+        return json.loads(hypr("-j", "binds").stdout)
+    except Exception:
+        return None
+
+
+def same_key(b, mask, key):
+    return int(b.get("modmask", 0)) == mask and str(b.get("key", "")).lower() == key.lower()
+
+
+def lua_str(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def main():
+    if len(sys.argv) < 3 or sys.argv[1] != "apply":
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    want = parse(sys.argv[2]) if sys.argv[2].strip() else None
+    if sys.argv[2].strip() and not want:
+        print("error: not a key combination: " + sys.argv[2])
+        return 1
+    try:
+        old = open(REMEMBER).read().strip()
+    except OSError:
+        old = ""
+    current = binds()
+    if current is None:
+        print("error: Hyprland did not answer")
+        return 1
+    old_p = parse(old) if old else None
+    if old_p and (not want or old_p[2] != want[2]):
+        hypr("eval", "hl.unbind(%s)" % lua_str(old_p[2]))
+        old = ""
+    if not want:
+        try:
+            os.remove(REMEMBER)
+        except OSError:
+            pass
+        print("removed" if old_p else "none")
+        return 0
+    mask, key, norm = want
+    mine = os.path.join(HERE, "omashaders")
+    for b in current:
+        if same_key(b, mask, key):
+            t = json.dumps(b).lower()
+            if "omashaders" in t and ("power" in t or "pause" in t):
+                os.makedirs(STATE, exist_ok=True)
+                open(REMEMBER, "w").write(norm)
+                print("already")
+                return 0
+            print("taken")
+            return 0
+    code = 'hl.bind(%s, hl.dsp.exec_cmd(%s), {description = %s})' % (
+        lua_str(norm), lua_str(mine + " power toggle --notify"), lua_str("OmaShaders: pause / resume effects"))
+    r = hypr("eval", code)
+    if r.returncode != 0 or r.stdout.strip().lower().startswith("error"):
+        print("error: " + (r.stdout or r.stderr).strip()[:200])
+        return 1
+    os.makedirs(STATE, exist_ok=True)
+    open(REMEMBER, "w").write(norm)
+    print("bound")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

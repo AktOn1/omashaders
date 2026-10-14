@@ -7,6 +7,12 @@ Scope {
   id: fx
 
   property string effect: ""
+  // file:// url of the folder with AI-made effects; names starting "ai-" load from genDir/mouse/
+  property string genDir: ""
+  function shaderUrl(n) {
+    if (n.indexOf("ai-") === 0) return fx.genDir !== "" ? fx.genDir + "/mouse/" + n + ".frag.qsb" : ""
+    return Qt.resolvedUrl("mouse-effects/" + n + ".frag.qsb")
+  }
   property bool motion: false
   property point mouse: Qt.point(-10000, -10000)
   property int fps: 30
@@ -78,7 +84,7 @@ Scope {
         property vector4d h1: Qt.vector4d(fx.pt(2).x - win.screen.x, fx.pt(2).y - win.screen.y, fx.pt(3).x - win.screen.x, fx.pt(3).y - win.screen.y)
         property vector4d h2: Qt.vector4d(fx.pt(4).x - win.screen.x, fx.pt(4).y - win.screen.y, fx.pt(5).x - win.screen.x, fx.pt(5).y - win.screen.y)
         property vector4d h3: Qt.vector4d(fx.pt(6).x - win.screen.x, fx.pt(6).y - win.screen.y, fx.pt(7).x - win.screen.x, fx.pt(7).y - win.screen.y)
-        fragmentShader: fx.effect !== "" ? Qt.resolvedUrl("mouse-effects/" + fx.effect + ".frag.qsb") : ""
+        fragmentShader: fx.effect !== "" ? fx.shaderUrl(fx.effect) : ""
       }
     }
   }

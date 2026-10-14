@@ -1,5 +1,5 @@
 // label: Library light
-// hint: tall windows throw slanted sunbeams across rows of old spines with dust turning in the light, the pointer tilts the beams
+// hint: your own wallpaper stays the picture; soft out-of-focus shelves of books grow out of its tones, warm sunbeams slant across them with dust turning in the light, the pointer tilts the beams
 // category: Cozy corners
 #version 440
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -45,33 +45,67 @@ float lb_lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 // pointer in 0..1 screen units, or a calm default when the pointer is away
 vec2 lb_ptr(vec2 mpx, vec2 dflt) { return mpx.x < -5000.0 ? dflt : mpx / res; }
 
-// an old library: tall windows throw slanted sunbeams across rows of leather spines, dust turns in the light;
-// the pointer tilts the light and the dust drifts away from it
-vec3 lb_spine(float h, float h2) {
-  if (h < 0.17) return vec3(0.34, 0.12, 0.10);   // oxblood
-  if (h < 0.34) return vec3(0.16, 0.24, 0.17);   // bottle green
-  if (h < 0.50) return vec3(0.40, 0.27, 0.13);   // tan
-  if (h < 0.66) return vec3(0.12, 0.17, 0.27);   // navy
-  if (h < 0.82) return vec3(0.27, 0.15, 0.09);   // brown
-  return vec3(0.46, 0.38, 0.25);                  // vellum
+
+float lb_blur(vec2 uv, float r) {
+  return (lb_lum(wall(uv)) * 2.0 + lb_lum(wall(uv + vec2(r, 0.0))) + lb_lum(wall(uv - vec2(r, 0.0))) + lb_lum(wall(uv + vec2(0.0, r))) + lb_lum(wall(uv - vec2(0.0, r)))) / 6.0;
 }
-// one row of books standing on shelf line y0: returns colour in rgb, mask in a
-vec4 lb_books(vec2 p, float y0, float seedr) {
-  float cw = 0.030;
-  float cid = floor(p.x / cw);
-  float f = fract(p.x / cw);
-  float h = lb_h(vec2(cid, seedr));
-  float h2 = lb_h(vec2(cid + 7.0, seedr));
-  float hgt = 0.15 + 0.08 * h2;
-  float wdt = 0.55 + 0.45 * lb_h(vec2(cid, seedr + 3.0));
+// out-of-focus shelves of books that grow out of the wallpaper itself: the books take the picture's own tones, pulled
+// toward warm leather and kept soft and low in contrast, so the wallpaper stays the wallpaper; returns (tone factor rgb, strength)
+vec3 lb_spine(float h) {
+  if (h < 0.16) return vec3(0.66, 0.38, 0.30);     // oxblood
+  if (h < 0.32) return vec3(0.46, 0.54, 0.40);     // moss
+  if (h < 0.54) return vec3(0.80, 0.60, 0.38);     // tan
+  if (h < 0.70) return vec3(0.42, 0.46, 0.58);     // dusty navy
+  if (h < 0.86) return vec3(0.62, 0.46, 0.34);     // brown
+  return vec3(0.86, 0.76, 0.58);                   // vellum
+}
+vec4 lb_shelves(vec2 uv, float asp, out vec3 glow) {
+  float rows = 3.0;
+  float rowH = 1.0 / rows;
+  float rid = floor(uv.y * rows);
+  float y0 = (rid + 1.0) * rowH - 0.016;               // top of this row's shelf board
+  float cw = 0.026;
+  float px = uv.x * asp + rid * 0.53;
+  float c0 = floor(px / cw);
+  float soft = 0.55;                                    // soft edges, as if out of focus (fraction of a cell)
+  float best = 0.0, bid = c0;
+  vec2 bk = vec2(0.0);
+  for (int i = -1; i <= 1; i++) {
+    float id = c0 + float(i);
+    float hh = lb_h(vec2(id, rid + 1.0));
+    float wd = 0.62 + 0.80 * lb_h(vec2(id + 11.0, rid + 4.0));      // book width in cells
+    float cx = (id + 0.5) + (lb_h(vec2(id + 5.0, rid + 2.0)) - 0.5) * 0.5;
+    float dxn = abs(px / cw - cx);
+    float cov = smoothstep(wd * 0.5 + soft * 0.30, wd * 0.5 - soft * 0.30, dxn) * step(0.07, lb_h(vec2(id + 2.0, rid + 7.0)));   // now and then a gap in the row
+    if (cov > best) { best = cov; bid = id; bk = vec2(hh, dxn / wd); }
+  }
+  float h2 = lb_h(vec2(bid + 7.0, rid + 1.0));
+  float hgt = rowH * (0.60 + 0.30 * h2 * h2);
   float top = y0 - hgt;
-  float inx = smoothstep(0.0, 0.08, f) * smoothstep(1.0, 0.92, f);
-  float iny = step(top, p.y) * step(p.y, y0);
-  float m = inx * iny * step(f, wdt + 0.40);
-  vec3 c = lb_spine(h, h2) * (0.75 + 0.5 * f);
-  float band = smoothstep(0.012, 0.0, abs(p.y - (top + 0.025))) + smoothstep(0.012, 0.0, abs(p.y - (y0 - 0.03)));
-  c += vec3(0.50, 0.38, 0.16) * band * 0.45;       // gilt bands
-  return vec4(c, m);
+  float sy = 0.012;
+  float iny = smoothstep(top - sy, top + sy, uv.y) * smoothstep(y0 + 0.002, y0 - 0.008, uv.y);
+  float m = best * iny;
+  vec3 spine = lb_spine(bk.x);
+  float across = 1.0 - 0.35 * smoothstep(0.1, 0.5, bk.y);                      // the spine rounds off toward its edges
+  float vy = (uv.y - top) / max(hgt, 1e-3);
+  vec3 tone = spine * across * (0.78 + 0.32 * h2);
+  tone *= 1.0 + 0.22 * smoothstep(0.10, 0.0, abs(vy - 0.12)) + 0.18 * smoothstep(0.06, 0.0, abs(vy - 0.82));   // two soft gilt bands
+  tone *= 1.0 - 0.30 * smoothstep(0.6, 1.0, vy);                                 // shadow near the board
+  // the back of the shelf: a faint warm shade, and a soft dark wooden board under each row
+  float back = smoothstep(y0 - rowH * 0.95, y0 - rowH * 0.5, uv.y) * smoothstep(y0 + 0.01, y0 - 0.03, uv.y);
+  float board = smoothstep(0.010, 0.0, uv.y - y0) * smoothstep(y0 - 0.002, y0 + 0.002, uv.y);
+  float boardShadow = smoothstep(0.045, 0.0, uv.y - (y0 + 0.016)) * step(y0 + 0.016, uv.y);
+  vec3 fac = mix(vec3(1.0), vec3(0.80, 0.70, 0.58), back * 0.35);
+  fac = mix(fac, tone, m * 0.85);
+  fac = mix(fac, vec3(0.34, 0.22, 0.14), board * 0.80);
+  fac *= 1.0 - 0.30 * boardShadow;
+  // strong at the sides, faint over the middle, so the wallpaper's heart stays clear
+  float dx = min(uv.x, 1.0 - uv.x);
+  float side = 0.26 + 0.74 * smoothstep(0.40, 0.03, dx);
+  float l = lb_blur(uv, 0.02);
+  float dark = mix(1.0, smoothstep(0.90, 0.15, l), 0.5);            // the shelves read where the picture is darker
+  glow = tone * m * 0.075 * side;                                    // on a dark picture the books still catch a little warm light
+  return vec4(fac, 0.62 * side * dark);
 }
 
 vec4 fxMain(vec2 mpx) {
@@ -83,16 +117,11 @@ vec4 fxMain(vec2 mpx) {
   float tilt = (m.x - 0.5) * 0.10;
 
   vec3 base = wall(uv);
-  vec3 col = vec3(0.065, 0.042, 0.028) + base * vec3(0.10, 0.075, 0.05);
-  // three shelves of books across the whole wall
-  for (int r = 0; r < 3; r++) {
-    float y0 = 0.30 + 0.30 * float(r);
-    vec4 b = lb_books(p + vec2(float(r) * 0.37, 0.0), y0, float(r) * 5.0 + 1.0);
-    col = mix(col, b.rgb * 0.58, b.a);
-    // shelf board
-    float board = smoothstep(0.012, 0.0, y0 + 0.006 - uv.y) * smoothstep(y0 - 0.002, y0 + 0.008, uv.y);
-    col = mix(col, vec3(0.10, 0.06, 0.035), board);
-  }
+  // the picture, warmed and settled a little (never replaced)
+  vec3 col = base * mix(vec3(1.0), vec3(0.93, 0.84, 0.72), 0.50);
+  vec3 glow;
+  vec4 sh = lb_shelves(uv, asp, glow);
+  col = col * mix(vec3(1.0), sh.rgb, sh.a) + glow * (1.0 - 0.6 * lb_lum(base));
   // sunbeams: slanted bands that come from the upper right
   float lit = 0.0;
   float shaftAmt = 0.0;
@@ -102,19 +131,19 @@ vec4 fxMain(vec2 mpx) {
     float x0 = (1.15 + 0.55 * fi) * asp * 0.5 - uv.y * slant * asp + sin(t * 0.04 + fi) * 0.02;
     float w = 0.105 + 0.030 * lb_h(vec2(fi, 3.0));
     float d = abs(p.x - x0 + 0.0);
-    // soft band, fading toward the bottom and the source
     float band = smoothstep(w, w * 0.25, d);
     band *= 0.45 + 0.55 * lb_n(vec2(p.y * 3.0 - t * 0.02, fi * 4.0));
     band *= smoothstep(0.98, 0.25, uv.y) * smoothstep(-0.05, 0.12, uv.y);
-    // the window cross bar shadows the beam in squares
     float bars = 0.65 + 0.35 * smoothstep(0.02, 0.06, abs(fract((uv.y + fi * 0.13) * 4.0) - 0.5) - 0.06);
     shaftAmt += band * 0.5;
     lit += band * bars;
   }
   lit = clamp(lit, 0.0, 1.0);
   vec3 sun = vec3(1.0, 0.78, 0.45);
-  col += (col * 2.3 + vec3(0.050, 0.032, 0.012)) * sun * lit * 1.0;   // light on the spines and boards
-  col += sun * shaftAmt * 0.075;                                       // the light in the air
+  float lum = lb_lum(col);
+  float room = 1.0 - 0.45 * smoothstep(0.35, 0.9, lum);          // on a bright picture the light stays gentle
+  col += (col * 0.85 + vec3(0.030, 0.019, 0.007)) * sun * lit * room;   // light on the picture and the spines
+  col += sun * (shaftAmt * 0.075 + lit * 0.022) * room;                                  // the light in the air
   // dust in the shafts: drifts away from the pointer
   float dust = 0.0;
   for (int k = 0; k < 2; k++) {
@@ -131,8 +160,8 @@ vec4 fxMain(vec2 mpx) {
     float tw = 0.5 + 0.5 * sin(t * (0.4 + lb_h(id + 5.5)) + h * 40.0);
     dust += step(0.5, h) * smoothstep(rr, rr * 0.2, length(f - o)) * tw;
   }
-  col += vec3(1.0, 0.86, 0.60) * dust * smoothstep(0.1, 0.8, lit + shaftAmt * 0.6) * 0.55;
-  col *= 1.0 - 0.60 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.2);
+  col += vec3(1.0, 0.86, 0.60) * dust * smoothstep(0.1, 0.8, lit + shaftAmt * 0.6) * 0.50;
+  col *= 1.0 - 0.28 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.2);
   return vec4(col, 1.0) * qt_Opacity;
 }
 

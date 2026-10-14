@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""theme-code: share a saved theme as a code, import one, or undo an import.
+
+  theme-code share N [--copy] [--json] [--parts screen,color,wallpaper,cursor,windows] [--format text|bytes] [--out FILE] [--oms2]
+                                            N = the theme's number in the Themes column (1 = first); --parts shares only those
+                                            parts (default all). Instead of N, --line LINE shares a theme line (the look that is on now).
+                                            A theme made of built-in effects gives the short OMS1 text code. A theme that uses effects
+                                            made by AI on this computer ("ai-" ids) carries their code too and gives an OMS2 code
+                                            (--oms2 asks for OMS2 for any theme). --format bytes (or --out FILE) writes the raw payload
+                                            bytes, for the share picture; --format text --out FILE writes the text code.
+                                            The JSON has: code | path, bytes, customs [{id,name,kind,bytes}], tooBigForPicture, notes.
+  theme-code import CODE|-|--file FILE [--apply] [--wallpaper] [--json]
+                                            check the code, save it as a theme. Custom shaders in an OMS2 code are installed only after
+                                            they pass the same safety gate as AI-made shaders (see below); any that fail are left out
+                                            and listed in "skipped". The JSON has: number, existed, imported_effects (ids added by this
+                                            import), reused_effects, customs [{id,name,kind,status,message}], undo (a token, "" when
+                                            the import changed nothing).
+                                            --wallpaper also sets the code's Wallhaven picture as the wallpaper
+                                            (downloads it from wallhaven.cc first when it is not on this computer);
+                                            without it only the theme is saved and the picture is left alone.
+  theme-code check CODE|-|--file FILE [--json]
+                                            only say what is in a code (names, kinds, sizes and the quick safety rules; nothing is installed)
+  theme-code undo --number N | --token T [--json]
+                                            take back an import: removes the theme it added and the effects it installed, except effects
+                                            another theme uses. Only things that import added; a theme you saved yourself is never touched.
+  theme-code keep --token T [--json]        forget the undo record of an import (the user accepted it), so a later undo can not fire
+
+CODE is "OMS1:" + base64url(zlib(JSON)) or "OMS2:" + base64url(payload); --file FILE holds either text or raw payload bytes.
+OMS1 holds the theme name, effect ids, a few numbers (strengths, wallpaper speed and zoom) and, when the base wallpaper came from
+Wallhaven, the Wallhaven picture id. It never holds file paths, user names or image data. On import every id is checked against the
+effects this version has; unknown ones are reported and left out. An OMS1 code never carries shader code: its "ai-" ids are left out.
+
+OMS2 (bin/omscode2.py) also carries the function bodies of the custom effects the theme uses. Every one goes through aigen.gate
+(fixed template, banned words, bounded loops, compile, test render, text stays readable) before it is installed; ids and paths in the
+code are never used (the effect gets a fresh local id and the name "Imported: ..."), nothing is ever overwritten, and importing the
+same code again reuses what is there. Set OMASHADERS_STATE_DIR to work on another state folder (tests).
+"""
+import sys
+sys.dont_write_bytecode = True  # a __pycache__ in the plugin folder would make the shell reload the plugin (and close the open dialog)
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import omslib as L  # noqa: E402
+import omscode2 as C  # noqa: E402
+import omscustom as X  # noqa: E402
+
+
+def out(obj, as_json, text):
+    print(json.dumps(obj) if as_json else text)
+
+
+def read_code(arg):
+    if arg == "-":
+        return sys.stdin.read()
+    return arg
+
+
+def split_args(a, valued):
+    """(positional arguments, {flag: value}) ; `valued` flags take the next argument"""
+    pos, val, it = [], {}, iter(a)
+    for x in it:
+        if x in valued:
+            val[x] = next(it, "")
+        elif x == "-" or not x.startswith("-"):
+            pos.append(x)
+    return pos, val
+
+
+def clipboard_picture():
+    """bytes of the picture or video on the clipboard, or the path when a file was copied"""
+    if not shutil.which("wl-paste"):
+        raise L.Bad("wl-paste is not installed, so the clipboard can not be read")
+    r = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=10)
+    types = [t.strip() for t in r.stdout.split("\n") if t.strip()]
+    if "text/uri-list" in types:
+        u = subprocess.run(["wl-paste", "-t", "text/uri-list", "-n"], capture_output=True, text=True, timeout=10).stdout.split("\n")[0].strip()
+        if u.startswith("file://"):
+            from urllib.parse import unquote
+            return unquote(u[7:])
+    pick = next((t for t in ("image/gif", "image/png", "image/webp", "image/jpeg") if t in types), None) or \
+        next((t for t in types if t.startswith("image/") or t.startswith("video/")), None)
+    if not pick:
+        txt = subprocess.run(["wl-paste", "-n"], capture_output=True, text=True, timeout=10).stdout.strip()
+        if txt.startswith("/") and "\n" not in txt and os.path.isfile(txt):
+            return txt
+        raise L.Bad("There is no picture on the clipboard")
+    data = subprocess.run(["wl-paste", "-t", pick], capture_output=True, timeout=30).stdout
+    if not data:
+        raise L.Bad("There is no picture on the clipboard")
+    return data
+
+
+def load_input(a):
+    """-> {fmt, d (the theme fields), custom (entries), tv, bytes} from OMS1 text, OMS2 text, or --file (text or raw payload)"""
+    pos, val = split_args(a, ("--file", "--image", "--number", "--token", "--out", "--format", "--parts", "--line"))
+    if "--image" in val or "--clipboard" in a:
+        import omsborder as B
+        src = val["--image"] if "--image" in val else clipboard_picture()
+        if isinstance(src, str):
+            src = os.path.expanduser(src[7:] if src.startswith("file://") else src)
+            if not os.path.isfile(src):
+                raise L.Bad("Could not find that picture file")
+        try:
+            payload, _fixed = B.decode(src)
+        except (B.NoCode, B.Damaged) as e:
+            raise L.Bad("No OmaShaders theme found in that picture" if isinstance(e, B.NoCode) else "The code in that picture is too damaged to read (the site may have shrunk it too much)")
+        dec = C.decode(payload)
+        return {"fmt": "OMS2", "d": dec["theme"], "custom": dec["custom"], "tv": dec["tv"], "bytes": len(payload)}
+    if "--file" in val:
+        try:
+            with open(val["--file"], "rb") as f:
+                raw = f.read(C.MAX_TEXT + 1)
+        except OSError:
+            raise L.Bad("Could not read that file")
+        if len(raw) > C.MAX_TEXT:
+            raise L.Bad("This code is too big to be a theme")
+        if C.looks_binary(raw):
+            text = None
+        else:
+            try:
+                text = raw.decode("ascii")
+            except UnicodeDecodeError:
+                raise L.Bad("This is not an OmaShaders code")
+    else:
+        raw, text = None, read_code(pos[0] if pos else "")
+    if text is not None and "".join(text.split()).startswith(L.CODE_PREFIX):
+        d = L.decode_code(text)
+        return {"fmt": "OMS1", "d": d, "custom": [], "tv": 1, "bytes": len(L.b64d("".join(text.split())[len(L.CODE_PREFIX):]))}
+    payload = raw if text is None else C.from_text(text)
+    dec = C.decode(payload)
+    return {"fmt": "OMS2", "d": dec["theme"], "custom": dec["custom"], "tv": dec["tv"], "bytes": len(payload)}
+
+
+def to_theme(d):
+    return {"n": d.get("n", ""), "s": d.get("s", ""), "w": d.get("w", ""), "m": d.get("m", ""), "c": d.get("c", ""),
+            "wf": d.get("wf", ""), "wc": d.get("wc", ""), "wr": d.get("wr", ""), "o": d.get("o") or {}}
+
+
+SAFETY_NOTE = ("Safety check: the code is read as plain data and never run. Every field is checked against a strict list "
+               "(effect ids, hex colours, numbers in range, a Wallhaven id); anything else makes the import refuse.")
+CUSTOM_NOTE = ("Custom shaders in the code are checked by the same safety gate as shaders made by AI here (fixed template, no banned words, "
+               "bounded loops, compile, test render) before they are installed; any that fail are left out.")
+KNOWN_KEYS = {"v", "n", "s", "w", "m", "c", "wf", "wc", "wr", "o"}
+ID_KEYS = {"s": "screen", "w": "wallpaper", "m": "cursor", "c": "colour", "wf": "window", "wc": "window colour", "wr": "frame"}
+
+
+def safety_scan(d, customs=False):
+    """Inspect the raw decoded code before anything is used. A problem means the code carries something that is not
+    an effect id, a colour or a number, so the import is refused."""
+    problems = []
+    extra = sorted(str(k)[:20] for k in d if k not in KNOWN_KEYS)
+    if extra:
+        problems.append("unknown fields in the code: %s" % ", ".join(extra[:5]))
+    for k, label in ID_KEYS.items():
+        v = d.get(k, "")
+        if not isinstance(v, str) or v == "":
+            continue
+        if re.fullmatch(r"custom-#?[0-9a-fA-F]{6}", v) or L.ID_RE.match(v):
+            continue
+        problems.append("the %s field holds something that is not an effect id" % label)
+    name = d.get("n", "")
+    if isinstance(name, str) and (len(name) > 200 or re.search(r"[\x00-\x08\x0b-\x1f\x7f]|\$\(|`|<|>|\.\./|\$\{", name)):
+        problems.append("the name contains control characters or command-like text")
+    o = d.get("o", {})
+    if o:
+        if not isinstance(o, dict):
+            problems.append("the settings field is not a list of numbers")
+        else:
+            for k, v in o.items():
+                if k == "wh":
+                    if not (isinstance(v, str) and L.WH_RE.match(v)):
+                        problems.append("the Wallhaven id is not a plain 6-character id")
+                elif k in L.OPT_RANGES:
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        problems.append("setting %s is not a number" % k)
+                else:
+                    problems.append("unknown setting %s" % str(k)[:20])
+    return {"safe": not problems, "problems": problems[:6], "note": SAFETY_NOTE,
+            "checks": [] if problems else ["only effect ids, colours and numbers", "no paths, commands or file names",
+                                           "no images in the code"] + (["every custom shader goes through the safety gate before it is installed"] if customs else ["no shader code"])}
+
+
+def wallhaven_line(wh, cached, hint=False):
+    if not wh:
+        return ""
+    s = "\nThis theme comes with a Wallhaven wallpaper (wallhaven.cc/w/%s). " % wh
+    s += "It is already on this computer." if cached else "It needs to be downloaded first."
+    return s + (" Add --wallpaper to set it with the theme." if hint else "")
+
+
+PART_KEYS = {"screen": ("s",), "color": ("c",), "wallpaper": ("w",), "cursor": ("m",), "windows": ("wf", "wc", "wr")}
+PART_OPTS = {"screen": ("fx",), "color": ("col",), "wallpaper": ("wall", "wspeed", "wzoom", "wh"), "cursor": ("cur",), "windows": ()}
+
+
+def cmd_share(a):
+    as_json = "--json" in a
+    args, val = split_args(a, ("--line", "--parts", "--format", "--out"))
+    line = val.get("--line")
+    parts = [p for p in val["--parts"].split(",") if p] if "--parts" in val else None
+    fmt = val.get("--format") or ("bytes" if val.get("--out") and "--format" not in val else "text")
+    if fmt not in ("text", "bytes"):
+        raise L.Bad("--format is text or bytes")
+    out_path = val.get("--out", "")
+    if fmt == "bytes" and not out_path:
+        raise L.Bad("--format bytes needs --out FILE")
+    if line is None:
+        lines = L.read_themes()
+        try:
+            n = int(args[0])
+            assert 1 <= n <= len(lines)
+        except Exception:
+            raise L.Bad("pick a theme number between 1 and %d" % len(lines) if lines else "there are no saved themes yet")
+        line = lines[n - 1]
+    c = L.parse_line(line)
+    if parts is not None:
+        bad = [p for p in parts if p not in PART_KEYS]
+        if bad:
+            raise L.Bad("unknown part %s (use %s)" % (bad[0], ", ".join(PART_KEYS)))
+        for name, keys in PART_KEYS.items():
+            if name not in parts:
+                for k in keys:
+                    c[k] = ""
+                for k in PART_OPTS[name]:
+                    c["o"].pop(k, None)
+        if not any(c.get(k) for k in ("s", "w", "m", "c", "wf", "wc", "wr")):
+            raise L.Bad("nothing to share: the parts you picked are all off in this theme")
+    notes = []
+    clean = L.validate(c, L.catalog(), notes)  # share only what this version really has
+    entries = X.collect(clean, notes)
+    if not any(clean.get(k) for k in ("s", "w", "m", "c", "wf", "wc", "wr")):
+        raise L.Bad("Nothing in this theme can be shared" + ((": " + "; ".join(notes)) if notes else ""))
+    if not clean["n"]:
+        clean["n"] = "Shared theme"
+    use2 = bool(entries) or "--oms2" in a or fmt == "bytes"
+    if use2:
+        payload = C.pack(clean, entries)
+        code = C.to_text(payload)
+        form = "OMS2"
+    else:
+        code = L.encode_code(clean)
+        payload = L.b64d(code[len(L.CODE_PREFIX):])
+        form = "OMS1"
+    if len(payload) > C.MAX_PAYLOAD:
+        raise L.Bad("This theme is too big to share as a code (%d bytes, the limit is %d)" % (len(payload), C.MAX_PAYLOAD))
+    res = {"ok": True, "format": form, "name": clean["n"], "bytes": len(payload), "notes": notes, "copied": False,
+           "customs": [{"id": e["id"], "name": e["name"], "kind": e["k"], "bytes": C.entry_size(e)} for e in entries],
+           "tooBigForPicture": len(payload) > C.PICTURE_LIMIT, "pictureLimit": C.PICTURE_LIMIT,
+           "wh": (clean["o"] or {}).get("wh", "")}
+    if out_path:
+        try:
+            with open(out_path, "wb") as f:
+                f.write(payload if fmt == "bytes" else (code + "\n").encode("ascii"))
+        except OSError as e:
+            raise L.Bad("Could not write %s (%s)" % (out_path, e.strerror or "error"))
+        res["path"] = out_path
+        text = "Wrote %d bytes to %s" % (len(payload) if fmt == "bytes" else len(code) + 1, out_path)
+    else:
+        res["code"] = code
+        text = code
+        if "--copy" in a and shutil.which("wl-copy"):
+            res["copied"] = subprocess.run(["wl-copy"], input=code, text=True).returncode == 0
+    out(res, as_json, text)
+
+
+def cmd_check(a, save=False):
+    as_json = "--json" in a
+    got = load_input(a)
+    d, fmt = got["d"], got["fmt"]
+    safety = safety_scan(d, customs=bool(got["custom"]))
+    if not safety["safe"]:
+        raise L.Bad("Import refused, the safety check found something that does not belong in a theme code: " + "; ".join(safety["problems"]))
+    notes = []
+    theme = to_theme(d)
+    reports, added = [], []
+    if fmt == "OMS1":
+        for k, label in ID_KEYS.items():
+            if str(theme.get(k) or "").startswith("ai-"):
+                notes.append("%s: %s was made by AI on another computer, shader code is never carried in a code" % (label, theme[k][:40]))
+                theme[k] = ""
+        held = {}
+    else:
+        reports, added = X.bring_in(got["custom"], theme, got["tv"], notes, install=save)
+        held = {k: theme[k] for k in ID_KEYS if str(theme.get(k) or "").startswith("ai-")} if not save else {}
+        for k in held:
+            theme[k] = ""
+    try:
+        clean = L.validate(theme, L.catalog(), notes, fuzzy=False)
+        clean.update(held)
+        if not any(clean[k] for k in ("s", "w", "m", "c", "wf", "wc", "wr")):
+            raise L.Bad("Nothing in this code can be used by this version" + ((": " + "; ".join(notes)) if notes else ""))
+        if not clean["n"]:
+            clean["n"] = "Imported theme"
+        wh = (clean["o"] or {}).get("wh", "")
+        res = {"ok": True, "format": fmt, "bytes": got["bytes"], "name": clean["n"], "skipped": notes, "wh": wh, "wh_cached": bool(wh) and L.wh_cached(wh),
+               "theme": clean, "safety": safety, "customs": reports}
+        if not save:
+            out(res, as_json, "%s: %s%s%s%s\n%s Result: passed." % (clean["n"], L.theme_line(clean), ("\nnote: " + "\nnote: ".join(notes)) if notes else "",
+                                                                   wallhaven_line(wh, res["wh_cached"]), custom_text(reports), SAFETY_NOTE))
+            return
+        line, num, existed = L.save_theme(clean)
+    except BaseException:
+        for eid in added:  # nothing is kept from an import that did not finish
+            try:
+                X.G.delete(eid)
+            except L.Bad:
+                pass
+        raise
+    res.update({"line": line, "number": num, "existed": existed, "imported_effects": added,
+                "reused_effects": [r["id"] for r in reports if r["status"] == "reused"]})
+    res["undo"] = X.write_record(line, not existed, added + ([] if existed else [i for i in res["reused_effects"] if i not in added]))
+    if "--apply" in a:
+        r = subprocess.run(["omarchy-shell", "io.github.akton1.omashaders", "theme", str(num)], capture_output=True, text=True)
+        res["applied"] = r.returncode == 0
+    wall_text = ""
+    if "--wallpaper" in a and res["wh"]:
+        r = subprocess.run([os.path.join(L.HERE, "wallhaven"), "use", res["wh"]], capture_output=True, text=True)
+        res["wallpaper"] = r.returncode == 0
+        if r.returncode != 0:
+            res["wallpaper_error"] = ((r.stderr or r.stdout).strip().splitlines() or ["could not get the picture"])[-1].replace("wallhaven: ", "", 1).split(" (curl")[0][:200]
+            wall_text = "\nThe theme is saved, but the Wallhaven picture was not set: %s" % res["wallpaper_error"]
+    elif res["wh"]:
+        wall_text = wallhaven_line(res["wh"], res["wh_cached"], hint=True)
+    text = ("Already in your themes (#%d): %s" if existed else "Saved as theme #%d: %s") % (num, clean["n"])
+    if notes:
+        text += "\nleft out: " + "; ".join(notes)
+    text += custom_text(reports) + wall_text + "\n" + SAFETY_NOTE + (" " + CUSTOM_NOTE if reports else "") + " Result: passed."
+    out(res, as_json, text)
+
+
+def custom_text(reports):
+    done = [r["name"] for r in reports if r["status"] in ("imported", "ok")]
+    reused = [r["name"] for r in reports if r["status"] == "reused"]
+    s = ""
+    if done:
+        s += "\nCustom effects: " + ", ".join(done)
+    if reused:
+        s += "\nAlready installed: " + ", ".join(reused)
+    return s
+
+
+def load_oms_delete():
+    import importlib.machinery
+    import importlib.util
+    path = os.path.join(L.HERE, "oms-delete")
+    spec = importlib.util.spec_from_loader("oms_delete", importlib.machinery.SourceFileLoader("oms_delete", path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def cmd_undo(a):
+    as_json = "--json" in a
+    _pos, val = split_args(a, ("--number", "--token"))
+    recs = X.read_records()
+    lines = L.read_themes()
+    if val.get("--token"):
+        rec = next((r for r in recs if r["token"] == val["--token"]), None)
+    elif val.get("--number"):
+        try:
+            n = int(val["--number"])
+            assert 1 <= n <= len(lines)
+        except Exception:
+            raise L.Bad("pick a theme number between 1 and %d" % len(lines) if lines else "there are no saved themes yet")
+        mine = [r for r in recs if r["line"] == lines[n - 1] and r.get("theme_added")]
+        rec = mine[-1] if mine else None
+    else:
+        raise L.Bad("usage: theme-code undo --number N | --token T")
+    if rec is None:
+        raise L.Bad("Nothing to undo: that theme was not added by an import (nothing was changed)")
+    od = load_oms_delete()
+    removed_theme, removed, kept = False, [], []
+    try:
+        if rec.get("theme_added") and rec["line"] in L.read_themes():
+            od.theme_remove(rec["line"])
+            removed_theme = True
+    except od.Refused as e:
+        raise L.Bad(str(e))
+    metas = {m.get("id"): m for m in X.G.listing()}
+    for e in rec.get("effects", []):
+        eid, kind = e.get("id", ""), e.get("kind", "")
+        if not (metas.get(eid) or {}).get("imported") or kind not in od.KINDS:
+            continue  # only what an import installed
+        users = od.used_by(od.KINDS[kind], eid)
+        if users:
+            kept.append({"id": eid, "usedBy": users})
+            continue
+        try:
+            od.element_remove(kind, eid)
+            removed.append(eid)
+        except (od.Refused, L.Bad):
+            continue
+    try:
+        os.remove(os.path.join(X.IMPORTS, rec["token"] + ".json"))
+    except OSError:
+        pass
+    res = {"ok": True, "removed_theme": removed_theme, "removed_effects": removed, "kept_effects": kept, "line": rec["line"]}
+    text = ("Removed the imported theme" if removed_theme else "The imported theme was already gone") + (
+        "; removed %d imported effect(s)" % len(removed) if removed else "") + (
+        "; kept %s (other themes use them)" % ", ".join(k["id"] for k in kept) if kept else "")
+    out(res, as_json, text)
+
+
+def cmd_keep(a):
+    as_json = "--json" in a
+    _pos, val = split_args(a, ("--token",))
+    tok = val.get("--token") or ""
+    if not re.fullmatch(r"[0-9a-f]{10}", tok):
+        raise L.Bad("usage: theme-code keep --token T")
+    p = os.path.join(X.IMPORTS, tok + ".json")
+    if not os.path.exists(p):
+        raise L.Bad("Nothing to keep: that import is not recorded")
+    os.remove(p)
+    out({"ok": True}, as_json, "Kept. This import can no longer be undone from here.")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    try:
+        if a[0] == "share":
+            cmd_share(a[1:])
+        elif a[0] == "import":
+            cmd_check(a[1:], save=True)
+        elif a[0] == "check":
+            cmd_check(a[1:])
+        elif a[0] == "undo":
+            cmd_undo(a[1:])
+        elif a[0] == "keep":
+            cmd_keep(a[1:])
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+    except Exception as e:
+        if not isinstance(e, L.Bad):
+            e = L.Bad("Something went wrong reading this code (%s)" % type(e).__name__)
+        if "--json" in a:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print("theme-code: %s" % e, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

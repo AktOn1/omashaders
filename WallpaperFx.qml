@@ -9,6 +9,15 @@ Scope {
   id: fx
 
   property string effect: ""
+  // file:// url of the folder with AI-made effects; names starting "ai-" load from genDir/wall/
+  property string genDir: ""
+  function shaderUrl(n) {
+    if (n.indexOf("ai-") === 0) return fx.genDir !== "" ? fx.genDir + "/wall/" + n + ".frag.qsb" : ""
+    return Qt.resolvedUrl("wallpaper-effects/" + n + ".frag.qsb")
+  }
+  // effects that draw sprites from wallpaper-effects/NAME.png (sampler `sprites`, binding 2, RGBA atlas)
+  readonly property var spriteEffects: ["pumpkin-night"]
+  function spriteUrl(n) { return fx.spriteEffects.indexOf(n) >= 0 ? Qt.resolvedUrl("wallpaper-effects/" + n + ".png") : "" }
   // optional second effect: "stack" runs it on the first one's result, "blend" runs both on the wallpaper; mixAmount is its share (0..1)
   property string effect2: ""
   property string mixMode: "stack"
@@ -83,6 +92,8 @@ Scope {
     property real zoom: 1.0
     anchors.fill: parent
     property variant src: source
+    property variant sprites: spriteImg
+    Image { id: spriteImg; visible: false; source: fx.spriteUrl(name); mipmap: true; smooth: true; asynchronous: false }
     property real time: fx.time
     // the vertex shader scales the picture about its centre, so the pointer is moved the same way
     function zx(v) { return ((v / width - 0.5) / zoom + 0.5) * width }
@@ -108,7 +119,7 @@ Scope {
     property real mid: fx.mid
     property real treble: fx.treble
     vertexShader: Qt.resolvedUrl("wallpaper-effects/zoom.vert.qsb")
-    fragmentShader: name !== "" ? Qt.resolvedUrl("wallpaper-effects/" + name + ".frag.qsb") : ""
+    fragmentShader: name !== "" ? fx.shaderUrl(name) : ""
   }
 
   Variants {

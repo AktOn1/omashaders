@@ -1,0 +1,960 @@
+#!/usr/bin/env python3
+"""omashaders gif: record a short preview GIF of the current look on a clear desktop.
+
+  omashaders gif [--seconds N] [--out FILE] [--name NAME] [--countdown N] [--recorder auto|gsr|wf|grim] [--share PAYLOAD_FILE]
+  omashaders gif cancel | restore | status
+
+Flow: the monitor with the pointer is switched to an empty workspace (every window is hidden, none is moved or
+touched), the bar is hidden, a demo terminal (own class, own colours, font and a scripted session by bin/gif-demo, the look of the Abyss preview GIF:
+a rounded window with the wallpaper around it, so every picture shows the same terminal and none of your own content) is prepared on it out of sight, a countdown runs (Esc cancels), the monitor is recorded while the pointer
+starts upward from the bottom left, runs flat through the centre, then climbs to the top right. The picture starts with the bare wallpaper; when the pointer is three quarters along, the terminal
+opens (and types) and the pointer climbs through its right part, so a window effect reacts to it. Then everything is put back exactly (workspace, focused window, bar, pointer). The recording is
+encoded to a GIF in ~/Pictures/OmaShaders, the path is copied to the clipboard and a notification is shown.
+With --share the theme code (raw bytes from `theme-code share --format bytes`) is drawn as a data border above and
+below every frame (bin/omsborder.py), the GIF stays 960 px wide (only the frame rate is lowered to fit 5 MB) and the
+picture itself, not its path, is copied so it can be pasted into a post.
+Nothing else may be on the picture: just before and all through the recording, any other window or layer-shell surface on the
+monitor (a notification, another plugin's overlay) stops the recording with a message that names it, and no GIF is made.
+Whatever fails, the restore runs (also from a state file if this process dies: `omashaders gif restore`).
+"""
+import argparse, datetime, fcntl, json, math, os, re, shutil, shlex, signal, socket, subprocess, sys, tempfile, threading, time
+
+PLUGIN = "io.github.akton1.omashaders"
+STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+STATE_DIR = os.path.join(STATE_HOME, "omarchy", PLUGIN)
+RESTORE = os.path.join(STATE_DIR, "gif-restore.json")
+LOCK = os.path.join(STATE_DIR, "gif.lock")
+CANCEL = os.path.join(STATE_DIR, "gif-cancel")
+BAR_FLAG = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
+# desktop overlays (Companion square, agent mascots) watch this file and hide while it exists; the runtime dir is cleared at logout
+OVERLAY_FLAG = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "omashaders-hide-overlays")
+WORKSPACE = "omashaders-gif"
+DEMO_CLASS = "omashaders-demo"
+# layer-shell surfaces that belong in the picture: the wallpaper and our own effects (the bar is hidden by its flag)
+OWN_LAYERS = ("omarchy-background", "scratchpad-frame", "omarchy-bar", "wallpaper-fx", "omashaders-mouse")
+LEAD, TAIL = 0.30, 0.30  # seconds of still pointer recorded before and after the S
+MAX_BYTES = 5 * 1024 * 1024
+LADDER = [(960, 15), (800, 15), (800, 12), (640, 12), (640, 10), (480, 10)]  # (width, fps), first that fits wins
+SHARE_LADDER = [(960, 15), (960, 12), (960, 10), (960, 8), (960, 6)]  # the data border needs the full width
+
+
+def log(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+def notify(title, body="", image=None, critical=False):
+    cmd = ["notify-send", "-a", "OmaShaders", "-t", "8000"]
+    if critical:
+        cmd += ["-u", "critical"]
+    if image:
+        cmd += ["-i", image]
+    try:
+        subprocess.run(cmd + [title, body], timeout=5, check=False)
+    except Exception:
+        pass
+
+
+def run(cmd, **kw):
+    kw.setdefault("timeout", 10)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, **kw)
+    except Exception as e:
+        return subprocess.CompletedProcess(cmd, 1, "", str(e))
+
+
+# ---------------------------------------------------------------- Hyprland
+def hypr_sock():
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    rt = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    return os.path.join(rt, "hypr", sig, ".socket.sock")
+
+
+def hj(*args):
+    r = run(["hyprctl", "-j", *args])
+    try:
+        return json.loads(r.stdout)
+    except Exception:
+        return None
+
+
+def dispatch(expr):
+    """Run a Lua dispatcher (Hyprland 0.55+) through hyprctl."""
+    return run(["hyprctl", "dispatch", expr]).stdout.strip()
+
+
+class Pointer:
+    """Moves the pointer fast: one connection per move to Hyprland's command socket (hyprctl is too slow for 60 Hz)."""
+
+    def __init__(self):
+        self.path = hypr_sock()
+        self.ok = os.path.exists(self.path)
+
+    def move(self, x, y):
+        cmd = "dispatch hl.dsp.cursor.move({x=%d,y=%d})" % (round(x), round(y))
+        if self.ok:
+            try:
+                s = socket.socket(socket.AF_UNIX)
+                s.settimeout(1)
+                s.connect(self.path)
+                s.sendall(cmd.encode())
+                s.recv(256)
+                s.close()
+                return
+            except Exception:
+                self.ok = False
+        dispatch(cmd[len("dispatch "):])
+
+
+def pointer_monitor():
+    pos = hj("cursorpos")
+    mons = hj("monitors") or []
+    if not pos or not mons:
+        return None, None
+    for m in mons:
+        w, h = m["width"] / m["scale"], m["height"] / m["scale"]
+        if m["x"] <= pos["x"] < m["x"] + w and m["y"] <= pos["y"] < m["y"] + h:
+            return m, pos
+    return mons[0], pos
+
+
+# ---------------------------------------------------------------- state / restore
+def read_restore():
+    try:
+        with open(RESTORE) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def write_restore(st):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = RESTORE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(st, f)
+    os.replace(tmp, RESTORE)
+
+
+def restore(st):
+    """Put the desktop back. Every step is independent: one failing step never stops the others."""
+    if not st:
+        return
+    # focusing a window warps the pointer to its centre, which would undo the pointer restore
+    prev = st.get("no_warps")
+    if prev is None:
+        prev = (hj("getoption", "cursor:no_warps") or {}).get("bool", False)
+    run(["hyprctl", "eval", "hl.config({cursor={no_warps=true}})"])
+    try:
+        _restore(st)
+    finally:
+        run(["hyprctl", "eval", "hl.config({cursor={no_warps=%s}})" % ("true" if prev else "false")])
+        try:
+            os.remove(RESTORE)
+        except FileNotFoundError:
+            pass
+
+
+def _restore(st):
+    mon = st.get("monitor")
+    try:
+        stop_demo(st)
+        time.sleep(0.2)
+    except Exception as e:
+        log("restore demo terminal:", e)
+    # the countdown window holds the keyboard focus: close it first, or its unmapping re-focuses another window at the end
+    run(["omarchy-shell", "-q", PLUGIN, "gifCount", "0", ""])
+    time.sleep(0.15)
+    try:
+        if st.get("bar_hidden_by_us"):
+            try:
+                os.remove(BAR_FLAG)
+            except FileNotFoundError:
+                pass
+            run(["omarchy-shell", "-q", "omarchy.bar", "syncHidden"])
+    except Exception as e:
+        log("restore bar:", e)
+    try:
+        os.remove(OVERLAY_FLAG)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log("restore overlays:", e)
+    try:
+        if st.get("dnd_by_us"):
+            run(["omarchy-shell", "-q", "notifications", "setDnd", "off"])
+    except Exception as e:
+        log("restore notifications:", e)
+    try:
+        if mon:
+            dispatch('hl.dsp.focus({monitor="%s"})' % mon)
+        ws = st.get("workspace")
+        if ws is not None:
+            dispatch('hl.dsp.focus({workspace="%s"})' % (str(ws["id"]) if ws["id"] > 0 else "name:" + ws["name"]))
+    except Exception as e:
+        log("restore workspace:", e)
+    try:
+        for addr in st.get("pinned", []):
+            dispatch('hl.dsp.window.pin({window="address:%s"})' % addr)
+        if st.get("special"):
+            dispatch('hl.dsp.workspace.toggle_special("%s")' % st["special"])
+    except Exception as e:
+        log("restore windows:", e)
+    try:
+        # pointer first, focus last: with focus-follows-mouse a later pointer move would re-focus the window under it
+        c = st.get("cursor")
+        if c:
+            Pointer().move(c["x"], c["y"])
+            time.sleep(0.2)
+        if st.get("window"):
+            dispatch('hl.dsp.focus({window="address:%s"})' % st["window"])
+    except Exception as e:
+        log("restore pointer and focus:", e)
+
+
+# ---------------------------------------------------------------- helpers
+class Unclean(RuntimeError):
+    """Something other than the wallpaper, the effects and the demo terminal is on the recorded monitor."""
+
+
+def stray_layers(monitor):
+    layers = (hj("layers") or {}).get(monitor, {}).get("levels", {})
+    return {l["namespace"] for lv in layers.values() for l in lv if l["namespace"] not in OWN_LAYERS}
+
+
+def stray_windows(mon_id):
+    """Windows that would be drawn on the recording workspace besides the demo terminal."""
+    out = set()
+    for c in hj("clients") or []:
+        if c.get("monitor") != mon_id or not c.get("mapped", True) or c.get("hidden"):
+            continue
+        if c.get("class") == DEMO_CLASS:
+            continue
+        if (c.get("workspace") or {}).get("name") == WORKSPACE or c.get("pinned"):
+            out.add("window " + (c.get("class") or "?"))
+    return out
+
+
+def strays(mon):
+    return stray_layers(mon["name"]) | stray_windows(mon["id"])
+
+
+def wait_clean(mon, timeout=2.0):
+    """Wait until only the wallpaper, our effects and the demo terminal are on the monitor; return what is still there."""
+    end = time.monotonic() + timeout
+    while True:
+        left = sorted(strays(mon))
+        if not left or time.monotonic() >= end:
+            return left
+        time.sleep(0.1)
+
+
+class Watch(threading.Thread):
+    """Notes everything stray that shows up on the monitor while the recording runs."""
+
+    def __init__(self, mon):
+        super().__init__(daemon=True)
+        self.mon, self.seen, self.go = mon, set(), True
+
+    def run(self):
+        while self.go:
+            self.seen |= strays(self.mon)
+            time.sleep(0.2)
+
+    def finish(self):
+        self.go = False
+        self.join(timeout=3)
+        return sorted(self.seen)
+
+
+def unclean_message(left):
+    return "Something else is on the screen, so the picture would not be clean: %s. Close it and record again." % ", ".join(left)
+
+
+# ---------------------------------------------------------------- demo terminal
+PALETTE = ["#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+           "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5"]
+BG, FG, OPACITY = "#08101a", "#e8f0ff", 0.89
+# The window as in the preview GIFs the look comes from: on a 960x540 picture it is 840x340 at (60, 96), rounded
+# corners, a thin light-blue outline, text 22 px high with 30 px lines. Sizes scale with the monitor height or width.
+DEMO_BOX = (60, 96, 840, 340)
+DEMO_FONT_PX, DEMO_PAD, DEMO_ROUND, DEMO_BORDER = 22, (18, 8), 10, 2
+DEMO_OUTLINE = "rgba(6eaad7ff)"
+DEMO_PT_PER_PX = 0.75  # terminals take the font size in points; 96 dpi
+DEMO_SECONDS, DEMO_LEAD = 4.2, 0.5  # pointer sweep, and still time before it
+DEMO_SHOW_AT = 0.75  # the terminal opens when the pointer is this far along the path
+DEMO_HOLD = 0.8  # still time after the typing is done
+STAGE = "omashaders-gif-stage"  # where the terminal waits, out of sight, until it is shown
+
+
+def demo_font():
+    r = run(["fc-list", ":family=JetBrainsMono Nerd Font", "family"])
+    return "JetBrainsMono Nerd Font" if r.stdout.strip() else "monospace"
+
+
+def demo_scale(mon):
+    """Picture pixels of a 960x540 picture that fit the monitor (the window keeps its shape on wide or tall screens)."""
+    return min(mon["lw"] / 960.0, mon["lh"] / 540.0)
+
+
+def demo_command(work, mon, name):
+    """argv of a terminal that shows the same text in the same colours on every machine, or None."""
+    sc = demo_scale(mon)
+    size = round(DEMO_FONT_PX * sc * DEMO_PT_PER_PX, 2)
+    padx, pady = round(DEMO_PAD[0] * sc), round(DEMO_PAD[1] * sc)
+    here = os.path.dirname(os.path.realpath(__file__))
+    font = demo_font()
+    session = ["python3", os.path.join(here, "gif-demo"), "--go", os.path.join(work, "go"), "--state", STATE_DIR, "--name", name]
+    if font == "monospace":
+        session.append("--plain")
+    script = os.path.join(work, "demo.sh")
+    with open(script, "w") as f:
+        f.write("#!/bin/sh\nexec " + " ".join("'%s'" % x.replace("'", "'\\''") for x in session) + "\n")
+    os.chmod(script, 0o755)
+    if shutil.which("alacritty"):
+        cfg = os.path.join(work, "demo.toml")
+        pal = lambda a: "\n".join('%s = "%s"' % (n, PALETTE[i + a]) for i, n in enumerate(
+            ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]))
+        with open(cfg, "w") as f:
+            f.write('[window]\nopacity = %s\ndecorations = "None"\npadding = { x = %d, y = %d }\n' % (OPACITY, padx, pady))
+            f.write('[font]\nsize = %s\nnormal = { family = "%s", style = "Regular" }\n' % (size, font))
+            f.write('[cursor]\nstyle = { shape = "Block", blinking = "Never" }\n')
+            f.write('[colors.primary]\nbackground = "%s"\nforeground = "%s"\n' % (BG, FG))
+            f.write("[colors.normal]\n%s\n[colors.bright]\n%s\n" % (pal(0), pal(8)))
+        return ["alacritty", "--config-file", cfg, "--class", "%s,%s" % (DEMO_CLASS, DEMO_CLASS), "-e", script]
+    if shutil.which("kitty"):
+        o = ["font_family=" + font, "font_size=%s" % size, "background_opacity=%s" % OPACITY, "background=" + BG, "foreground=" + FG,
+             "cursor_blink_interval=0", "confirm_os_window_close=0", "window_padding_width=%d %d" % (pady, padx), "hide_window_decorations=yes",
+             "remember_window_size=no"] + ["color%d=%s" % (i, c) for i, c in enumerate(PALETTE)]
+        cmd = ["kitty", "--class", DEMO_CLASS, "--config", "NONE"]
+        for x in o:
+            cmd += ["-o", x]
+        return cmd + [script]
+    if shutil.which("foot"):
+        cfg = os.path.join(work, "demo.ini")
+        m = re.search(r"(\d+)\.(\d+)", run(["foot", "--version"]).stdout)
+        section = "colors-dark" if m and (int(m.group(1)), int(m.group(2))) >= (1, 25) else "colors"  # foot 1.25 renamed it
+        with open(cfg, "w") as f:
+            f.write("[main]\nfont=%s:size=%s\npad=%dx%d\n[cursor]\nblink=no\n[%s]\nbackground=%s\nforeground=%s\nalpha=%s\n" % (
+                font, size, padx, pady, section, BG[1:], FG[1:], OPACITY))
+            f.write("".join("regular%d=%s\n" % (i, c[1:]) for i, c in enumerate(PALETTE[:8])))
+            f.write("".join("bright%d=%s\n" % (i, c[1:]) for i, c in enumerate(PALETTE[8:])))
+        return ["foot", "--app-id", DEMO_CLASS, "-c", cfg, script]
+    return None
+
+
+def window_target_needed():
+    """True when the user's window effect is limited to some apps and so would skip the demo terminal."""
+    def has(name):
+        try:
+            return bool(open(os.path.join(STATE_DIR, name)).read().strip())
+        except OSError:
+            return False
+    if not (has("window-effect") or has("window-color")):
+        return False
+    try:
+        lines = open(os.path.join(STATE_DIR, "window-target")).read().split()
+    except OSError:
+        return False
+    return "*" not in lines and DEMO_CLASS not in lines
+
+
+def frame_active():
+    """True when a window frame is chosen and effects are not paused, so Hyprland itself draws the frame."""
+    def read(name):
+        try:
+            return open(os.path.join(STATE_DIR, name)).read().strip()
+        except OSError:
+            return ""
+    return bool(read("window-frame")) and not read("disabled")
+
+
+def demo_duration(work, name):
+    """Seconds the scripted session takes from the moment it starts."""
+    r = run(["python3", os.path.join(os.path.dirname(os.path.realpath(__file__)), "gif-demo"),
+             "--duration", "--state", STATE_DIR, "--name", name])
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return 6.5
+
+
+def omashaders_bin():
+    return os.path.join(os.path.dirname(os.path.realpath(__file__)), "omashaders")
+
+
+def place_demo(mon, addr):
+    """Float the window at the same place and shape as in the preview GIFs: centred on a 960x540 area of the monitor."""
+    sc = demo_scale(mon)
+    bx, by, bw, bh = DEMO_BOX
+    ox, oy = (mon["lw"] - 960 * sc) / 2, (mon["lh"] - 540 * sc) / 2
+    w, h = round(bw * sc), round(bh * sc)
+    x, y = round(mon["x"] + ox + bx * sc), round(mon["y"] + oy + by * sc)
+    win = 'window="address:%s"' % addr
+    dispatch("hl.dsp.window.float({ action = \"enable\", %s })" % win)
+    dispatch("hl.dsp.window.resize({ x = %d, y = %d, exact = true, %s })" % (w, h, win))
+    dispatch("hl.dsp.window.move({ x = %d, y = %d, %s })" % (x, y, win))
+    props = [("no_blur", 1)]
+    if not frame_active():  # a window frame (glow, border) is Hyprland's global look: per-window overrides would hide it
+        props = [("rounding", round(DEMO_ROUND * sc)), ("rounding_power", 2), ("border_size", max(1, round(DEMO_BORDER * sc))),
+                 ("active_border_color", DEMO_OUTLINE), ("inactive_border_color", DEMO_OUTLINE), ("no_shadow", 1)] + props
+    for prop, val in props:
+        dispatch('hl.dsp.window.set_prop({ prop = "%s", value = "%s", %s })' % (prop, val, win))
+
+
+def start_demo(mon, st, work, name):
+    """Open the demo terminal on the recording workspace; returns False (and says why) when that is not possible."""
+    cmd = demo_command(work, mon, name)
+    if not cmd:
+        log("note: no terminal found (alacritty, kitty or foot), so the picture has no terminal window")
+        return False
+    if window_target_needed():
+        st["target_added"] = True
+        write_restore(st)
+        run([omashaders_bin(), "window", "target", "add", DEMO_CLASS], timeout=30)
+    # opened straight onto the waiting workspace (silent), so it is never on screen before the sweep shows it
+    dispatch('hl.dsp.exec_cmd("%s", { workspace = "name:%s silent" })' % (shlex.join(cmd).replace("\\", "\\\\").replace('"', '\\"'), STAGE))
+    write_restore(st)
+    end = time.monotonic() + 8
+    while time.monotonic() < end:
+        demo = [c for c in hj("clients") or [] if c.get("class") == DEMO_CLASS and c.get("mapped", True)]
+        if demo:
+            addr = demo[0]["address"]
+            st["demo_pid"] = demo[0].get("pid")
+            st["demo_addr"] = addr
+            write_restore(st)
+            place_demo(mon, addr)
+            time.sleep(0.6)  # let the window finish opening
+            return True
+        time.sleep(0.1)
+    raise RuntimeError("the demo terminal did not open")
+
+
+def show_demo(st):
+    """Bring the waiting terminal onto the recording workspace and focus it (a focused window is the one a window effect shows)."""
+    addr = st.get("demo_addr")
+    dispatch('hl.dsp.window.move({ workspace = "name:%s", follow = false, window = "address:%s" })' % (WORKSPACE, addr))
+    dispatch('hl.dsp.focus({window="address:%s"})' % addr)
+
+
+def stop_demo(st):
+    pid = st.get("demo_pid")
+    if pid:
+        try:
+            # a state file can outlive its process: only stop a process that still is our demo terminal
+            if DEMO_CLASS.encode() in open("/proc/%d/cmdline" % pid, "rb").read():
+                os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        st["demo_pid"] = None
+    if st.get("target_added"):
+        run([omashaders_bin(), "window", "target", "remove", DEMO_CLASS], timeout=30)
+        st["target_added"] = False
+
+
+def slug(s):
+    s = re.sub(r"[^A-Za-z0-9]+", "-", s or "").strip("-")
+    return s[:40] or "look"
+
+
+def default_name():
+    parts = []
+    for f in ("current", "wp-effect", "mouse", "color"):
+        try:
+            v = open(os.path.join(STATE_DIR, f)).read().strip()
+        except Exception:
+            v = ""
+        if v:
+            parts.append(v)
+    return "-".join(parts[:3])
+
+
+def cancelled():
+    return os.path.exists(CANCEL)
+
+
+def wait(sec):
+    """Sleep in short slices; True if cancelled meanwhile."""
+    end = time.monotonic() + sec
+    while time.monotonic() < end:
+        if cancelled():
+            return True
+        time.sleep(min(0.05, max(0, end - time.monotonic())))
+    return cancelled()
+
+
+def effects_note():
+    notes = []
+    try:
+        if open(os.path.join(STATE_DIR, "disabled")).read().strip():
+            notes.append("effects are paused")
+    except OSError:
+        pass
+    return notes
+
+
+def pick_recorder(want):
+    have = {
+        "gsr": shutil.which("gpu-screen-recorder"),
+        "wf": shutil.which("wf-recorder"),
+        "grim": shutil.which("grim"),
+    }
+    order = ["gsr", "wf", "grim"] if want == "auto" else [want]
+    for r in order:
+        if have.get(r):
+            return r
+    return None
+
+
+class Recording:
+    """One recorder process writing an mp4 (or, for grim, a stack of frames) of one monitor."""
+
+    def __init__(self, kind, mon, workdir):
+        self.kind, self.mon, self.dir = kind, mon, workdir
+        self.file = os.path.join(workdir, "rec.mp4")
+        self.proc = None
+        self.t0 = None
+        self.frames = 0
+
+    def start(self):
+        name = self.mon["name"]
+        if self.kind == "gsr":
+            cmd = ["gpu-screen-recorder", "-w", name, "-f", "30", "-k", "auto", "-fm", "cfr", "-cursor", "yes",
+                   "-fallback-cpu-encoding", "yes", "-o", self.file]
+        elif self.kind == "wf":
+            cmd = ["wf-recorder", "-o", name, "-r", "30", "-f", self.file]
+        else:
+            self.t0 = time.monotonic()
+            self.frames = 0
+            self.running = True
+            self.thread = threading.Thread(target=self._grab, daemon=True)
+            self.thread.start()
+            return True
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        end = time.monotonic() + 8
+        while time.monotonic() < end:
+            if self.proc.poll() is not None:
+                return False
+            if os.path.exists(self.file):
+                self.t0 = time.monotonic()
+                return True
+            time.sleep(0.05)
+        return False
+
+    def _grab(self):
+        """grim backend: as many frames as grim manages (about 5 to 10 per second)."""
+        while self.running:
+            out = os.path.join(self.dir, "f%05d.ppm" % self.frames)
+            subprocess.run(["grim", "-c", "-o", self.mon["name"], "-t", "ppm", out], capture_output=True)
+            self.frames += 1
+
+    def stop_quiet(self):
+        try:
+            if self.proc and self.proc.poll() is None:
+                self.proc.kill()
+                self.proc.wait()
+        except Exception:
+            pass
+
+    def stop(self):
+        if self.proc:
+            if self.proc.poll() is None:
+                self.proc.send_signal(signal.SIGINT)
+                try:
+                    self.proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait()
+            err = self.proc.stderr.read() if self.proc.stderr else ""
+            if not os.path.exists(self.file) or os.path.getsize(self.file) < 1000:
+                raise RuntimeError("the recorder produced no video: " + (err or "").strip()[-300:])
+        else:
+            self.running = False
+            self.thread.join(timeout=10)
+            if self.frames < 2:
+                raise RuntimeError("no frames were captured")
+
+
+def encode(rec, out, head, share=None):
+    """mp4 (or frames) -> GIF: palettegen/paletteuse, loop forever, smaller steps until it fits 5 MB.
+    share = (top.png, bottom.png): stack the data border around the picture first."""
+    used = None
+    for width, fps in (SHARE_LADDER if share else LADDER):
+        pal = "palettegen=max_colors=64:stats_mode=full[p]" if share else "palettegen=stats_mode=diff[p]"
+        tail = "split[a][b];[a]%s;[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" % pal
+        if rec.kind == "grim":
+            real_fps = max(1.0, rec.frames / max(0.1, rec.t_end - rec.t0))
+            cmd = ["ffmpeg", "-y", "-loglevel", "error", "-framerate", "%.2f" % real_fps, "-i", os.path.join(rec.dir, "f%05d.ppm")]
+        else:
+            cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", "%.2f" % head, "-i", rec.file]
+        if share:
+            cmd += ["-loop", "1", "-framerate", str(fps), "-i", share[0], "-loop", "1", "-framerate", str(fps), "-i", share[1],
+                    "-filter_complex", "[0:v]fps=%d,scale=%d:-1:flags=lanczos[v];[1:v][v][2:v]vstack=inputs=3:shortest=1,%s" % (fps, width, tail)]
+        else:
+            cmd += ["-vf", "fps=%d,scale=%d:-1:flags=lanczos,%s" % (fps, width, tail)]
+        cmd += ["-loop", "0", out]
+        r = run(cmd, timeout=180)
+        if r.returncode != 0 or not os.path.exists(out):
+            raise RuntimeError("ffmpeg failed: " + r.stderr.strip()[-300:])
+        used = (width, fps)
+        if os.path.getsize(out) <= MAX_BYTES:
+            break
+    return used
+
+
+FINISHED = False
+
+
+def finished():
+    """tell the menu the shot is over (it puts the look back that it changed for a share GIF)"""
+    global FINISHED
+    if not FINISHED:
+        FINISHED = True
+        run(["omarchy-shell", "-q", PLUGIN, "gifFinished"])
+
+
+def ease(t):
+    return t * t * (3 - 2 * t)  # smoothstep: slow in, slow out
+
+
+# Path as fractions of the monitor: from the bottom left the pointer first heads up, bends into a short horizontal run
+# through the exact centre (never above it before), then bends up to the top right (never down). The second half mirrors
+# the first through the centre. The climb ends inside the demo terminal, so its window effect reacts to the pointer.
+def _sweep_waypoints():
+    x0, y0, flat = 0.07, 0.88, 0.08  # start, and half the length of the horizontal run
+    a, b = 0.5 - flat - x0, y0 - 0.5  # quarter ellipse: vertical at the start, horizontal where the run begins
+    arc = [(0.5 - flat - a * math.cos(math.pi / 2 * k / 10), y0 - b * math.sin(math.pi / 2 * k / 10)) for k in range(11)]
+    mirror = [(1 - x, 1 - y) for x, y in reversed(arc)]
+    return arc + mirror
+
+
+SWEEP_WAYPOINTS = _sweep_waypoints()
+_SWEEP_TABLE = []
+
+
+def _sweep_table():
+    """Catmull-Rom curve through the waypoints as (cumulative length, x, y) samples, so progress is even in distance."""
+    if _SWEEP_TABLE:
+        return _SWEEP_TABLE
+    w = [SWEEP_WAYPOINTS[0]] + SWEEP_WAYPOINTS + [SWEEP_WAYPOINTS[-1]]
+    pts = []
+    for i in range(1, len(w) - 2):
+        p0, p1, p2, p3 = w[i - 1], w[i], w[i + 1], w[i + 2]
+        for k in range(40):
+            t = k / 40
+            pts.append(tuple(0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t * t
+                                     + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t ** 3) for j in (0, 1)))
+    pts.append(w[-2])
+    total = 0.0
+    _SWEEP_TABLE.append((0.0, *pts[0]))
+    for a, b in zip(pts, pts[1:]):
+        total += math.hypot(b[0] - a[0], b[1] - a[1])
+        _SWEEP_TABLE.append((total, *b))
+    return _SWEEP_TABLE
+
+
+def sweep_point(mon, e):
+    """Point at progress e (0..1) along the path: up from the bottom left, flat through the centre, up to the top right."""
+    tab = _sweep_table()
+    d = min(max(e, 0.0), 1.0) * tab[-1][0]
+    lo, hi = 0, len(tab) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if tab[mid][0] <= d:
+            lo = mid
+        else:
+            hi = mid
+    (d0, x0, y0), (d1, x1, y1) = tab[lo], tab[hi]
+    f = (d - d0) / (d1 - d0) if d1 > d0 else 0.0
+    return mon["x"] + mon["lw"] * (x0 + (x1 - x0) * f), mon["y"] + mon["lh"] * (y0 + (y1 - y0) * f)
+
+
+def sweep(mon, seconds, at=None, on_at=None):
+    """Pointer along the S-then-up path from the bottom left to the top right of the monitor, eased; blocks for `seconds`.
+    `on_at` runs in a thread (so the pointer never stalls) when the pointer is `at` (0..1) along the path; returns when it was called."""
+    ptr = Pointer()
+    t0 = time.monotonic()
+    fired = None
+    worker = None
+    while True:
+        t = (time.monotonic() - t0) / seconds
+        if t >= 1:
+            break
+        e = ease(t)
+        ptr.move(*sweep_point(mon, e))
+        if on_at and fired is None and e >= at:
+            fired = time.monotonic()
+            worker = threading.Thread(target=on_at, daemon=True)
+            worker.start()
+        if cancelled():
+            return fired
+        time.sleep(0.012)
+    ptr.move(*sweep_point(mon, 1.0))
+    if worker:
+        worker.join(timeout=5)
+    return fired
+
+
+def start_pose(mon):
+    return sweep_point(mon, 0.0)
+
+
+# ---------------------------------------------------------------- main flow
+def cmd_gif(a):
+    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        notify("Record GIF", "Hyprland is not running here.", critical=True)
+        return 1
+    if not shutil.which("ffmpeg"):
+        notify("Record GIF needs ffmpeg", "Install it with your package manager and try again.", critical=True)
+        log("ffmpeg missing")
+        return 1
+    kind = pick_recorder(a.recorder)
+    if not kind:
+        notify("Record GIF needs a screen recorder", "Install gpu-screen-recorder (the one behind Omarchy's screen recording), or wf-recorder.", critical=True)
+        return 1
+    if kind == "gsr" and subprocess.run(["pgrep", "-f", "^gpu-screen-recorder"], capture_output=True).returncode == 0:
+        notify("Record GIF", "A screen recording is running. Stop it first, then try again.", critical=True)
+        return 1
+
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock = open(LOCK, "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("a GIF recording is already running")
+        notify("Record GIF", "A GIF recording is already running.")
+        return 1
+    # a state file left by a killed run: put that desktop back first
+    stale = read_restore()
+    if stale:
+        log("restoring a desktop left hidden by an earlier run")
+        restore(stale)
+    try:
+        os.remove(CANCEL)
+    except FileNotFoundError:
+        pass
+
+    mon, pos = pointer_monitor()
+    if not mon:
+        notify("Record GIF", "Could not read the monitor from Hyprland.", critical=True)
+        return 1
+    mon["lw"], mon["lh"] = mon["width"] / mon["scale"], mon["height"] / mon["scale"]
+    aw = hj("activewindow") or {}
+    clients = hj("clients") or []
+    ws = mon["activeWorkspace"]
+    st = {
+        "monitor": mon["name"],
+        "workspace": {"id": ws["id"], "name": ws["name"]},
+        "window": aw.get("address") if aw.get("address") else None,
+        "pinned": [c["address"] for c in clients if c.get("pinned") and c.get("monitor") == mon["id"]],
+        "special": (mon.get("specialWorkspace") or {}).get("name") or None,
+        "cursor": {"x": pos["x"], "y": pos["y"]},
+        "bar_hidden_by_us": False,
+        "dnd_by_us": False,
+    }
+    if st["special"]:
+        st["special"] = st["special"].replace("special:", "", 1)
+
+    seconds = min(5.0, max(1.0, a.seconds if a.seconds is not None else DEMO_SECONDS))
+    out = a.out or os.path.join(os.path.expanduser("~/Pictures/OmaShaders"),
+                                "%s-%s.gif" % (slug(a.name or default_name()), datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
+    out = os.path.expanduser(out)
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    work = tempfile.mkdtemp(prefix="omashaders-gif-")
+    share = None
+    if a.share:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+            import omsborder
+            share = (os.path.join(work, "top.png"), os.path.join(work, "bottom.png"))
+            omsborder.render_borders(open(a.share, "rb").read(), *share)
+        except Exception as e:
+            shutil.rmtree(work, ignore_errors=True)
+            log("share border failed:", e)
+            notify("Sharable GIF", str(e)[:300], critical=True)
+            return 1
+
+    for n in effects_note():
+        log("note:", n)
+    notes = effects_note()
+    fsw = (hj("activeworkspace") or {}).get("hasfullscreen")
+    if fsw and os.path.exists(os.path.join(STATE_DIR, "fullscreen-pause")):
+        log("note: a fullscreen app is on this workspace; effects resume on the empty workspace")
+
+    write_restore(st)  # from here on, anything that goes wrong restores from this file
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    signal.signal(signal.SIGHUP, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    result = None
+    watch = None
+    try:
+        dispatch('hl.dsp.focus({monitor="%s"})' % mon["name"])
+        if st["special"]:
+            dispatch('hl.dsp.workspace.toggle_special("%s")' % st["special"])
+        for addr in st["pinned"]:
+            dispatch('hl.dsp.window.pin({window="address:%s"})' % addr)
+        dispatch('hl.dsp.focus({workspace="name:%s"})' % WORKSPACE)
+        # focusing the terminal later must not warp the pointer to its centre in the middle of the sweep
+        st["no_warps"] = (hj("getoption", "cursor:no_warps") or {}).get("bool", False)
+        write_restore(st)
+        run(["hyprctl", "eval", "hl.config({cursor={no_warps=true}})"])
+        if not os.path.exists(BAR_FLAG):
+            os.makedirs(os.path.dirname(BAR_FLAG), exist_ok=True)
+            open(BAR_FLAG, "w").close()
+            st["bar_hidden_by_us"] = True
+            write_restore(st)
+            run(["omarchy-shell", "-q", "omarchy.bar", "syncHidden"])
+        open(OVERLAY_FLAG, "w").close()
+        run(["hyprctl", "dismissnotify"])  # Hyprland's own pop-ups (a config error bar, a version note)
+        if run(["omarchy-shell", "notifications", "isDnd"]).stdout.strip() == "off":
+            st["dnd_by_us"] = True
+            write_restore(st)
+            run(["omarchy-shell", "-q", "notifications", "setDnd", "on"])
+        run(["omarchy-shell", "-q", "notifications", "dismissAll"])
+        demo_up = start_demo(mon, st, work, a.name or "")
+        Pointer().move(*start_pose(mon))
+        if wait(0.9):
+            raise KeyboardInterrupt
+        for n in range(a.countdown, 0, -1):
+            run(["omarchy-shell", "-q", PLUGIN, "gifCount", str(n), mon["name"]])
+            if wait(1.0):
+                raise KeyboardInterrupt
+        run(["omarchy-shell", "-q", PLUGIN, "gifCount", "0", mon["name"]])
+        if wait(0.3):
+            raise KeyboardInterrupt
+        left = wait_clean(mon)
+        if left:
+            raise Unclean(unclean_message(left))
+
+        watch = Watch(mon)
+        watch.start()
+        rec = Recording(kind, mon, work)
+        if not rec.start() and a.recorder == "auto" and kind != "grim" and shutil.which("grim"):
+            log("the", kind, "recorder did not start, falling back to grim (fewer frames per second)")
+            rec.stop_quiet()
+            kind = "grim"
+            rec = Recording(kind, mon, work)
+            rec.start()
+        elif rec.t0 is None:
+            rec.stop_quiet()
+            raise RuntimeError("the screen recorder did not start")
+        lead = DEMO_LEAD if demo_up else LEAD
+        if wait(lead):
+            rec.stop()
+            raise KeyboardInterrupt
+        dur = demo_duration(work, a.name or "") if demo_up else 0
+        def open_demo():
+            show_demo(st)
+            open(os.path.join(work, "go"), "w").close()  # the demo terminal starts typing
+        shown = sweep(mon, seconds, DEMO_SHOW_AT, open_demo) if demo_up else sweep(mon, seconds)
+        tail = TAIL
+        if shown:  # keep recording until the typing is done
+            tail = max(TAIL, dur + DEMO_HOLD - (time.monotonic() - shown))
+        if wait(tail):
+            rec.stop()
+            raise KeyboardInterrupt
+        rec.t_end = time.monotonic()
+        rec.stop()
+        seen = watch.finish()
+        watch = None
+        if seen:
+            raise Unclean(unclean_message(seen))
+        # the desktop goes back before the (slow) encoding
+        restore(st)
+        st = None
+        finished()
+        used = encode(rec, out, 0.1, share)
+        size = os.path.getsize(out)
+        result = (out, size, used)
+    except KeyboardInterrupt:
+        log("cancelled")
+        notify("Record GIF", "Cancelled. Your desktop is back.")
+    except Unclean as e:
+        log("not clean:", e)
+        notify("Record GIF stopped", str(e)[:300], critical=True)
+    except Exception as e:
+        log("failed:", e)
+        notify("Record GIF failed", str(e)[:300], critical=True)
+    finally:
+        if watch is not None:
+            watch.finish()
+        if st is not None:
+            restore(st)
+        shutil.rmtree(work, ignore_errors=True)
+        try:
+            os.remove(CANCEL)
+        except FileNotFoundError:
+            pass
+    if result:
+        out, size, used = result
+        if share:
+            with open(out, "rb") as f:
+                subprocess.run(["wl-copy", "--type", "image/gif"], stdin=f, check=False)
+            note = "%.1f MB, %d fps. The picture is copied: paste it into your post. Whoever copies it from the post can use Import theme." % (size / 1048576, used[1])
+        else:
+            run(["wl-copy"], input=out)
+            note = "%.1f MB, %d px wide, %d fps. Path copied to the clipboard." % (size / 1048576, used[0], used[1])
+        if notes:
+            note += " Note: %s, so the GIF shows no effects (press p in the menu to resume them)." % ", ".join(notes)
+        log("gif:", out, note)
+        print(out)
+        notify("GIF saved", os.path.basename(out) + "\n" + note, image=out)
+        return 0
+    return 1
+
+
+def cmd_restore():
+    st = read_restore()
+    if not st:
+        print("nothing to restore")
+        return 0
+    lock = open(LOCK, "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("a GIF recording is running; use `omashaders gif cancel`")
+        return 1
+    restore(st)
+    print("restored")
+    return 0
+
+
+def cmd_cancel():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    try:
+        lock = open(LOCK, "w")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print("no GIF recording is running")  # nothing holds the lock
+        return 0
+    except OSError:
+        open(CANCEL, "w").close()
+        return 0
+
+
+def main():
+    p = argparse.ArgumentParser(prog="omashaders gif", add_help=True)
+    p.add_argument("action", nargs="?", choices=["record", "cancel", "restore", "status"], default="record")
+    p.add_argument("--seconds", type=float, default=None, help="length of the pointer sweep, 1 to 5 (default 3.7)")
+    p.add_argument("--out", help="output file (default ~/Pictures/OmaShaders/NAME-DATE.gif)")
+    p.add_argument("--name", help="name used in the file name (default: the theme or effect names)")
+    p.add_argument("--countdown", type=int, default=3, help="seconds of countdown (0 = none)")
+    p.add_argument("--recorder", choices=["auto", "gsr", "wf", "grim"], default="auto")
+    p.add_argument("--share", metavar="PAYLOAD_FILE", help="draw this theme code (raw bytes) as a data border around the GIF and copy the picture")
+    a = p.parse_args()
+    if a.action == "cancel":
+        return cmd_cancel()
+    if a.action == "restore":
+        return cmd_restore()
+    if a.action == "status":
+        print("hidden desktop, restore pending" if read_restore() else "idle")
+        return 0
+    try:
+        return cmd_gif(a)
+    finally:
+        if a.share:
+            finished()
+            try:
+                os.remove(a.share)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())

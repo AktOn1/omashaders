@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+# pause-key: prints the key combination of a Hyprland binding that pauses OmaShaders (e.g. "Ctrl+Alt+P"; the default from bin/pause-bind first), or nothing.
+import glob, json, os, re, subprocess, sys
+
+MODS = ((1, "Shift"), (4, "Ctrl"), (8, "Alt"), (64, "Super"))
+NAMES = {"super": "Super", "alt": "Alt", "ctrl": "Ctrl", "control": "Ctrl", "shift": "Shift", "mod4": "Super", "mod1": "Alt"}
+
+
+def pretty(parts):
+    out = []
+    for p in parts:
+        p = p.strip()
+        if p:
+            out.append(NAMES.get(p.lower(), p if len(p) > 1 else p.upper()))
+    return "+".join(out)
+
+
+def from_binds():
+    try:
+        out = subprocess.run(["hyprctl", "-j", "binds"], capture_output=True, text=True, timeout=4).stdout
+        binds = json.loads(out)
+    except Exception:
+        return ""
+    keys = []
+    for b in binds:
+        t = json.dumps(b).lower()
+        # a bind made in a Lua config shows only a function number, so its description is read too
+        if "omashaders" in t and (("power" in t and "toggle" in t) or "pause" in str(b.get("description", "")).lower()):
+            keys.append("+".join([n for m, n in MODS if b.get("modmask", 0) & m] + [str(b.get("key", "?"))]))
+    mine = remembered()
+    return mine if mine in keys else (keys[0] if keys else "")
+
+
+def remembered():
+    # the key bin/pause-bind gave as the default, shown first when it is really bound
+    state = os.environ.get("OMASHADERS_STATE_DIR") or os.path.join(
+        os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy", "io.github.akton1.omashaders")
+    try:
+        return pretty(re.split(r"\s*\+\s*", open(os.path.join(state, "pause-bind.key")).read().strip()))
+    except OSError:
+        return ""
+
+
+def from_files():
+    root = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "hypr")
+    for path in sorted(glob.glob(root + "/**/*.lua", recursive=True) + glob.glob(root + "/**/*.conf", recursive=True)):
+        try:
+            lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            s = line.strip()
+            if s.startswith(("--", "#")) or "omashaders" not in s or not re.search(r"power\s+toggle", s):
+                continue
+            m = re.match(r"""hl\.bind\(\s*["']([^"']+)["']""", s)
+            if m:
+                return pretty(re.split(r"\s*\+\s*", m.group(1)))
+            m = re.match(r"bind[a-z]*\s*=\s*([^,]*),\s*([^,]+),", s)
+            if m:
+                return pretty(re.split(r"[\s+]+", m.group(1)) + [m.group(2)])
+    return ""
+
+
+key = from_binds() or from_files()
+if key:
+    print(key)

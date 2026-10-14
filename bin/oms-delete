@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""oms-delete: delete a theme or an element (a shader) with built-in protection. The menu and the CLI both use this tool.
+
+  omashaders theme list                         numbered themes: N, id, name, [built-in]
+  omashaders theme rm N [--yes] [--json]        N = the number from `theme list` (= the Themes column, 1 = first)
+  omashaders element rm KIND NAME [--yes] [--json]
+      KIND = screen | window | color | wallpaper | cursor | frame   (window = a window effect, any shader in shaders/)
+  oms-delete check theme --line LINE | element KIND NAME [--json]     what the menu asks before it deletes
+  oms-delete rm    theme --line LINE | element KIND NAME --yes [--json]
+
+Built in = shipped with the plugin: the themes in `starter-themes` (by a short hash of the whole line, no author, no user id) and
+the effect files in the plugin folder. Other users cannot delete them: "Built-in theme, cannot be deleted". The developer can: the
+empty file `dev-export` in the state folder is the permission (and it keeps starter-themes in step). A user's own themes and
+effects (created, imported, made by AI: the state folder) are always deletable. An element is asked about first: the prompt names
+the themes that use it ("Used by theme: Abyss, Moon Lake. Delete anyway?"); a theme that loses an element simply has that part
+empty. Without --yes the CLI only prints the prompt (exit 2). Set OMASHADERS_STATE_DIR to work on another state folder (tests).
+"""
+import sys
+sys.dont_write_bytecode = True  # a __pycache__ in the plugin folder would make the shell reload the plugin
+import json
+import os
+import subprocess
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import omslib as L  # noqa: E402
+
+BUILTIN_THEME = "Built-in theme, cannot be deleted"
+BUILTIN_ELEMENT = "Built-in effect, cannot be deleted"
+GEN = L.GENERATED
+KINDS = {"screen": "shader", "window": "shader", "effect": "shader", "shader": "shader", "color": "color", "colour": "color",
+         "wallpaper": "wall", "wall": "wall", "cursor": "mouse", "mouse": "mouse", "frame": "frame"}
+# kind -> (built-in folders, extensions, folder of the user's own copies, theme line slots that use it)
+LAYOUT = {
+    "shader": (["shaders"], [".frag"], "screen", ("s", "wf")),
+    "color": (["colors"], [".frag"], "color", ("c", "wc")),
+    "wall": (["wallpaper-effects"], [".frag", ".frag.qsb"], "wall", ("w",)),
+    "mouse": (["mouse-effects", "cursor-shaders"], [".frag", ".frag.qsb"], "mouse", ("m",)),
+    "frame": (["frames"], [".frame"], "frame", ("wr",)),
+}
+# the state file that holds the current choice for this kind, and the omashaders call that turns it off
+CURRENT = {
+    "shader": [("current", ["effect", "off"]), ("window-effect", ["window", "effect", "off"])],
+    "color": [("color", ["color", "off"]), ("window-color", ["window", "color", "off"])],
+    "mouse": [("mouse", ["mouse", "off"])],
+    "frame": [("window-frame", ["window", "frame", "off"])],
+    "wall": [("wp-effect", None)],
+}
+
+
+class Refused(Exception):
+    pass
+
+
+def out(obj, as_json, text):
+    print(json.dumps(obj) if as_json else text)
+
+
+def noun(kind):
+    return {"shader": "effect", "color": "colour grade", "wall": "wallpaper effect", "mouse": "cursor effect", "frame": "frame"}[kind]
+
+
+# ---------------------------------------------------------------- themes
+def theme_info(line):
+    lines = L.read_themes()
+    if line not in lines:
+        raise L.Bad("That theme is not in your list (any more)")
+    builtin = L.is_builtin_theme(line)
+    can = (not builtin) or L.dev_switch()
+    label = L.theme_label(line)
+    info = {"ok": True, "type": "theme", "line": line, "id": L.theme_uid(line), "name": label, "builtin": builtin, "can_delete": can, "dev": L.dev_switch()}
+    if not can:
+        info["message"] = BUILTIN_THEME
+        info["prompt"] = BUILTIN_THEME
+    else:
+        info["message"] = ""
+        info["prompt"] = "Delete theme %s?%s" % (label, " It is built in; the developer switch is on." if builtin else "")
+    return info
+
+
+def theme_remove(line):
+    info = theme_info(line)
+    if not info["can_delete"]:
+        raise Refused(info["message"])
+    lines = L.read_themes()
+    lines.remove(line)
+    L.write_themes(lines)
+    info["deleted"] = True
+    return info
+
+
+# ---------------------------------------------------------------- elements
+def element_files(kind, name):
+    """[(path, builtin)] of every file that makes up this element"""
+    if not L.ID_RE.match(name or ""):
+        raise L.Bad("That is not an effect name")
+    dirs, exts, own, _slots = LAYOUT[kind]
+    found = []
+    for d in dirs:
+        for e in exts:
+            p = os.path.join(L.ROOT, d, name + e)
+            if os.path.exists(p):
+                found.append((p, True))
+    for e in exts:
+        p = os.path.join(GEN, own, name + e)
+        if os.path.exists(p):
+            found.append((p, False))
+    return found
+
+
+def used_by(kind, name):
+    slots = LAYOUT[kind][3]
+    res = []
+    for line in L.read_themes():
+        c = L.parse_line(line)
+        if any(c.get(k) == name for k in slots):
+            label = L.theme_label(line)
+            if label not in res:
+                res.append(label)
+    return res
+
+
+def element_info(kind_word, name):
+    kind = KINDS.get(str(kind_word).lower())
+    if not kind:
+        raise L.Bad("Unknown kind %s: use screen, window, color, wallpaper, cursor or frame" % kind_word)
+    files = element_files(kind, name)
+    if not files:
+        raise L.Bad("No %s named %s" % (noun(kind), name))
+    builtin = any(b for _p, b in files)
+    can = (not builtin) or L.dev_switch()
+    themes = used_by(kind, name)
+    info = {"ok": True, "type": "element", "kind": kind, "name": name, "builtin": builtin, "can_delete": can, "used_by": themes}
+    if not can:
+        info["message"] = BUILTIN_ELEMENT
+        info["prompt"] = BUILTIN_ELEMENT
+        return info
+    info["message"] = ""
+    if themes:
+        shown = themes if len(themes) <= 5 else themes[:5] + ["%d more" % (len(themes) - 5)]
+        info["prompt"] = "Used by theme: %s. Delete anyway?" % ", ".join(shown)
+    else:
+        info["prompt"] = "Delete %s?" % name
+    if builtin:
+        info["prompt"] += " It is built in; the developer switch is on."
+    return info
+
+
+def turn_off_if_current(kind, name):
+    """an effect that is running right now is switched off before its files go"""
+    for fname, call in CURRENT[kind]:
+        try:
+            cur = open(os.path.join(L.STATE, fname)).read().strip()
+        except OSError:
+            continue
+        if cur != name:
+            continue
+        if call is None:
+            try:
+                open(os.path.join(L.STATE, fname), "w").close()
+            except OSError:
+                pass
+        else:
+            subprocess.run([os.path.join(L.HERE, "omashaders")] + call, capture_output=True, text=True, timeout=30)
+
+
+def element_remove(kind_word, name):
+    info = element_info(kind_word, name)
+    if not info["can_delete"]:
+        raise Refused(info["message"])
+    kind = info["kind"]
+    turn_off_if_current(kind, name)
+    gone = 0
+    for p, _b in element_files(kind, name):
+        try:
+            os.remove(p)
+            gone += 1
+        except OSError:
+            pass
+    try:  # the record of an AI-made effect
+        os.remove(os.path.join(GEN, "meta", name + ".json"))
+    except OSError:
+        pass
+    info["deleted"] = gone > 0
+    info["files"] = gone
+    return info
+
+
+# ---------------------------------------------------------------- cli
+def cmd_list(_a, as_json):
+    lines = L.read_themes()
+    rows = [{"n": i + 1, "id": L.theme_uid(l), "name": L.theme_label(l), "builtin": L.is_builtin_theme(l)} for i, l in enumerate(lines)]
+    if as_json:
+        print(json.dumps({"ok": True, "themes": rows}))
+    else:
+        for r in rows:
+            print("%3d  %s  %s%s" % (r["n"], r["id"], r["name"], "  [built-in]" if r["builtin"] else ""))
+        if not rows:
+            print("There are no saved themes yet")
+
+
+def find(a):
+    """('theme', line) or ('element', kind, name) from the arguments"""
+    pos = [x for x in a if not x.startswith("--")]
+    if "--line" in a:
+        i = a.index("--line")
+        if i + 1 >= len(a):
+            raise L.Bad("--line needs a theme line")
+        return ("theme", a[i + 1])
+    if pos[:1] == ["theme"]:
+        pos = pos[1:]
+        lines = L.read_themes()
+        try:
+            n = int(pos[0])
+            assert 1 <= n <= len(lines)
+        except Exception:
+            raise L.Bad("pick a theme number between 1 and %d" % len(lines) if lines else "there are no saved themes yet")
+        return ("theme", lines[n - 1])
+    if pos[:1] == ["element"]:
+        pos = pos[1:]
+        if len(pos) < 2:
+            raise L.Bad("usage: element rm KIND NAME")
+        return ("element", pos[0], pos[1])
+    raise L.Bad("usage: oms-delete check|rm theme N | theme --line LINE | element KIND NAME")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    as_json = "--json" in a
+    try:
+        if a[0] == "list":
+            cmd_list(a[1:], as_json)
+            return 0
+        verb = {"check": "check", "rm": "rm", "delete": "rm"}.get(a[0])
+        if not verb:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+        what = find(a[1:])
+        info = theme_info(what[1]) if what[0] == "theme" else element_info(what[1], what[2])
+        if verb == "check":
+            out(info, as_json, info["prompt"])
+            return 0
+        if not info["can_delete"]:
+            out({**info, "ok": False, "refused": True, "error": info["message"]}, as_json, info["message"])
+            return 1
+        if "--yes" not in a:
+            text = info["prompt"] + "\nNot deleted: add --yes to confirm."
+            out({**info, "ok": False, "needs_yes": True, "error": "confirmation needed"}, as_json, text)
+            return 2
+        res = theme_remove(what[1]) if what[0] == "theme" else element_remove(what[1], what[2])
+        shown = res["name"]
+        out(res, as_json, "Deleted %s %s" % ("theme" if what[0] == "theme" else noun(res["kind"]), shown))
+    except Refused as e:
+        out({"ok": False, "refused": True, "error": str(e)}, as_json, str(e))
+        return 1
+    except L.Bad as e:
+        if as_json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print("oms-delete: %s" % e, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

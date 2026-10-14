@@ -47,4 +47,5 @@ if [ $# -ge 3 ]; then
     done
   done
 fi
+"$R/bin/check-public-wording" || rc=1
 rm -rf "$T"; [ $rc = 0 ] && echo "all shaders ok"; exit $rc

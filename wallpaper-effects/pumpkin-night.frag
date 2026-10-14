@@ -1,5 +1,5 @@
 // label: Pumpkin night
-// hint: Halloween: a huge low orange moon, a dead tree, bats that swerve around the pointer and a row of glowing jack-o-lanterns in the fog
+// hint: a bunch of painted jack-o-lanterns float over your wallpaper; they glow brighter, lean away and bob when the pointer comes close, with a few embers. No scenery: your picture stays
 // category: Seasons and festivals
 #version 440
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -22,6 +22,7 @@ layout(std140, binding = 0) uniform buf {
   float zoom;
 };
 layout(binding = 1) uniform sampler2D src;
+layout(binding = 2) uniform sampler2D sprites; // pumpkin-night.png: 4 x 2 cells of 256 px, each a pumpkin cut-out
 
 vec2 coverUV(vec2 uv) {
   float ra = res.x / res.y;
@@ -31,156 +32,98 @@ vec2 coverUV(vec2 uv) {
 }
 vec3 wall(vec2 uv) { return texture(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.05) + 0.5, 0.0, 1.0))).rgb; } // the picture stays unzoomed; only the effect scales
 float pkn_h(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-float pkn_h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-vec2 pkn_h22(vec2 p) { return vec2(pkn_h2(p), pkn_h2(p + vec2(37.2, 91.7))); }
-float pkn_n(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(pkn_h2(i), pkn_h2(i + vec2(1, 0)), f.x), mix(pkn_h2(i + vec2(0, 1)), pkn_h2(i + vec2(1, 1)), f.x), f.y);
-}
-float pkn_fbm(vec2 p) {
-  float v = 0.0, a = 0.5;
-  for (int i = 0; i < 4; i++) { v += a * pkn_n(p); p = p * 2.03 + 17.0; a *= 0.5; }
-  return v;
-}
-float pkn_lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
-float pkn_seg(vec2 p, vec2 a, vec2 b, float w0, float w1) {
-  vec2 pa = p - a, ba = b - a;
-  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-  float w = mix(w0, w1, h);
-  return smoothstep(w, w * 0.6, length(pa - ba * h));
+// one floating pumpkin: x, y (fractions of the screen), radius (fraction of the screen height), sprite cell
+vec4 pkn_spot(int i) {
+  if (i == 0) return vec4(0.035, 0.30, 0.050, 6.0);
+  if (i == 1) return vec4(0.965, 0.18, 0.062, 7.0);
+  if (i == 2) return vec4(0.105, 0.59, 0.044, 3.0);
+  if (i == 3) return vec4(0.915, 0.52, 0.042, 5.0);
+  if (i == 4) return vec4(0.285, 0.955, 0.050, 2.0);
+  if (i == 5) return vec4(0.735, 0.965, 0.046, 4.0);
+  if (i == 6) return vec4(0.185, 0.905, 0.075, 5.0);
+  if (i == 7) return vec4(0.825, 0.905, 0.080, 2.0);
+  if (i == 8) return vec4(0.065, 0.805, 0.112, 0.0);
+  return vec4(0.945, 0.815, 0.108, 1.0);
 }
 
-// a jack-o-lantern: x right, y down, in units of its radius. returns shade in .x (0 = not pumpkin), face cutout in .y
-vec2 pkn_pumpkin(vec2 q) {
-  float body = 0.0;
-  float sh = 0.0;
-  // three ribs: a wide centre lobe and two side lobes
-  float e0 = length(vec2(q.x / 0.78, q.y / 0.86));
-  float e1 = length(vec2((q.x - 0.46) / 0.62, q.y / 0.84));
-  float e2 = length(vec2((q.x + 0.46) / 0.62, q.y / 0.84));
-  float e = min(e0, min(e1, e2));
-  body = smoothstep(1.0, 0.96, e);
-  float rib = max(smoothstep(0.80, 1.0, e0) * 0.0, 0.0);
-  sh = 0.55 + 0.45 * (1.0 - clamp(length(q - vec2(-0.25, -0.3)) / 1.3, 0.0, 1.0));
-  sh *= 0.78 + 0.22 * smoothstep(0.0, 0.18, abs(e1 - e0) + 0.10) * smoothstep(0.0, 0.18, abs(e2 - e0) + 0.10);
-  // stem
-  float stem = step(abs(q.x - 0.05 - 0.1 * q.y), 0.11 + 0.05 * (q.y + 0.96)) * step(-1.12, q.y) * step(q.y, -0.74);
-  body = max(body, stem);
-  // face
-  vec2 el = vec2(abs(q.x) - 0.36, q.y + 0.18);                       // eyes: two triangles pointing up
-  float eye = step(el.y, 0.22) * step(-0.20, el.y) * step(abs(el.x), (0.22 - el.y) * 0.62);
-  float nose = step(abs(q.x), (q.y + 0.04 - 0.0) * 0.0 + 0.10 * (1.0 - (q.y - 0.10) * 3.0)) * step(0.10, q.y) * step(q.y, 0.30) * 0.0;
-  float mx = abs(q.x);
-  float zig = abs(fract(q.x * 2.6) - 0.5) * 0.34;
-  float mouth = step(mx, 0.64) * step(0.30 + zig * 0.7, q.y) * step(q.y, 0.72 - zig * 1.0);
-  float face = max(eye, mouth);
-  return vec2(body * (stem > 0.5 && e > 1.0 ? 0.45 : sh), face * body);
-}
-
-vec4 pkn_bat(vec2 p, vec2 c, float size, float ph) {
-  vec2 l = (p - c) / size;
-  float aw = abs(l.x);
-  float fl = sin(ph) * 0.8 + 0.1;
-  float top = -(0.05 + 0.55 * aw) * fl - 0.10 * aw;
-  float bot = 0.10 * aw + 0.20 * pow(abs(sin(aw * 7.0 + 0.8)), 0.7) * smoothstep(0.1, 0.5, aw) + 0.04;
-  float wing = step(0.12, aw) * step(aw, 1.15 - 0.15 * fl) * step(top, l.y) * step(l.y, bot + 0.0);
-  float tip = smoothstep(1.2, 0.2, aw);
-  float body = step(length(vec2(l.x * 2.6, (l.y - 0.02) * 1.2)), 0.30) + step(length(vec2((abs(l.x) - 0.07) * 4.0, (l.y + 0.26) * 2.2)), 0.14);
-  return vec4(0.0, 0.0, 0.0, clamp(wing * 0.95 + body, 0.0, 1.0));
-}
+vec3 pkn_over(vec3 base, vec3 c, float a) { return mix(base, c, a); }
 
 vec4 fxMain(vec2 mpx) {
-  vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
+  vec2 uv = qt_TexCoord0;
   vec2 p = vec2(uv.x * asp, uv.y);
-  vec2 mp = vec2(mpx.x / res.x * asp, mpx.y / res.y);
+  bool has = mpx.x > -5000.0;
+  vec2 mp = has ? vec2(mpx.x / res.y, mpx.y / res.y) : vec2(-10.0);
+  vec2 par = has ? (vec2(mpx.x / res.x, mpx.y / res.y) - vec2(0.5, 0.5)) : vec2(0.0);
   float t = time;
-  vec3 base = wall(uv);
+  vec3 col = wall(uv);
+  vec3 glow = vec3(0.0);
 
-  // night sky: black-violet overhead, bruised purple toward the horizon
-  float sk = smoothstep(0.0, 0.8, uv.y);
-  vec3 sky = mix(vec3(0.030, 0.015, 0.065), vec3(0.26, 0.09, 0.26), pow(sk, 1.5));
-  vec3 col = mix(base * vec3(0.38, 0.22, 0.50), sky, 0.82);
-  float stp = pkn_h2(floor(p * 260.0));
-  col += vec3(1.0, 0.9, 0.8) * step(0.9985, stp) * (1.0 - sk) * 0.5;
-
-  // a huge low orange moon
-  vec2 moonC = vec2(0.64 * asp, 0.40);
-  float R = 0.17;
-  float dm = length(p - moonC);
-  col += vec3(0.90, 0.40, 0.10) * (exp(-dm * dm / (2.0 * 0.20 * 0.20)) * 0.30 + exp(-dm * dm / (2.0 * 0.45 * 0.45)) * 0.12);
-  vec2 mq = (p - moonC) / R;
-  float maria = pkn_fbm(mq * 1.6 + 2.0) * 0.6 + pkn_fbm(mq * 4.0 + 5.0) * 0.4;
-  vec3 disc = mix(vec3(1.0, 0.72, 0.30), vec3(0.85, 0.42, 0.14), smoothstep(0.42, 0.7, maria) * 0.7);
-  disc *= 0.84 + 0.16 * sqrt(max(1.0 - dot(mq, mq), 0.0));
-  col = mix(col, disc, smoothstep(R, R * 0.985, dm));
-
-  // thin drifting clouds across the moon
-  float cl = pkn_fbm(vec2(p.x * 2.5 - t * 0.015, p.y * 14.0 + 3.0));
-  col = mix(col, vec3(0.12, 0.05, 0.16), smoothstep(0.52, 0.72, cl) * 0.55 * exp(-pow((uv.y - 0.38) / 0.22, 2.0)));
-
-  // the distant hill and a crooked dead tree
-  float hy = 0.70 + 0.04 * pkn_n(vec2(p.x * 2.2 + 3.0, 1.0));
-  col = mix(col, vec3(0.06, 0.02, 0.09), smoothstep(hy - 0.002, hy + 0.002, uv.y));
-  float tr = 0.0;
-  vec2 tb = vec2(0.22 * asp, 0.78);
-  tr = max(tr, pkn_seg(p, tb, tb + vec2(0.01, -0.28), 0.020, 0.010));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.01, -0.28), tb + vec2(-0.10, -0.44), 0.010, 0.004));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.01, -0.28), tb + vec2(0.13, -0.46), 0.010, 0.004));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.005, -0.20), tb + vec2(-0.12, -0.30), 0.008, 0.003));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.005, -0.16), tb + vec2(0.14, -0.27), 0.008, 0.003));
-  tr = max(tr, pkn_seg(p, tb + vec2(-0.10, -0.44), tb + vec2(-0.17, -0.47), 0.004, 0.0015));
-  tr = max(tr, pkn_seg(p, tb + vec2(-0.10, -0.44), tb + vec2(-0.12, -0.54), 0.004, 0.0015));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.13, -0.46), tb + vec2(0.20, -0.44), 0.004, 0.0015));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.13, -0.46), tb + vec2(0.11, -0.56), 0.004, 0.0015));
-  tr = max(tr, pkn_seg(p, tb + vec2(-0.12, -0.30), tb + vec2(-0.20, -0.29), 0.003, 0.001));
-  tr = max(tr, pkn_seg(p, tb + vec2(0.14, -0.27), tb + vec2(0.22, -0.30), 0.003, 0.001));
-  col = mix(col, vec3(0.02, 0.008, 0.035), tr);
-
-  // bats: three of them cross the sky; they swerve away from the pointer
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 10; i++) {
     float fi = float(i);
-    float sp = 0.020 + 0.006 * fi;
-    float ph = fract(t * sp + fi * 0.37);
-    vec2 bc = vec2((-0.1 + ph * 1.25) * asp, 0.12 + 0.12 * fi + 0.05 * sin(t * 0.7 + fi * 2.0) + 0.03 * sin(ph * 40.0));
-    vec2 away = bc - mp;
-    float da = length(away);
-    bc += normalize(away + 0.001) * 0.16 * exp(-da * da / 0.05);
-    vec4 b = pkn_bat(p, bc, 0.050 + 0.010 * fi, t * (7.0 + fi * 1.3) + fi);
-    col = mix(col, vec3(0.01, 0.0, 0.02), b.a);
-  }
+    vec4 sp = pkn_spot(i);
+    float r = sp.z;
+    float depth = 0.5 + 0.5 * smoothstep(0.04, 0.11, r); // big ones are near, they shift more with the pointer
+    vec2 home = vec2(sp.x * asp, sp.y);
+    home += par * depth * 0.035 * vec2(-1.0, -1.0);
+    // slow figure-of-eight drift and bob
+    home += vec2(0.006 * sin(t * 0.37 + fi * 2.1), 0.010 * sin(t * 0.61 + fi * 1.3)) * (0.6 + r * 6.0);
+    // pointer: lean away and hop when it comes close, glow from further away
+    vec2 d = home - mp;
+    float dist = length(d);
+    float reach = 0.16 + r * 2.4;
+    float push = exp(-pow(dist / reach, 2.0));
+    float see = exp(-pow(dist / (0.55 + r * 3.0), 2.0));
+    vec2 away = d / (dist + 0.04);
+    vec2 c = home + away * push * (0.02 + r * 0.65) - vec2(0.0, push * r * 0.25);
+    float tilt = (clamp(away.x, -1.0, 1.0) * 0.55 + 0.12 * sin(t * 0.9 + fi * 1.7)) * push + 0.045 * sin(t * 0.7 + fi * 3.0) * (1.0 - push);
+    float sq = 1.0 - 0.10 * push + 0.025 * sin(t * 1.6 + fi);
+    vec2 q0 = p - c;
+    float flick = 0.86 + 0.14 * sin(t * (5.0 + fi * 0.9) + fi * 3.0) * sin(t * 2.3 + fi) + 0.04 * sin(t * 13.0 + fi * 7.0);
+    float lamp = step(sp.w, 5.5); // cells 0-5 are lit jack-o-lanterns, 6 and 7 are not
+    float lit = 0.55 + 0.9 * see + 0.55 * push;
 
-  // ground, fog, and a row of pumpkins
-  float gy = 0.86 + 0.02 * pkn_n(vec2(p.x * 3.0, 4.0));
-  col = mix(col, vec3(0.04, 0.02, 0.06), smoothstep(gy - 0.002, gy + 0.002, uv.y));
-  float fog = pkn_fbm(vec2(p.x * 2.2 - t * 0.02, uv.y * 9.0 + 4.0));
-  float fogMask = exp(-pow((uv.y - 0.86) / 0.07, 2.0));
-  col = mix(col, vec3(0.30, 0.18, 0.38), smoothstep(0.35, 0.8, fog) * fogMask * 0.55);
-
-  vec3 glowAcc = vec3(0.0);
-  for (int i = 0; i < 5; i++) {
-    float fi = float(i);
-    float cx = (0.12 + 0.19 * fi + 0.03 * sin(fi * 3.1)) * asp * (i == 4 ? 0.98 : 1.0);
-    float r = 0.050 + 0.040 * pkn_h(fi * 5.3 + 1.0) + (i == 2 ? 0.02 : 0.0);
-    vec2 c = vec2(cx * 0.95 + 0.03, 0.915 + 0.06 * pkn_h(fi + 2.0) - r * 0.35);
-    float near = exp(-pow(length(vec2(c.x, c.y) - mp) / 0.30, 2.0));
-    float flick = 0.80 + 0.20 * sin(t * (5.0 + fi) + fi * 3.0) * sin(t * 2.3 + fi) + 0.12 * near;
-    float dq = length(p - c);
-    glowAcc += vec3(1.0, 0.50, 0.12) * exp(-dq * dq / (2.0 * r * r * 6.0)) * 0.20 * flick * (1.0 + 0.8 * near);
-    vec2 pq = (p - c) / r;
-    if (abs(pq.x) < 1.6 && pq.y > -1.3 && pq.y < 1.2) {
-      vec2 pk = pkn_pumpkin(pq);
-      vec3 skin = mix(vec3(0.30, 0.08, 0.02), vec3(0.86, 0.38, 0.06), pk.x) * (0.50 + 0.5 * flick);
-      vec3 inner = mix(vec3(1.0, 0.62, 0.10), vec3(1.0, 0.95, 0.50), 0.55 * flick) * (1.1 + 0.5 * near);
-      vec3 pc = mix(skin, inner, step(0.5, pk.y));
-      col = mix(col, pc, step(0.01, pk.x));
+    float dc = length(q0);
+    if (dc < r * 3.4) {
+      // soft light spilling on the picture around the pumpkin
+      float hl = exp(-dc * dc / (r * r * 3.2));
+      glow += vec3(1.0, 0.46, 0.10) * hl * 0.30 * flick * lit * lamp;
+    }
+    float cs = cos(tilt), sn = sin(tilt);
+    vec2 q = vec2(cs * q0.x + sn * q0.y, -sn * q0.x + cs * q0.y) / r;
+    q.y /= sq; q.x *= sq;
+    if (pkn_h(fi * 3.7) > 0.5) q.x = -q.x;
+    if (abs(q.x) < 1.0 && abs(q.y) < 1.0) {
+      float cell = sp.w;
+      vec2 cuv = (vec2(mod(cell, 4.0), floor(cell / 4.0)) + 0.5 + q * 0.453) / vec2(4.0, 2.0);
+      vec4 s = texture(sprites, cuv);
+      float lum = dot(s.rgb, vec3(0.299, 0.587, 0.114));
+      float emis = smoothstep(0.50, 0.88, lum) * smoothstep(0.10, 0.45, s.r - s.b);
+      vec3 pc = s.rgb * (0.80 + 0.12 * flick);
+      pc *= 1.0 + 0.55 * see + 0.30 * push;
+      pc += vec3(1.0, 0.62, 0.20) * emis * lamp * (0.25 + 0.55 * see + 0.30 * push) * flick;
+      pc = mix(pc, pc * vec3(1.0, 0.93, 0.85), 0.5);
+      col = pkn_over(col, pc, s.a);
     }
   }
-  col += glowAcc;
+  col += glow;
 
-  col *= 1.0 - 0.36 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.2);
+  // a few embers rising from the pumpkins; the pointer blows them aside
+  for (int k = 0; k < 14; k++) {
+    float fk = float(k);
+    vec4 sp = pkn_spot(k - (k / 10) * 10);
+    float life = fract(t * (0.055 + 0.02 * pkn_h(fk + 1.0)) + pkn_h(fk * 7.1));
+    float seed = floor(t * (0.055 + 0.02 * pkn_h(fk + 1.0)) + pkn_h(fk * 7.1)) + fk * 13.0;
+    vec2 o = vec2(sp.x * asp + (pkn_h(seed) - 0.5) * sp.z * 2.0, sp.y - sp.z * 0.6);
+    vec2 e = o + vec2(0.03 * sin(life * 9.0 + fk) + (pkn_h(seed + 3.0) - 0.5) * 0.06 * life, -life * (0.10 + 0.14 * pkn_h(fk + 5.0)));
+    vec2 de = e - mp;
+    float dl = length(de);
+    e += de / (dl + 0.03) * 0.07 * exp(-pow(dl / 0.18, 2.0));
+    float sz = 0.0045 + 0.0035 * pkn_h(fk + 9.0);
+    float a = exp(-dot(p - e, p - e) / (sz * sz)) * smoothstep(0.0, 0.12, life) * smoothstep(1.0, 0.55, life);
+    col += vec3(1.0, 0.58, 0.16) * a * 1.2 + vec3(1.0, 0.45, 0.10) * a * 0.0;
+  }
   return vec4(col, 1.0) * qt_Opacity;
 }
 

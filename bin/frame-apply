@@ -12,6 +12,7 @@ Options a frame does not mention keep the user's own value.
 import json, os, subprocess, sys, re
 
 state_dir, frames_dir, name = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
+extra_dir = sys.argv[4] if len(sys.argv) > 4 else ""  # frames an AI made (state folder), looked up after the shipped ones
 base_file = os.path.join(state_dir, "frame-base.json")
 sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
 
@@ -94,7 +95,10 @@ def read_frame(n):
     if not re.fullmatch(r"[A-Za-z0-9._-]+", n):
         raise SystemExit("bad frame name")
     d = {}
-    for line in open(os.path.join(frames_dir, n + ".frame")):
+    path = os.path.join(frames_dir, n + ".frame")
+    if not os.path.isfile(path) and extra_dir:
+        path = os.path.join(extra_dir, n + ".frame")
+    for line in open(path):
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.omashaders",
   "name": "OmaShaders",
-  "version": "1.26.0",
+  "version": "1.37.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "Brand new (two days old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 131 ready-made combos. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
+  "description": "Brand new (five days old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 131 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,22 +14,19 @@
   },
   "barWidget": {
     "displayName": "OmaShaders",
-    "description": "Click to open the menu: tick Screen, Color, Wallpaper, Cursor and Windows, hover to preview, Enter to keep, [ ] to adjust strength, p to pause. Right-click turns effects off, scroll steps the screen shader.",
+    "description": "Click to open the menu: pick a complete theme first, then open the parts you want to tweak (Screen, Color, Wallpaper, Cursor, Windows). Hover to preview, Enter to keep, [ ] to adjust strength, p to pause everything. Right-click turns effects off, scroll steps the screen shader.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "includeAnimated": false,
       "fps": 30,
-      "cursorNeedsShift": false
+      "cursorNeedsShift": false,
+      "pauseKey": "CTRL + ALT + P",
+      "aiProvider": "Remembered choice",
+      "aiModel": "",
+      "aiCommand": ""
     },
     "schema": [
-      {
-        "key": "includeAnimated",
-        "type": "boolean",
-        "label": "Include animated screen shaders (heavy GPU use)",
-        "defaultValue": false
-      },
       {
         "key": "fps",
         "type": "integer",
@@ -41,6 +38,31 @@
         "type": "boolean",
         "label": "Cursor effects and wallpaper mouse reactions only while Shift is held (needs a Hyprland Shift_L binding, see README)",
         "defaultValue": false
+      },
+      {
+        "key": "pauseKey",
+        "type": "string",
+        "label": "Key that pauses / resumes every effect from anywhere, e.g. when the screen has gone black (Hyprland format: CTRL + ALT + P; empty = no key; a key another program already uses is never taken)",
+        "defaultValue": "CTRL + ALT + P"
+      },
+      {
+        "key": "aiProvider",
+        "type": "enum",
+        "label": "AI tool for “Create your own theme” (the theme dialog lists only the tools installed here and remembers its last pick; changing this sets it)",
+        "options": ["Remembered choice", "Claude Code", "Codex", "Gemini CLI", "OpenCode", "Ollama (local)", "Custom command"],
+        "defaultValue": "Remembered choice"
+      },
+      {
+        "key": "aiModel",
+        "type": "string",
+        "label": "AI model (empty = the tool's default; Claude: sonnet or opus; Ollama: a model you pulled)",
+        "defaultValue": ""
+      },
+      {
+        "key": "aiCommand",
+        "type": "string",
+        "label": "Custom AI command (used when the AI tool is “Custom command”; it gets the prompt on stdin and prints text containing one JSON object; see README)",
+        "defaultValue": ""
       }
     ]
   }

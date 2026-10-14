@@ -11,6 +11,11 @@
 #        | mouseopt size|speed [PERCENT|+N|-N|reset] (cursor overlay size 25-300 and animation speed 0-300; 100 = as designed)
 #        | fullscreen [status|on|off|toggle] (pause every effect while a fullscreen app runs; the shell calls pause/resume)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
+#        | wallhaven search QUERY | wallhaven use ID (public wallhaven.cc pictures, safe for work only; bin/wallhaven)
+#        | theme share N | theme import CODE [--apply] [--wallpaper] (share codes "OMS1:..."; bin/theme-code; "combo" still works as an old name)
+#        | theme jobs | theme job show|cancel|retry|save|discard ID (the AI theme creator runs as background jobs; bin/aijobs.py) | theme list | theme rm N [--yes] | element rm KIND NAME [--yes] (delete a theme or an effect; built-in ones are protected; bin/oms-delete)
+#        | gif [--seconds N] [--out FILE] [--name NAME] | gif cancel|restore|status (a preview GIF of the look on a cleared desktop; bin/gif-capture)
+#        | ai check|providers|use|test|estimate|keep|discard | ai make "a wish" [--invent] [--part screen=TEXT] [--wallhaven ID|--current] (an AI theme: pick existing or invent new effects; bin/ai-theme)
 # Two screen layers: an effect (shaders/) and a colour grade (colors/). Hyprland runs only one screen
 # shader, so with both set they are merged into one (bin/compose-shader): effect first, colour on top.
 # `off` turns both layers off; `set NAME` sets the effect (a colour name sets the colour layer instead).
@@ -26,11 +31,18 @@ CDIR="$ROOT/colors"
 MDIR="$ROOT/mouse-effects"
 BDIR="$ROOT/cursor-shaders"
 FRDIR="$ROOT/frames"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders"
+STATE_DIR="${OMASHADERS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/io.github.akton1.omashaders}"
 STATE="$STATE_DIR/current"
+# 1.31: the saved looks were called "combos" and are now "themes"; move the user's file once (a copy stays as combos.pre-themes)
+if [ -s "$STATE_DIR/combos" ] && [ ! -s "$STATE_DIR/themes" ]; then
+  cp -p "$STATE_DIR/combos" "$STATE_DIR/.themes.$$" 2>/dev/null && mv -f "$STATE_DIR/.themes.$$" "$STATE_DIR/themes" && mv -f "$STATE_DIR/combos" "$STATE_DIR/combos.pre-themes"
+fi
+# effects an AI invented live in the state folder, never in the plugin (bin/aigen); their ids start with "ai-"
+GDIR="$STATE_DIR/generated"
+sfile() { case "$1" in ai-*) echo "$GDIR/screen/$1.frag" ;; *) echo "$DIR/$1.frag" ;; esac; }
 is_winfx() { grep -q '^// target: window' "$1"; } # window-native shader: only offered in the Windows column
 names() {
-  for f in "$DIR"/*.frag; do
+  for f in "$DIR"/*.frag "$GDIR"/screen/*.frag; do
     [ -e "$f" ] || continue
     [ "$1" = "-w" ] || ! is_winfx "$f" || continue
     [ "$1" = "-a" ] || [ "$1" = "-w" ] || ! grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$f" || continue
@@ -44,10 +56,11 @@ current_color() { cat "$COLOR_STATE" 2>/dev/null; }
 cfile() {
   case "$1" in
     custom-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) python3 "$ROOT/bin/compose-shader" --custom "$STATE_DIR" "$1" ;;
+    ai-*) echo "$GDIR/color/$1.frag" ;;
     *) echo "$CDIR/$1.frag" ;;
   esac
 }
-color_names() { for f in "$CDIR"/*.frag; do [ -e "$f" ] && basename "$f" .frag; done; }
+color_names() { for f in "$CDIR"/*.frag "$GDIR"/color/*.frag; do [ -e "$f" ] && basename "$f" .frag; done; }
 is_animated() { grep -q 'uniform[[:space:]]\+float[[:space:]]\+time' "$1"; }
 # "animated" is a persisted on/off switch for the picker and the cycle; prints 1 or 0 (empty = never set)
 animated_flag() { cat "$STATE_DIR/animated" 2>/dev/null; }
@@ -94,7 +107,7 @@ mixstate() { if [ -n "$MIXWIN" ]; then wpath "$1"; else echo "$STATE_DIR/$1"; fi
 mix_second() { # effect|color PRIMARY_NAME: the name of the second layer when it is valid, else nothing
   local n f; n=$(cat "$(mixstate "${1}2")" 2>/dev/null)
   [ -n "$2" ] && [ -n "$n" ] && [ "$n" != "$2" ] || return 0
-  if [ "$1" = effect ]; then f="$DIR/$n.frag"; else f=$(cfile "$n"); fi
+  if [ "$1" = effect ]; then f="$(sfile "$n")"; else f=$(cfile "$n"); fi
   [ -f "$f" ] && echo "$n"
 }
 mix_spec() { local s; s=$(cat "$(mixstate "mix-$1")" 2>/dev/null); echo "${s:-stack 100}"; }
@@ -105,7 +118,7 @@ MIXSIG=""; MARGS=()
 mix_args() { # effect|color FLAG SECOND_NAME: sets MARGS (compose-shader flags) and MIXSIG (part of the built file name)
   local mode val pct file k=fx
   read -r mode val <<<"$(mix_spec "$1")"
-  if [ "$1" = effect ]; then file="$DIR/$3.frag"; else file=$(cfile "$3"); k=col; fi
+  if [ "$1" = effect ]; then file="$(sfile "$3")"; else file=$(cfile "$3"); k=col; fi
   pct=$val; [ "$mode" = blend ] && pct=$(remembered_strength "$k" "$3" "$file")
   MARGS=("$2" "$file" "$pct" "$mode" "$val"); MIXSIG="~$3.$mode$val.$pct"
 }
@@ -115,19 +128,19 @@ apply() {
   frame_apply >/dev/null 2>&1 || true
   local fx col file="" out args=() fx2 col2 sig1="" sig2="" f2="" c2=""
   fx=$(current); col=$(current_color)
-  [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
+  [ -n "$fx" ] && [ ! -f "$(sfile "$fx")" ] && fx=""
   [ -n "$col" ] && [ ! -f "$(cfile "$col")" ] && col=""
   if ! is_disabled && { [ -n "$fx" ] || [ -n "$col" ]; }; then
     local sf sc cf=""
     [ -n "$col" ] && cf=$(cfile "$col")
     sf=$(cur_strength effect); sc=$(cur_strength color)
     fx2=$(mix_second effect "$fx"); col2=$(mix_second color "$col")
-    [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
-    if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$DIR/$fx2.frag"; fi
+    [ -n "$fx" ] && args+=(--fx "$(sfile "$fx")" "$sf")
+    if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$(sfile "$fx2")"; fi
     [ -n "$col" ] && args+=(--col "$cf" "$sc")
     if [ -n "$col2" ]; then mix_args color --col2 "$col2"; args+=("${MARGS[@]}"); sig2="$MIXSIG"; c2=$(cfile "$col2"); fi
     out="$STATE_DIR/built/${fx:--}@${sf}${sig1}+${col:--}@${sc}${sig2}.frag"
-    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$DIR/$fx.frag" ] || [ -n "$col" -a "$out" -ot "$cf" ] || [ -n "$f2" -a "$out" -ot "$f2" ] || [ -n "$c2" -a "$out" -ot "$c2" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
+    if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$(sfile "$fx")" ] || [ -n "$col" -a "$out" -ot "$cf" ] || [ -n "$f2" -a "$out" -ot "$f2" ] || [ -n "$c2" -a "$out" -ot "$c2" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
       mkdir -p "$STATE_DIR/built"
       python3 "$ROOT/bin/compose-shader" "$out.tmp" "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build $fx + $col" >&2; exit 1; }
     fi
@@ -138,14 +151,14 @@ apply() {
   bend_running && return 0
   hypr_apply "$file"
 }
-# serialise state writes + apply, so a combo that sets effect and colour at once ends in the right state
+# serialise state writes + apply, so a theme that sets effect and colour at once ends in the right state
 lock() { mkdir -p "$STATE_DIR"; exec 9>"$STATE_DIR/lock"; flock 9; }
 set_shader() {
   lock
-  if [ ! -f "$DIR/$1.frag" ] && { [ -f "$CDIR/$1.frag" ] || [[ "$1" == custom-* ]]; }; then set_color "$1"; return; fi
-  [ -f "$DIR/$1.frag" ] || { echo "unknown shader: $1" >&2; exit 1; }
-  ! is_winfx "$DIR/$1.frag" || { echo "$1 is a window shader (use it in the Windows column)" >&2; exit 1; }
-  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; : > "$STATE_DIR/effect2"; echo "$(remembered_strength fx "$1" "$DIR/$1.frag")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
+  if [ ! -f "$(sfile "$1")" ] && { [ -f "$CDIR/$1.frag" ] || [ -f "$GDIR/color/$1.frag" ] || [[ "$1" == custom-* ]]; }; then set_color "$1"; return; fi
+  [ -f "$(sfile "$1")" ] || { echo "unknown shader: $1" >&2; exit 1; }
+  ! is_winfx "$(sfile "$1")" || { echo "$1 is a window shader (use it in the Windows column)" >&2; exit 1; }
+  mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; : > "$STATE_DIR/effect2"; echo "$(remembered_strength fx "$1" "$(sfile "$1")")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
 }
 set_color() {
   lock
@@ -157,7 +170,7 @@ set_color() {
 set_strength() {
   lock
   local kind="$1" val="$2" name file k cur
-  if [ "$kind" = effect ]; then name=$(current); file="$DIR/$name.frag"; k=fx; else name=$(current_color); file=$(cfile "$name"); k=col; fi
+  if [ "$kind" = effect ]; then name=$(current); file="$(sfile "$name")"; k=fx; else name=$(current_color); file=$(cfile "$name"); k=col; fi
   [ -n "$name" ] && [ -f "$file" ] || { echo "no $kind set" >&2; exit 1; }
   cur=$(cur_strength "$kind")
   case "$val" in
@@ -212,7 +225,7 @@ mix_run() {
   second=$(cat "$(mixstate "${kind}2")" 2>/dev/null)
   read -r mode val <<<"$(mix_spec "$kind")"
   mkdir -p "$STATE_DIR"
-  mixfile() { if [ "$kind" = effect ]; then echo "$DIR/$1.frag"; else cfile "$1"; fi; }
+  mixfile() { if [ "$kind" = effect ]; then echo "$(sfile "$1")"; else cfile "$1"; fi; }
   case "$cmd" in
     status) if [ -n "$(mix_second "$kind" "$prim")" ]; then echo "$second $mode $val"; else echo off; fi; return ;;
     set)
@@ -318,29 +331,30 @@ for m in json.load(sys.stdin).values():
             if k and k not in skip and k not in seen: seen.append(k)
 print("\n".join("layer:"+k for k in seen))'; }
 # "All windows" also covers shell panels and flyouts: every open layer plus the known ones (so a flyout is shaded from its first
-# frame) plus layers shaded before; not the bar, wallpaper, mouse overlay or invisible click-catchers
-ALL_LAYERS_KNOWN="aktlabs-companion-pill agent-mascots aktlabs-companion omarchy-keyboard-panel omarchy-menu omarchy-image-selector omarchy-emojis omarchy-clipboard omarchy-notifications omarchy-osd omarchy-reminders omarchy-polkit omarchy-network-qr scratchpad-frame"
+# frame) plus layers shaded before plus the user's own list (one layer namespace per line in $STATE_DIR/extra-layers, for
+# panels of other plugins); not the bar, wallpaper, mouse overlay or invisible click-catchers
+ALL_LAYERS_KNOWN="omarchy-keyboard-panel omarchy-menu omarchy-image-selector omarchy-emojis omarchy-clipboard omarchy-notifications omarchy-osd omarchy-reminders omarchy-polkit omarchy-network-qr scratchpad-frame"
 all_layers() {
-  { open_layers | sed 's/^layer://'; printf '%s\n' $ALL_LAYERS_KNOWN; grep '^layer:' "$STATE_DIR/window-applied" 2>/dev/null | sed 's/^layer://'; } |
+  { open_layers | sed 's/^layer://'; printf '%s\n' $ALL_LAYERS_KNOWN; cat "$STATE_DIR/extra-layers" 2>/dev/null; grep '^layer:' "$STATE_DIR/window-applied" 2>/dev/null | sed 's/^layer://'; } |
     grep . | grep -vE '^(omarchy-bar|omarchy-background|wallpaper-fx|omashaders-mouse|omashaders-bend-marker|omarchy-lock-preview|.*-dismiss|.*-ghost)$' | sort -u | sed 's/^/layer:/'
 }
 # the built window shader for the current window effect + colour (empty when none)
 window_file() {
   local fx col sf sc cf="" out args=()
   fx=$(wcur effect); col=$(wcur color)
-  [ -n "$fx" ] && [ ! -f "$DIR/$fx.frag" ] && fx=""
+  [ -n "$fx" ] && [ ! -f "$(sfile "$fx")" ] && fx=""
   [ -n "$col" ] && [ ! -f "$(cfile "$col")" ] && col=""
   [ -z "$fx$col" ] && return 0
   [ -n "$col" ] && cf=$(cfile "$col")
   sf=$(wcur_strength effect); sc=$(wcur_strength color)
   local MIXWIN=1 fx2 col2 sig1="" sig2="" f2="" c2=""
   fx2=$(mix_second effect "$fx"); col2=$(mix_second color "$col")
-  [ -n "$fx" ] && args+=(--fx "$DIR/$fx.frag" "$sf")
-  if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$DIR/$fx2.frag"; fi
+  [ -n "$fx" ] && args+=(--fx "$(sfile "$fx")" "$sf")
+  if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$(sfile "$fx2")"; fi
   [ -n "$col" ] && args+=(--col "$cf" "$sc")
   if [ -n "$col2" ]; then mix_args color --col2 "$col2"; args+=("${MARGS[@]}"); sig2="$MIXSIG"; c2=$(cfile "$col2"); fi
   out="$WDIR/${fx:--}@${sf}${sig1}+${col:--}@${sc}${sig2}.frag"
-  if [ ! -s "$out" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ] || { [ -n "$fx" ] && [ "$out" -ot "$DIR/$fx.frag" ]; } || { [ -n "$col" ] && [ "$out" -ot "$cf" ]; } || { [ -n "$f2" ] && [ "$out" -ot "$f2" ]; } || { [ -n "$c2" ] && [ "$out" -ot "$c2" ]; }; then
+  if [ ! -s "$out" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ] || { [ -n "$fx" ] && [ "$out" -ot "$(sfile "$fx")" ]; } || { [ -n "$col" ] && [ "$out" -ot "$cf" ]; } || { [ -n "$f2" ] && [ "$out" -ot "$f2" ]; } || { [ -n "$c2" ] && [ "$out" -ot "$c2" ]; }; then
     mkdir -p "$WDIR"
     python3 "$ROOT/bin/compose-shader" "$out.tmp" --window "${args[@]}" && mv "$out.tmp" "$out" || { echo "could not build window shader $fx + $col" >&2; return 1; }
   fi
@@ -421,7 +435,7 @@ window_set() { # effect|color NAME|off
   : > "$(wpath "${kind}2")"
   if [ "$name" = off ] || [ -z "$name" ]; then : > "$(wpath "$kind")"
   else
-    if [ "$kind" = color ]; then file=$(cfile "$name"); else file="$dir/$name.frag"; fi
+    if [ "$kind" = color ]; then file=$(cfile "$name"); else file=$(sfile "$name"); fi
     [ -f "$file" ] || { echo "unknown $kind: $name" >&2; return 1; }
     echo "$name" > "$(wpath "$kind")"
     echo "$(remembered_strength "$k" "$name" "$file")" > "$(wpath "strength-$kind")"
@@ -433,7 +447,7 @@ window_strength() { # effect|color [PERCENT|+N|-N|reset]
   cur=$(wcur_strength "$kind")
   [ -z "$val" ] && { echo "$cur"; return; }
   name=$(wcur "$kind")
-  if [ "$kind" = effect ]; then file="$DIR/$name.frag"; else file=$(cfile "$name"); fi
+  if [ "$kind" = effect ]; then file="$(sfile "$name")"; else file=$(cfile "$name"); fi
   case "$val" in
     reset) val=$(default_strength "$file") ;;
     +*|-*) val=$(( cur + val )) ;;
@@ -447,15 +461,15 @@ frame_apply() { # make Hyprland match the chosen frame (none while paused); chea
   local name=""
   is_disabled || name=$(cat "$STATE_DIR/window-frame" 2>/dev/null)
   [ -n "$name" ] || [ -f "$STATE_DIR/frame-base.json" ] || return 0
-  python3 "$ROOT/bin/frame-apply" "$STATE_DIR" "$FRDIR" "$name"
+  python3 "$ROOT/bin/frame-apply" "$STATE_DIR" "$FRDIR" "$name" "$GDIR/frame"
 }
-frame_names() { for f in "$FRDIR"/*.frame; do [ -e "$f" ] && basename "$f" .frame; done; }
+frame_names() { for f in "$FRDIR"/*.frame "$GDIR"/frame/*.frame; do [ -e "$f" ] && basename "$f" .frame; done; }
 frame_cmd() {
   case "${1:-status}" in
     status) cat "$STATE_DIR/window-frame" 2>/dev/null | grep . || echo off ;;
     list) frame_names ;;
     off) mkdir -p "$STATE_DIR"; : > "$STATE_DIR/window-frame"; frame_apply ;;
-    set) [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] && [ -f "$FRDIR/$2.frame" ] || { echo "unknown frame: $2" >&2; return 1; }
+    set) [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] && { [ -f "$FRDIR/$2.frame" ] || [ -f "$GDIR/frame/$2.frame" ]; } || { echo "unknown frame: $2" >&2; return 1; }
          mkdir -p "$STATE_DIR"; echo "$2" > "$STATE_DIR/window-frame"; frame_apply ;;
     reload|sync) [ -n "$(cat "$STATE_DIR/window-frame" 2>/dev/null)" ] || return 0
          [ "$1" = reload ] && rm -f "$STATE_DIR/frame-base.json"; frame_apply ;;
@@ -521,31 +535,32 @@ case "${1:-}" in
   listall) # NAME<TAB>static|animated<TAB>Category<TAB>description
     declare -A PN # measured cost (bin/perf-log report) appended to the description of effects that are not light
     while IFS=$'\t' read -r pk pn pr pc _; do [ "$pr" = light ] || PN["$pk:$pn"]=" [measured: $pr, +$pc% GPU]"; done < "$STATE_DIR/perf-summary.tsv" 2>/dev/null
-    for f in "$DIR"/*.frag; do
+    for f in "$DIR"/*.frag "$GDIR"/screen/*.frag; do
+      [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; is_animated "$f" && kind=animated
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       sec=screen; is_winfx "$f" && sec=winfx
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[screen:$n]}" "$sec" "$(default_strength "$f")"
     done
-    for f in "$CDIR"/*.frag; do
+    for f in "$CDIR"/*.frag "$GDIR"/color/*.frag; do
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\tstatic\t%s\t%s\tcolor\t%s\n' "$n" "${cat:-Other}" "$desc${PN[color:$n]}" "$(default_strength "$f")"
     done
-    for f in "$FRDIR"/*.frame; do # window frames (shadow, glow, border)
+    for f in "$FRDIR"/*.frame "$GDIR"/frame/*.frame; do # window frames (shadow, glow, border)
       [ -e "$f" ] || continue
       n=$(basename "$f" .frame); kind=static; grep -q '^spin=' "$f" && kind=motion
       cat=$(sed -n 's|^# category: *||p' "$f" | head -1); desc=$(sed -n 's|^# desc: *||p' "$f" | head -1)
       printf '%s\t%s\t%s\t%s\tframe\n' "$n" "$kind" "${cat:-Other}" "$desc"
     done
-    for f in "$MDIR"/*.frag; do
+    for f in "$MDIR"/*.frag "$GDIR"/mouse/*.frag; do
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; [ "$(sed -n 's|^// motion: *||p' "$f" | head -1)" = yes ] && kind=motion
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
       printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[cursor:$n]}"
     done
-    for f in "$ROOT"/wallpaper-effects/*.frag; do # wallpaper effects; the menu lists ones it does not know yet (// label:, // hint: and // category: header lines; the category is the 7th column)
+    for f in "$ROOT"/wallpaper-effects/*.frag "$GDIR"/wall/*.frag; do # wallpaper effects; the menu lists ones it does not know yet (// label:, // hint: and // category: header lines; the category is the 7th column)
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       lab=$(sed -n 's|^// label: *||p' "$f" | head -1); hint=$(sed -n 's|^// hint: *||p' "$f" | head -1)
@@ -578,9 +593,9 @@ case "${1:-}" in
     MSTATE="$STATE_DIR/mouse"
     case "${2:-status}" in
       status) cat "$MSTATE" 2>/dev/null | grep . || echo off ;;
-      list) for f in "$MDIR"/*.frag "$BDIR"/*.frag; do [ -e "$f" ] && basename "$f" .frag; done ;;
+      list) for f in "$MDIR"/*.frag "$GDIR"/mouse/*.frag "$BDIR"/*.frag; do [ -e "$f" ] && basename "$f" .frag; done ;;
       off) mkdir -p "$STATE_DIR"; : > "$MSTATE" ;;
-      set) [ -f "$MDIR/$3.frag.qsb" ] || [ -f "$BDIR/$3.frag" ] || { echo "unknown mouse effect: $3" >&2; exit 1; }
+      set) [ -f "$MDIR/$3.frag.qsb" ] || [ -f "$GDIR/mouse/$3.frag.qsb" ] || [ -f "$BDIR/$3.frag" ] || { echo "unknown mouse effect: $3" >&2; exit 1; }
            mkdir -p "$STATE_DIR"; echo "$3" > "$MSTATE"
            if is_disabled; then lock; : > "$DISABLED"; apply; fi ;;
       *) echo "usage: omashaders mouse [status|list|set NAME|off]" >&2; exit 1 ;;
@@ -594,9 +609,14 @@ case "${1:-}" in
     esac
     mkdir -p "$STATE_DIR"; echo "$val" > "$STATE_DIR/animated"
     cur=$(current)
-    if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$DIR/$cur.frag" ] && is_animated "$DIR/$cur.frag"; then effect_off; fi ;;
+    if [ "$val" = 0 ] && [ -n "$cur" ] && [ -f "$(sfile "$cur")" ] && is_animated "$(sfile "$cur")"; then effect_off; fi ;;
   gpu) gpu ;;
   perf) shift; exec python3 "$ROOT/bin/perf-log" "$@" ;;
+  wallhaven) shift; exec python3 "$ROOT/bin/wallhaven" "$@" ;;
+  theme|combo) shift; case "${1:-}" in rm|list) exec python3 "$ROOT/bin/oms-delete" "$1" theme "${@:2}" ;; jobs) exec python3 "$ROOT/bin/aijobs.py" list "${@:2}" ;; job) exec python3 "$ROOT/bin/ai-theme" job "${@:2}" ;; esac; exec python3 "$ROOT/bin/theme-code" "$@" ;; # "combo" is the old name of "theme", kept as an alias
+  element) shift; exec python3 "$ROOT/bin/oms-delete" "${1:-}" element "${@:2}" ;; # element rm KIND NAME [--yes]
+  ai) shift; exec python3 "$ROOT/bin/ai-theme" "$@" ;;
+  gif) shift; exec python3 "$ROOT/bin/gif-capture" "$@" ;;
   strength)
     case "${2:-}" in
       '') echo "effect $(cur_strength effect) color $(cur_strength color)" ;;

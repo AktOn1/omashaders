@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# update-check DIR: is the git copy of the plugin behind its origin? Prints one JSON line:
+# {"available": bool, "current": "1.2.3", "latest": "1.3.0", "changes": ["headline", ...], "recent": ["headline", ...], "dirty": bool}
+# "recent" = all entries of the local README "What's new", newest first (no network); "changes" only when behind origin.
+# Only reads (git fetch of origin HEAD into FETCH_HEAD); the update itself is `omarchy plugin update ID`.
+import json, os, re, subprocess, sys
+
+
+def git(d, *a):
+    return subprocess.run(["git", "-C", d] + list(a), capture_output=True, text=True, timeout=25,
+                          env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND="ssh -oBatchMode=yes"))
+
+
+def vkey(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v))
+
+
+def version_of(text):
+    try:
+        return str(json.loads(text).get("version", ""))
+    except Exception:
+        return ""
+
+
+def whats_new(readme, current):
+    out = []
+    sec = re.search(r"^## What's new\s*\n(.*?)(?=^## )", readme, re.S | re.M)
+    if not sec:
+        return out
+    for line in sec.group(1).splitlines():
+        m = re.match(r"- \*\*[^*]*?,\s*(\d+(?:\.\d+)+):\*\*\s*(.*)", line)
+        if not m:
+            continue
+        v, rest = m.group(1), m.group(2)
+        if current and vkey(v) <= vkey(current):
+            continue
+        head = re.match(r"\*\*(.+?)\*\*", rest)
+        text = head.group(1) if head else re.split(r"(?<=[.!?])\s", rest)[0]
+        text = re.sub(r"[*`]", "", text).strip()
+        out.append(v + ": " + (text if len(text) < 150 else text[:147] + "..."))
+    return out
+
+
+def main():
+    d = sys.argv[1] if len(sys.argv) > 1 else "."
+    res = {"available": False, "current": "", "latest": "", "changes": [], "recent": [], "dirty": False}
+    try:
+        res["recent"] = whats_new(open(os.path.join(d, "README.md"), encoding="utf-8").read(), "")[:80]
+    except Exception:
+        pass
+    if not os.path.exists(os.path.join(d, ".git")):
+        print(json.dumps(res)); return
+    res["current"] = version_of(git(d, "show", "HEAD:manifest.json").stdout)
+    if git(d, "fetch", "--quiet", "origin", "HEAD").returncode != 0:
+        print(json.dumps(res)); return
+    n = git(d, "rev-list", "--count", "HEAD..FETCH_HEAD").stdout.strip()
+    if not n.isdigit() or int(n) == 0:
+        print(json.dumps(res)); return
+    res["available"] = True
+    res["latest"] = version_of(git(d, "show", "FETCH_HEAD:manifest.json").stdout)
+    res["changes"] = whats_new(git(d, "show", "FETCH_HEAD:README.md").stdout, res["current"])[:40]
+    if not res["changes"]:
+        res["changes"] = [s for s in git(d, "log", "--format=%s", "-n", "8", "HEAD..FETCH_HEAD").stdout.splitlines() if s]
+    res["dirty"] = git(d, "status", "--porcelain", "--untracked-files=no").stdout.strip() != ""
+    print(json.dumps(res))
+
+
+try:
+    main()
+except Exception:
+    print(json.dumps({"available": False, "current": "", "latest": "", "changes": [], "recent": [], "dirty": False}))

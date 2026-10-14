@@ -1,0 +1,581 @@
+#!/usr/bin/env python3
+"""ai-theme: ask an AI to design one theme (Screen + Color + Wallpaper effect + Cursor + Windows part + frame).
+
+  ai-theme providers [--json]             the AIs installed on this machine (+ Custom command), models, the remembered choice
+  ai-theme use PROVIDER [--model M] [--custom CMD] [--mode pick|invent]
+                                          remember the choice (claude codex gemini opencode ollama custom)
+  ai-theme test [--json]                  "Test connection": a tiny real round trip with the remembered choice
+  ai-theme check [--json]                 is the chosen AI available? (nothing is sent)
+  ai-theme estimate [WORDS] [--invent|--rich] [--rounds N] [--part KEY=TEXT] [--current|--wallhaven ID|--picture FILE] [--json]
+                                          tokens (and a rough price) a run would use; nothing is sent
+  ai-theme make "a rainy neon night" [--wallhaven ID | --current] [--subtle] [--json]
+                                          PICK EXISTING: the AI chooses from the effects that exist; the answer is checked and saved as a theme
+  ai-theme make "..." --invent [--part screen=TEXT] [--part window=TEXT] ... [--keep-out DIR]
+                                          INVENT NEW: the AI may write new effects (screen, color, wallpaper, cursor, window, window_color,
+                                          frame); each one must pass the safety gate (bin/aigen.py) with your picture or it is repaired,
+                                          then replaced by the closest existing effect. Passed effects wait as "pending" (Keep / Discard)
+  ai-theme make ["..."] --rich [--rounds N] [--genre TEXT] [--surprise] [--wallhaven ID | --current | --picture FILE] [--keep-out DIR]
+                                          RICH: a Planner writes the concept and a brief per part, a Builder builds each part (gated, with the
+                                          Rich limits), a Reviewer looks at offscreen renders over your picture and weak parts are revised (N
+                                          rounds, default 2, 0 = no Reviewer). Empty words with --surprise (or no picture) = "Surprise me".
+                                          Needs an AI that can look at pictures for the Reviewer. Cost and tokens per step are printed.
+  ai-theme chat turn "make the windows red" [--invent|--rich] [--wallhaven ID | --current] [--new] [--json]
+                                          THEME AS A CHAT: the first turn builds the theme, each next turn changes it (only what you ask for).
+                                          Nothing is added to the list: it prints the theme line to apply live.
+  ai-theme chat keep [--name N] | discard | status
+                                          save the chat's theme (and keep the effects it generated) | throw it away | show the history
+  ai-theme job start "..." [the chat turn flags] | change ID "less fog" | retry ID | list | show ID | cancel ID | save ID [--name N] | discard ID | dismiss ID
+                                          THE SAME AS A BACKGROUND JOB: it keeps running when the dialog, the menu or the shell closes, the
+                                          finished theme waits as a draft (save / discard / change), a killed one shows as interrupted
+                                          (retry). Two at a time. See bin/aijobs.py.
+  ai-theme keep ID...                     keep generated effects          ai-theme discard [--theme LINE] ID...   delete generated effects (and that theme line)
+  ai-theme catalog                        print the catalog the AI is given in Pick mode (and its size)
+  ai-theme selftest                       offline checks (no AI call, no network)
+
+Which AI: the remembered choice (ai.json in the state folder), else the plugin settings (OMASHADERS_AI_PROVIDER, OMASHADERS_AI_MODEL),
+else the old free-text command OMASHADERS_AI_CMD (= Custom), else Claude Code. See bin/aiprov.py for the tested call of each.
+The AI only returns ids, numbers and (Invent) shader code for a fixed template: ids are checked against the effects that exist and the
+code against the gate; nothing it says is ever run as a command.
+"""
+import sys
+sys.dont_write_bytecode = True  # a __pycache__ in the plugin folder would make the shell reload the plugin (and close the open dialog)
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import omslib as L  # noqa: E402
+import aiprov as P  # noqa: E402
+from aitheme import *  # noqa: E402,F401,F403
+import aitheme as T  # noqa: E402
+
+
+def availability():
+    return P.availability()
+
+
+def parse_args(a):
+    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "keep_out": "", "picture": "", "words": [], "rest": []}
+    it = iter(a)
+    for x in it:
+        if x == "--json":
+            o["json"] = True
+        elif x == "--wallhaven":
+            o["wh"] = next(it, "")
+        elif x == "--current":
+            o["current"] = True
+        elif x == "--picture":
+            o["picture"] = os.path.abspath(next(it, ""))
+        elif x == "--subtle":
+            o["subtle"] = True
+        elif x == "--full":
+            o["subtle"] = False
+        elif x == "--invent":
+            o["invent"] = True
+        elif x == "--rich":
+            o["rich"] = True
+        elif x == "--surprise":
+            o["surprise"] = True
+        elif x == "--rounds":
+            try:
+                o["rounds"] = max(0, min(3, int(next(it, ""))))
+            except ValueError:
+                raise L.Bad("--rounds needs a number from 0 to 3")
+        elif x == "--genre":
+            o["genre"] = re.sub(r"[\x00-\x1f]+", " ", next(it, ""))[:80].strip()
+        elif x == "--keep-out":
+            o["keep_out"] = next(it, "")
+        elif x == "--part":
+            k, _, v = next(it, "").partition("=")
+            k = k.strip().lower().replace("-", "_")
+            if k not in ("screen", "color", "wallpaper", "cursor", "window", "window_color", "frame"):
+                raise L.Bad("--part needs one of screen color wallpaper cursor window window_color frame, like --part window=\"in the car's red\"")
+            o["parts"][k] = v
+        else:
+            o["words"].append(x)
+    o["request"] = re.sub(r"[\x00-\x1f]+", " ", " ".join(o["words"]))[:400]
+    return o
+
+
+def picture_for(o, use=True):
+    """(path, wallhaven id): the picture the theme is built for; --wallhaven makes it the wallpaper first"""
+    wh, path = o["wh"], ""
+    if o["picture"]:
+        if not os.path.isfile(o["picture"]):
+            raise L.Bad("I cannot find the picture " + o["picture"])
+        path = o["picture"]
+        m = re.match(r"wallhaven-([a-z0-9]{6})\.", os.path.basename(path))
+        wh = m.group(1) if m else ""
+    elif wh:
+        path = wallhaven_use(wh) if use else wallhaven_image(wh)
+    elif o["current"]:
+        path = current_background()
+        m = re.match(r"wallhaven-([a-z0-9]{6})\.", os.path.basename(path))
+        if m:
+            wh = m.group(1)
+        if not path:
+            raise L.Bad("I cannot find the current wallpaper")
+    return path, wh
+
+
+def cmd_make(a):
+    o = parse_args(a)
+    request = o["request"]
+    if not request.strip() and not o["wh"] and not o["current"] and not o["picture"] and not o["parts"] and not (o["rich"] and o["surprise"]):
+        raise L.Bad("Describe the theme you want, for example: a rainy neon night")
+    ch = P.choice()
+    av = P.availability(ch)
+    if not av["available"]:
+        raise L.Bad("AI needed. " + av["hint"])
+    if o["rich"]:
+        import airich
+        path, wh = picture_for(o)
+        res = airich.run(request, o["parts"], path, wh, ch, rounds=airich.DEFAULT_ROUNDS if o["rounds"] is None else o["rounds"], genre=o["genre"],
+                         surprise=o["surprise"], progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True), keep_out=o["keep_out"])
+        res.pop("rich_state", None)
+        res.pop("clean", None)
+        if o["json"]:
+            print(json.dumps(res))
+        else:
+            c = res["concept"]
+            print("%s theme #%d: %s (rich, %d of 6 parts)\nStory: %s\n%s" % ("Already had" if res["existed"] else "Saved", res["number"], res["name"], res["parts"], c["story"], res["note"]))
+            print("line: " + res["line"])
+            for m in res["new"]:
+                print("new %s: %s (%s) code %d B, file %d B, score %s, %d tries, %d revisions" % (m["title"], m["id"], m["name"], m["bytes_code"], m["bytes_file"], m["score"], m["tries"], m["revisions"]))
+            for f in res["fell_back"]:
+                print("replaced %s with %s: %s" % (f["title"], f["used"] or "nothing", f["reason"][:100]))
+            for n in res["notes"]:
+                print("note: " + n)
+            if res["sheet"]:
+                print("sheet: " + res["sheet"])
+            for st in res["steps"]:
+                print("  step %-22s in %6s out %6s cost %s" % (st["step"], st["tokens_in"], st["tokens_out"], st["cost_usd"]))
+            u = res["usage"]
+            print("tokens in/out: %s/%s  cost: %s  calls: %s" % (u["tokens_in"], u["tokens_out"], u["cost_usd"], u["calls"]))
+        return
+    if o["invent"]:
+        import aiinvent
+        path, wh = picture_for(o)
+        res = aiinvent.run(request, o["parts"], path, wh, ch, progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True), keep_out=o["keep_out"])
+        if o["json"]:
+            print(json.dumps(res))
+        else:
+            print("%s theme #%d: %s (invent, %d of 6 parts)\nIdea: %s\n%s" % ("Already had" if res["existed"] else "Saved", res["number"], res["name"], res["parts"], res["idea"], res["note"]))
+            print("line: " + res["line"])
+            for m in res["new"]:
+                print("new %s: %s (%s, %d tries)" % (m["title"], m["id"], m["name"], m["tries"]))
+            for n in res["notes"]:
+                print("note: " + n)
+            u = res["usage"]
+            print("tokens in/out: %s/%s  cost: %s  calls: %s" % (u["tokens_in"], u["tokens_out"], u["cost_usd"], u["calls"]))
+        return
+    cat = L.catalog()
+    path, wh = picture_for(o)
+    jpg, facts = (picture_facts(path) if path else (None, ""))
+    tags = wallhaven_tags(wh) if wh else []
+    mode = "subtle" if o["subtle"] else "full"
+    img_ok = bool(jpg) and (P.info_of(ch["provider"]).get("image") or ch["provider"] == "custom")
+    prompt = user_prompt(cat, request, facts, tags, bool(img_ok), mode)
+    text, usage = P.call(ch, guide_text(), prompt, jpg if img_ok else None)
+    answer = extract_json(text)
+    clean, notes = finish(answer, cat, wh, mode)
+    line, num, existed = L.save_theme(clean)
+    note = T.sentence(answer.get("note"), 300)
+    idea = T.sentence(answer.get("idea"), 300)
+    parts = sum(1 for k in ("s", "c", "w", "m", "wr") if clean[k]) + (1 if (clean["wf"] or clean["wc"]) else 0)
+    res = {"ok": True, "name": clean["n"], "line": line, "number": num, "existed": existed, "notes": notes, "note": note, "idea": idea,
+           "mode": mode, "parts": parts, "usage": usage, "wh": wh, "provider": ch["provider"], "model": ch.get("model", "")}
+    if o["json"]:
+        print(json.dumps(res))
+    else:
+        print("%s theme #%d: %s (%s theme, %d of 6 parts)\nIdea: %s\n%s" % ("Already had" if existed else "Saved", num, clean["n"], mode, parts, idea, note))
+        print("line: " + line)
+        for n in notes:
+            print("note: " + n)
+        if usage:
+            print("tokens in/out: %s/%s  cost: %s" % (usage.get("tokens_in"), usage.get("tokens_out"), usage.get("cost_usd")))
+
+
+def cmd_check(a):
+    av = availability()
+    ch = P.choice()
+    av = dict(av, provider=ch["provider"], model=ch["model"], strong=P.info_of(ch["provider"]).get("strong"))
+    if "--json" in a:
+        print(json.dumps(av))
+    else:
+        print(("available: " + av["backend"]) if av["available"] else "AI needed: " + av["hint"])
+    return 0 if av["available"] else 1
+
+
+def cmd_providers(a):
+    ch = P.choice()
+    rows = []
+    for p in P.providers():
+        rows.append({"id": p["id"], "label": p["label"], "strong": p["strong"], "image": p["image"], "parallel": p.get("parallel", False), "exe": p.get("exe_path", ""),
+                     "models": [{"id": m, "label": l} for m, l in p["models"]], "default_model": p["default_model"]})
+    import aigen
+    miss = aigen.render_ready()
+    out = {"choice": ch, "providers": rows, "available": P.availability(ch)["available"], "invent_ready": miss == "", "invent_hint": miss}
+    if "--json" in a:
+        print(json.dumps(out))
+    else:
+        for r in rows:
+            print("%s%-9s %s%s" % ("* " if r["id"] == ch["provider"] else "  ", r["id"], r["label"], ("  models: " + ", ".join(m["id"] or "default" for m in r["models"])) if r["models"] else ""))
+    return 0
+
+
+def cmd_use(a):
+    it = iter(a)
+    prov, kw = None, {}
+    for x in it:
+        if x == "--model":
+            kw["model"] = P.clean_model(next(it, ""))
+        elif x == "--custom":
+            kw["custom"] = next(it, "")
+        elif x == "--mode":
+            m = next(it, "")
+            if m not in ("pick", "invent", "rich"):
+                raise L.Bad("--mode is pick, invent or rich")
+            kw["mode"] = m
+        elif x != "--json":
+            prov = x
+    if prov is not None:
+        if prov not in {p["id"] for p in P.PROVIDERS} | {"custom"}:
+            raise L.Bad("Unknown AI “%s”" % prov)
+        kw["provider"] = prov
+        if "model" not in kw:
+            kw["model"] = P.info_of(prov)["default_model"]
+    d = P.save_choice(**kw)
+    ch = P.choice()
+    if "--json" in a:
+        print(json.dumps({"ok": True, "choice": ch}))
+    else:
+        print("AI: %s %s" % (ch["provider"], ch["model"]))
+    return 0
+
+
+def cmd_test(a):
+    r = P.test()
+    if "--json" in a:
+        print(json.dumps(r))
+    else:
+        print(("works (%s s)" % r.get("seconds")) if r["ok"] else "failed: " + r["error"])
+    return 0 if r["ok"] else 1
+
+
+def cmd_estimate(a):
+    o = parse_args(a)
+    import aiinvent
+    path = ""
+    if o["current"] or o["wh"] or o["picture"]:
+        path, _ = picture_for(o, use=False)
+    ch = P.choice()
+    cat = L.catalog()
+    if o["rich"]:
+        import airich
+        e = airich.estimate(o["request"], path, ch, cat, airich.DEFAULT_ROUNDS if o["rounds"] is None else o["rounds"], o["genre"])
+        e["quick"] = aiinvent.estimate(o["request"], o["parts"], path, ch, cat)
+        if "--json" in a:
+            print(json.dumps(e))
+        else:
+            print(e["summary"] + (" (" + e["note"] + ")" if e["note"] else ""))
+        return 0
+    e = aiinvent.estimate(o["request"], o["parts"], path, ch, cat)
+    if "--json" in a:
+        print(json.dumps(e))
+    else:
+        print("invent: about %d tokens in, %d out%s (pick existing: about %d in)" % (e["tokens_in"], e["tokens_out"], (", about $%.3f" % e["cost_usd"]) if e["cost_usd"] else "", e["pick_tokens_in"]))
+    return 0
+
+
+def cmd_keep(a, drop=False):
+    a = list(a)
+    line = ""
+    if drop and "--theme" in a:
+        i = a.index("--theme")
+        line = a[i + 1] if i + 1 < len(a) else ""
+        del a[i:i + 2]
+    ids = [x for x in a if x != "--json"]
+    if not ids and not line:
+        raise L.Bad("Name the generated effect(s)")
+    import aigen
+    used = 0
+    if line:
+        have = L.read_themes()
+        if line in have:
+            with open(L.THEMES, "w") as f:
+                f.write("\n".join(l for l in have if l != line) + ("\n" if len(have) > 1 else ""))
+    for i in ids:
+        if drop:
+            used += aigen.delete(i)
+        else:
+            aigen.keep(i)
+    if "--json" in a:
+        print(json.dumps({"ok": True, "ids": ids, "in_themes": used}))
+    return 0
+
+
+def cmd_chat(a):
+    import aichat
+    if not a or a[0] not in ("turn", "keep", "discard", "status"):
+        raise L.Bad("chat needs turn, keep, discard or status")
+    sub, rest = a[0], list(a[1:])
+    if sub == "turn":
+        o = parse_args(rest)
+        res = aichat.turn(o["request"], invent=o["invent"], wh=o["wh"], current=o["current"], new="--new" in rest, subtle=o["subtle"], parts=o["parts"],
+                          rich=o["rich"], rounds=o["rounds"], genre=o["genre"], surprise=o["surprise"],
+                          progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True))
+    elif sub == "keep":
+        name = rest[rest.index("--name") + 1] if "--name" in rest and rest.index("--name") + 1 < len(rest) else ""
+        res = aichat.keep(name)
+    elif sub == "discard":
+        res = aichat.discard()
+    else:
+        res = aichat.status()
+    if "--json" in rest:
+        print(json.dumps(res))
+    elif sub == "turn":
+        print("%s (turn %d)\n%s" % (res["name"], res["turn"], res["reply"]))
+        for c in res["changes"]:
+            print("changed: " + c)
+        for n in res["notes"]:
+            print("note: " + n)
+        print("line: " + res["line"])
+    else:
+        print(json.dumps(res, indent=1))
+    return 0
+
+
+def cmd_job(a):
+    """background jobs (bin/aijobs.py); start / change / retry need the argument parser here, the rest lives in aijobs"""
+    import aijobs
+    if not a or a[0] not in ("start", "change", "retry", "list", "show", "cancel", "save", "discard", "dismiss", "form", "_run"):
+        raise L.Bad("job needs start, change, retry, list, show, cancel, save, discard, dismiss or form")
+    sub, rest = a[0], list(a[1:])
+    if sub not in ("start", "change"):
+        return aijobs.main(a)
+    form, est = {}, ""
+    for flag in ("--form", "--est"):
+        if flag in rest:
+            i = rest.index(flag)
+            val = rest[i + 1] if i + 1 < len(rest) else ""
+            del rest[i:i + 2]
+            if flag == "--form":
+                try:
+                    form = json.loads(val or "{}")
+                except ValueError:
+                    raise L.Bad("--form needs a JSON object")
+            else:
+                est = val[:200]
+    js = "--json" in rest
+    rest = [x for x in rest if x != "--json"]
+    if sub == "change":
+        if len(rest) < 2:
+            raise L.Bad('change needs a job id and what to change: job change ID "less fog"')
+        res = aijobs.change(rest[0], " ".join(rest[1:]), est)
+    else:
+        o = parse_args(rest)
+        if not o["request"].strip() and not o["wh"] and not o["current"] and not o["picture"] and not o["parts"] and not (o["rich"] and o["surprise"]):
+            raise L.Bad("Describe the theme you want, for example: a rainy neon night")
+        av = P.availability(P.choice())
+        if not av["available"]:
+            raise L.Bad("AI needed. " + av["hint"])
+        res = aijobs.start(o["request"], "rich" if o["rich"] else ("invent" if o["invent"] else "pick"), [x for x in rest if x != "--new"], form, est)
+    print(json.dumps({"ok": True, "job": res}) if js else aijobs.line(res))
+    return 0
+
+
+def cmd_catalog(a):
+    cat = L.catalog()
+    t = catalog_text(cat)
+    g = guide_text()
+    if "--quiet" not in a:
+        print(t)
+    print("# catalog %d chars (~%d tokens), guide %d chars (~%d tokens)" % (len(t), len(t) // 4, len(g), len(g) // 4), file=sys.stderr)
+
+
+# ------------------------------------------------------------------ self test
+def cmd_selftest(a):
+    bad = []
+
+    def check(ok, what):
+        print(("ok: " if ok else "FAIL: ") + what)
+        if not ok:
+            bad.append(what)
+
+    ver = L.version()
+    check(guide_version() == ver, "theme guide version %r equals manifest version %r" % (guide_version(), ver))
+    cat = L.catalog()
+    sizes = {k: len(v) for k, v in cat.items()}
+    check(all(n >= 10 for n in sizes.values()), "catalog built: %s" % sizes)
+    for sec, slot in (("screen", "screen"), ("color", "color"), ("wall", "wallpaper"), ("mouse", "cursor"), ("frame", "frame")):
+        check(bool(cat[sec]), "catalog has %s ids" % slot)
+    # every shipped theme only uses ids that exist
+    broken = 0
+    for line in open(os.path.join(L.ROOT, "starter-themes"), encoding="utf-8").read().split("\n"):
+        if not line.strip():
+            continue
+        notes = []
+        L.validate(L.parse_line(line), cat, notes, fuzzy=False)
+        if notes:
+            broken += 1
+            print("   starter theme with unknown ids: %s -> %s" % (line, notes))
+    check(broken == 0, "all starter themes only use ids that exist (%d broken)" % broken)
+    # validation drops unknown ids, repairs typos, clamps numbers, cleans names
+    notes = []
+    first = {k: next(iter(cat[k])) for k in ("screen", "color", "wall", "mouse", "frame")}
+    typo = first["wall"][:-1] + ("x" if first["wall"][-1] != "x" else "y")
+    c = L.validate({"n": "Bad|Name\n'x'", "s": "rm -rf /", "c": "custom-FF8800", "w": first["wall"], "m": "no-such-cursor-zzz", "wr": first["frame"],
+                    "o": {"fx": 500, "wspeed": "abc", "wh": "../../etc"}}, cat, notes)
+    check(c["s"] == "" and c["m"] == "" and c["c"] == "custom-ff8800" and c["w"] == first["wall"] and c["wr"] == first["frame"], "unknown ids dropped, custom colour normalised")
+    check("|" not in c["n"] and "\n" not in c["n"] and c["o"] == {"fx": 100}, "name cleaned, numbers clamped, bad values dropped: %s %s" % (c["n"], c["o"]))
+    # share code round trip + strict decoding
+    code = L.encode_code({"n": "Round", "s": first["screen"], "c": first["color"], "w": first["wall"], "m": first["mouse"], "o": {"fx": 40, "wh": "abc123"}})
+    d = L.decode_code(code)
+    check(d["s"] == first["screen"] and d["o"] == {"fx": 40, "wh": "abc123"} and code.startswith("OMS1:"), "share code round trip")
+    for name, bad_code in (("wrong prefix", "XYZ:abc"), ("garbage", "OMS1:!!!"), ("not zlib", "OMS1:AAAA"), ("too long", "OMS1:" + "A" * 7000)):
+        try:
+            L.decode_code(bad_code)
+            check(False, "bad code rejected: " + name)
+        except L.Bad:
+            check(True, "bad code rejected: " + name)
+    import zlib
+    bomb = "OMS1:" + L.b64e(zlib.compress(b"{" + b" " * 5000000))
+    try:
+        L.decode_code(bomb)
+        check(False, "decompression bomb rejected")
+    except L.Bad:
+        check(True, "decompression bomb rejected")
+    # reply parsing
+    reply = 'Sure!\n```json\n{"name":"Neon Test","screen":"%s","color":"%s","wallpaper":"nope-zzz","cursor":"%s","strength":{"screen":45,"wallpaper":300}}\n```' % (first["screen"], first["color"], first["mouse"])
+    clean, notes = finish(extract_json(reply), cat, "", "subtle")
+    check(clean["w"] == "" and clean["s"] == first["screen"] and clean["o"].get("fx") == 45 and "wall" not in clean["o"], "AI reply with prose + fence parsed, unknown wallpaper dropped")
+    light = sorted(L.overlay_ids() & set(cat["wall"]))
+    scenes = sorted(set(cat["wall"]) - set(light))
+    check(len(light) >= 8 and len(scenes) >= 50, "wallpaper effects split into light overlays (%d) and scenes (%d)" % (len(light), len(scenes)))
+    check("snow" not in catalog_text(cat).split("## Cursor")[0].split("## Wallpaper")[1] or "snow" in light, "the AI catalog lists only light overlays as wallpaper")
+    c1, n1 = finish({"name": "Scene Test", "screen": first["screen"], "wallpaper": scenes[0], "strength": {"wallpaper": 90}}, cat, "", "subtle")
+    check(c1["w"] == "" and "wall" not in c1["o"] and any("repaints" in n for n in n1), "a scene wallpaper effect is dropped (the picture stays the wallpaper)")
+    c2, _ = finish({"name": "Overlay Test", "screen": first["screen"], "wallpaper": light[0], "strength": {"wallpaper": 100}}, cat, "", "subtle")
+    check(c2["w"] == light[0] and c2["o"].get("wall") == WALL_MAX, "subtle: an overlay is kept and its strength capped at %d" % WALL_MAX)
+    c3, _ = finish({"name": "Overlay Default", "screen": first["screen"], "wallpaper": light[0]}, cat, "", "subtle")
+    check(c3["o"].get("wall") == WALL_DEFAULT, "subtle: an overlay without strength starts at %d" % WALL_DEFAULT)
+    # full mode: timid strengths are raised so the theme is visible, delicate effects and the cap are respected
+    plain = [k for k, e in cat["screen"].items() if e["kind"] == "static" and e["start"].isdigit() and FLOOR_ONLY_ABOVE_START <= int(e["start"]) < FULL_FLOOR["fx"]]
+    delicate = [k for k, e in cat["screen"].items() if e["start"].isdigit() and int(e["start"]) < FLOOR_ONLY_ABOVE_START]
+    grade = next((k for k, e in cat["color"].items() if e["start"].isdigit() and FLOOR_ONLY_ABOVE_START <= int(e["start"]) < FULL_FLOOR["col"]), first["color"])
+    f1, _ = finish({"name": "Full Timid", "screen": plain[0] if plain else first["screen"], "color": grade, "wallpaper": light[0], "cursor": first["mouse"],
+                    "strength": {"screen": 25, "color": 30, "wallpaper": 20, "cursor": 10}}, cat, "", "full")
+    check(f1["o"].get("fx", 100) >= FULL_FLOOR["fx"] and f1["o"].get("col", 100) >= FULL_FLOOR["col"] and f1["o"]["wall"] == FULL_FLOOR["wall"] and f1["o"]["cur"] == FULL_FLOOR["cur"],
+          "full: timid strengths are raised to the floor %s" % f1["o"])
+    f2, _ = finish({"name": "Full Loud", "screen": first["screen"], "wallpaper": light[0], "cursor": first["mouse"], "strength": {"wallpaper": 100, "cursor": 100}}, cat, "", "full")
+    check(f2["o"]["wall"] == FULL_WALL_MAX and f2["o"]["cur"] == 100, "full: an overlay may go up to %d" % FULL_WALL_MAX)
+    f3, _ = finish({"name": "Full Default", "screen": first["screen"], "wallpaper": light[0], "cursor": first["mouse"]}, cat, "", "full")
+    check(f3["o"]["wall"] == FULL_WALL_DEFAULT and f3["o"]["cur"] == FULL_CUR_DEFAULT, "full: overlay and cursor start at %d and %d" % (FULL_WALL_DEFAULT, FULL_CUR_DEFAULT))
+    if delicate:
+        f4, _ = finish({"name": "Full Delicate", "screen": delicate[0], "strength": {"screen": 20}}, cat, "", "full")
+        check(f4["o"].get("fx") == 20, "full: a delicate effect (%s, starts at %s) is not raised" % (delicate[0], cat["screen"][delicate[0]]["start"]))
+    f5, n5 = finish({"name": "Full Scene", "screen": first["screen"], "wallpaper": scenes[0], "strength": {"wallpaper": 90}}, cat, "", "full")
+    check(f5["w"] == "" and "wall" not in f5["o"], "full: a scene wallpaper effect is still dropped")
+    # the guide: story-to-overlay ids, the example answer and every overlay id it names exist; every overlay is reachable by a story line
+    g = guide_text()
+    story = g.split("## Read the picture's story", 1)[1].split("\n## ", 1)[0] if "## Read the picture's story" in g else ""
+    check(bool(story), "guide has the 'Read the picture's story' section")
+    allids = set().union(*[set(v) for v in cat.values()])
+    named = set(re.findall(r"`([a-z][a-z0-9-]+)`", story))
+    missing = sorted(i for i in named if i not in allids and not i.startswith("custom") and i not in ("idea", "screen", "color", "wallpaper", "cursor", "window", "frame"))
+    check(not missing, "every id named in the story section exists%s" % ((": missing " + ", ".join(missing)) if missing else ""))
+    shaped = [k for k in L.overlay_ids() & set(cat["wall"]) if cat["wall"][k]["cat"] in ("Speed and motion", "Sun and sky", "Night and water")]
+    check(all(("`%s`" % k) in story for k in shaped), "every new overlay (%d) appears in the story section%s" % (len(shaped), "".join(" " + k for k in shaped if ("`%s`" % k) not in story)))
+    ex = re.search(r"```\n(\{.*?\})\n```", g.split("## Answer in exactly this shape", 1)[1], re.S)
+    try:
+        exd = json.loads(ex.group(1))
+        ec, en = finish(exd, cat, "", "full")
+        check(not en and exd.get("idea") and ec["w"] and ec["s"] and ec["c"] and ec["m"] and ec["wr"], "the guide's example answer is valid (all ids exist, no notes) %s" % en)
+    except Exception as e:
+        check(False, "the guide's example answer is valid JSON with valid ids (%s)" % e)
+    # end to end with a fake backend and a scratch state folder
+    tmp = tempfile.mkdtemp(prefix="omashaders-selftest-")
+    try:
+        fake = os.path.join(tmp, "fake-ai")
+        with open(fake, "w") as f:
+            f.write("#!/bin/sh\ncat >/dev/null\necho '{\"name\":\"Fake Night\",\"screen\":\"%s\",\"color\":\"%s\",\"wallpaper\":\"%s\",\"cursor\":\"\",\"window\":\"\",\"window_color\":\"\",\"frame\":\"%s\",\"strength\":{\"wallpaper\":60},\"idea\":\"a test idea\",\"note\":\"fine\"}'\n"
+                    % (first["screen"], first["color"], light[0], first["frame"]))
+        os.chmod(fake, 0o755)
+        env = dict(os.environ, OMASHADERS_STATE_DIR=tmp, OMASHADERS_AI_CMD=fake)
+        r = subprocess.run([sys.executable, os.path.realpath(__file__), "make", "a test", "--json"], capture_output=True, text=True, env=env)
+        try:
+            res = json.loads(r.stdout)
+        except ValueError:
+            res = {}
+        check(r.returncode == 0 and res.get("ok") and res.get("name") == "Fake Night" and "wall=70" in res.get("line", "") and res.get("mode") == "full" and res.get("idea") == "a test idea", "fake AI end to end (full mode raises wall 60 to 70): %s %s" % (r.stdout.strip()[:160], r.stderr.strip()[:160]))
+        saved = open(os.path.join(tmp, "themes")).read() if os.path.exists(os.path.join(tmp, "themes")) else ""
+        check("Fake Night" in saved, "the theme was saved in the scratch state folder")
+        env2 = dict(env, OMASHADERS_AI_CMD=os.path.join(tmp, "missing-cmd"))
+        r2 = subprocess.run([sys.executable, os.path.realpath(__file__), "make", "a test", "--json"], capture_output=True, text=True, env=env2)
+        check(r2.returncode == 1 and "AI needed" in r2.stdout, "missing AI command gives the 'AI needed' message and no crash")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    r = subprocess.run([sys.executable, os.path.join(L.HERE, "aiinvent_selftest.py")], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip()[-600:])
+    check(r.returncode == 0, "provider picker and Invent flow (stub AIs, scratch state)")
+    r = subprocess.run([sys.executable, os.path.join(L.HERE, "airich_selftest.py")], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip()[-600:])
+    check(r.returncode == 0, "Rich flow: Planner, Builders, Reviewer, fallback, one-part follow-ups (stub AIs, scratch state)")
+    r = subprocess.run([sys.executable, os.path.join(L.HERE, "aijobs_selftest.py")], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip()[-600:])
+    check(r.returncode == 0, "background jobs: survive the starter, draft, interrupted + retry, explicit cancel, cap of two (fake AI, scratch state)")
+    t = catalog_text(cat)
+    print("info: catalog ~%d tokens, guide ~%d tokens" % (len(t) // 4, len(guide_text()) // 4))
+    print("selftest: %s" % ("PASS" if not bad else "FAIL (%d)" % len(bad)))
+    return 0 if not bad else 1
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    try:
+        if a[0] == "check":
+            return cmd_check(a[1:])
+        if a[0] == "providers":
+            return cmd_providers(a[1:])
+        if a[0] == "use":
+            return cmd_use(a[1:])
+        if a[0] == "test":
+            return cmd_test(a[1:])
+        if a[0] == "estimate":
+            return cmd_estimate(a[1:])
+        if a[0] == "keep":
+            return cmd_keep(a[1:])
+        if a[0] in ("discard", "delete"):
+            return cmd_keep(a[1:], True)
+        if a[0] == "chat":
+            return cmd_chat(a[1:])
+        if a[0] == "job":
+            return cmd_job(a[1:])
+        if a[0] == "make":
+            cmd_make(a[1:])
+        elif a[0] == "catalog":
+            cmd_catalog(a[1:])
+        elif a[0] == "selftest":
+            return cmd_selftest(a[1:])
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+    except L.Bad as e:
+        if "--json" in a:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print("ai-theme: %s" % e, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

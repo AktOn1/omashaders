@@ -76,12 +76,19 @@ def monitors():
     return out
 
 
+def layer_path(kind, name):
+    """shaders/ or colors/ file of an effect (kind effect|color); ids starting with ai- live in the state folder (bin/aigen)"""
+    if name.startswith("ai-"):
+        return os.path.join(STATE, "generated", "screen" if kind == "effect" else "color", name + ".frag")
+    return os.path.join(ROOT, "shaders" if kind == "effect" else "colors", name + ".frag")
+
+
 def second_layer(kind, primary):
     """(path, percent, mode, mix) of the second effect/colour mixed into the first one (bin/omashaders mix ...), or None."""
     name = read(kind + "2")
     if not primary or not name or name == primary:
         return None
-    path = os.path.join(ROOT, "shaders" if kind == "effect" else "colors", name + ".frag")
+    path = layer_path(kind, name)
     if kind == "color" and cs.CUSTOM_RE.match(name):
         path = cs.custom_file(STATE, name)
     if not os.path.isfile(path):
@@ -113,8 +120,8 @@ class Template:
         if not name or not os.path.isfile(cur):
             return False
         fx, col = read("current"), read("color")
-        fxp = os.path.join(ROOT, "shaders", fx + ".frag")
-        colp = os.path.join(ROOT, "colors", col + ".frag")
+        fxp = layer_path("effect", fx)
+        colp = layer_path("color", col)
         if cs.CUSTOM_RE.match(col):
             colp = cs.custom_file(STATE, col)
         if not os.path.isfile(fxp):

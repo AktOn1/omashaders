@@ -67,7 +67,7 @@ vec4 fxMain(vec2 mpx) {
   vec2 toFire = vec2(fp.x, fp.y + 0.10);
   float lit = exp(-length(toFire * vec2(0.9, 1.15)) * 1.9) * flick;
   vec3 wcol = wall(uv);
-  vec3 col = wcol * vec3(0.30, 0.26, 0.26);
+  vec3 col = wcol * vec3(0.58, 0.50, 0.47);   // the picture stays readable, a little dimmer
   col += wcol * vec3(1.15, 0.62, 0.30) * lit * 1.1;
   col += vec3(1.0, 0.35, 0.08) * 0.10 * lit;
 
@@ -75,25 +75,25 @@ vec4 fxMain(vec2 mpx) {
   float n1 = fbm(vec2(q.x * 3.6, q.y * 2.4 - time * 1.35));
   float n2 = fbm(vec2(q.x * 7.5 + 3.0, q.y * 4.6 - time * 2.3));
   float width = exp(-q.x * q.x / 0.075);
-  float reach = 0.52 * (0.2 + 0.8 * width);
+  float reach = 0.44 * (0.2 + 0.8 * width);
   float body = 1.0 - q.y / reach;
   float fl = body + (n1 - 0.5) * 0.95 + (n2 - 0.5) * 0.45 - 0.12;
   fl *= width * 0.9 + 0.35;
   float flame = smoothstep(0.0, 0.45, fl);
   float coreHeat = clamp(fl * 1.05, 0.0, 1.2);
   vec3 fcol = fireRamp(coreHeat);
-  col = mix(col, fcol * 1.15 + col * 0.3, flame * smoothstep(0.0, 0.04, fl) * 0.95);
+  col = mix(col, fcol * 1.15 + col * 0.3, flame * smoothstep(0.0, 0.04, fl) * 0.62);   // light on the picture, not a solid shape
   col += fcol * 0.35 * smoothstep(-0.3, 0.3, fl) * width;
 
   // logs and coals
   float l1 = capsule(vec2(fp.x, fp.y), vec2(-0.30, 0.030), vec2(0.27, 0.060), 0.026);
   float l2 = capsule(vec2(fp.x, fp.y), vec2(-0.26, 0.062), vec2(0.30, 0.026), 0.024);
   float logD = min(l1, l2);
-  float logMask = smoothstep(0.003, -0.003, logD);
+  float logMask = smoothstep(0.014, -0.010, logD);
   float grain = 0.5 + 0.5 * noise(vec2(fp.x * 90.0, fp.y * 14.0));
   vec3 logCol = vec3(0.07, 0.035, 0.02) * (0.6 + 0.8 * grain);
   logCol += vec3(1.0, 0.40, 0.08) * 0.35 * exp(-max(logD, 0.0) * 40.0) * flick * (0.4 + 0.6 * n2);
-  col = mix(col, logCol, logMask);
+  col = mix(col, col * 0.35 + logCol * 0.5, logMask * 0.45);   // logs are a soft shadow, not a black bar
   float coalN = noise(vec2(fp.x * 38.0, fp.y * 38.0 + 3.0)) * noise(vec2(fp.x * 13.0 + time * 0.3, fp.y * 20.0));
   float coalZone = smoothstep(0.075, 0.0, fp.y) * exp(-fp.x * fp.x / 0.12);
   float pulse = 0.65 + 0.35 * sin(time * 1.7 + coalN * 25.0);
