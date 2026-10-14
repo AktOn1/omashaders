@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""compose-shader OUT.frag [--window] [--fx FILE.frag PERCENT [--fx2 FILE.frag PERCENT stack|blend MIX]] [--col FILE.frag PERCENT [--col2 FILE.frag PERCENT stack|blend MIX]] [--cur FILE.frag]
+"""compose-shader OUT.frag [--window] [--fx FILE.frag PERCENT [--fx2 FILE.frag PERCENT stack|blend MIX]] [--col FILE.frag PERCENT [--col2 FILE.frag PERCENT stack|blend MIX]] [--cur FILE.frag] [--skip ID,ID]
 
 --fx2/--col2 mix a second effect (colour grade) into the first one. stack: the second runs on the first one's result (its PERCENT
 is how much of it is applied); blend: both run on the original picture and MIX (0-100) is the share of the second in the result.
+
+--skip lists Hyprland monitor ids (the wl_output uniform) that get the plain picture: "pause while fullscreen" for just those monitors.
 
 Build the one shader Hyprland runs: the effect first, then the colour grade on the effect's result.
 Each layer has a strength (0-100). --cur adds a cursor-bend layer (cursor-shaders/; its strength 0-100 blends the bent screen with the plain one): it defines `vec4 bend(vec2 uv)`
@@ -138,7 +140,7 @@ def _share(v):
     return max(0.0, min(100.0, float(v))) / 100.0
 
 
-def compose(fx=None, col=None, cur=None, window=False, fx2=None, col2=None):
+def compose(fx=None, col=None, cur=None, window=False, fx2=None, col2=None, skip=None):
     """fx/col/cur are (path, percent) tuples; returns the shader text. window=True builds a per-window shader for
     HyprWindowShade (GLSL ES 3.20, premultiplied alpha taken from the window, so transparent margins stay transparent).
     fx2/col2 are (path, percent, mode, mix) second layers (see the module doc); they need fx/col."""
@@ -169,6 +171,9 @@ def compose(fx=None, col=None, cur=None, window=False, fx2=None, col2=None):
                 out.append("uniform %s %s;" % (t, u))
     out.append("layout(location = 0) out vec4 fragColor;")
     body = ["void main() {"]
+    if skip and not window:
+        out.append("uniform int wl_output;")
+        body.append("    if (%s) { fragColor = texture(tex, v_texcoord); return; }" % " || ".join("wl_output == %d" % i for i in skip))
     first = "texture(tex, v_texcoord)"
     if cur:
         _, cur_text, _ = layer(cur[0], cur[1], "bd_")
@@ -219,6 +224,11 @@ def compose(fx=None, col=None, cur=None, window=False, fx2=None, col2=None):
     return "\n".join(out + body) + "\n"
 
 
+def parse_skip(text):
+    """'0,2' -> [0, 2]; anything that is not a comma list of numbers is ignored"""
+    return [int(t) for t in text.split(",") if t.isdigit()] or None
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -227,7 +237,7 @@ def main():
     if out_path == "--custom":  # --custom STATE_DIR NAME: print the path of the generated custom colour shader
         print(custom_file(args[0], args[1]))
         return
-    fx = col = cur = fx2 = col2 = None
+    fx = col = cur = fx2 = col2 = skip = None
     window = False
     while args:
         flag = args.pop(0)
@@ -247,11 +257,13 @@ def main():
                 col2 = spec
         elif flag == "--cur":
             cur = (args.pop(0), 100)
+        elif flag == "--skip":
+            skip = parse_skip(args.pop(0))
         else:
             sys.exit(__doc__)
     if not fx and not col and not cur:
         sys.exit(__doc__)
-    open(out_path, "w").write(compose(fx, col, cur, window, fx2, col2))
+    open(out_path, "w").write(compose(fx, col, cur, window, fx2, col2, skip))
 
 
 if __name__ == "__main__":

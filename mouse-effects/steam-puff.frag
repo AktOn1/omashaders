@@ -1,6 +1,6 @@
 #version 440
 // category: Trail
-// desc: Steam puff: small round puffs of white steam keep rising off the pointer, billowing and thinning as they go. When the pointer moves it leaves a drifting trail of older puffs behind. A tiny brass glint marks the pointer itself
+// desc: Steam puff: round puffs of white steam are left along the path, then rise, billow and thin out behind the pointer for about a second; a tiny brass glint marks the pointer itself
 // motion: yes
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -14,16 +14,17 @@ layout(std140, binding = 0) uniform buf {
   vec4 h1;
   vec4 h2;
   vec4 h3;
+  vec4 h4;
+  vec4 h5;
+  vec4 h6;
+  vec4 h7;
+  vec4 hs;
 };
 
-float sp_hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-float sp_h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float sp_noise(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(sp_h2(i), sp_h2(i + vec2(1.0, 0.0)), f.x), mix(sp_h2(i + vec2(0.0, 1.0)), sp_h2(i + vec2(1.0, 1.0)), f.x), f.y);
-}
-vec2 sp_P(int i) {
+// Pointer history: P(0) is the pointer, P(1) the newest sample, P(16) the oldest (about one second back).
+// SID(i): stable id of the sample in slot i (it keeps its id as it moves to the next slot), use it to seed hashes.
+// AGE(i): 0 at the pointer, 1 when the sample is dropped; it grows continuously, so fade to 0 as AGE -> 1.
+vec2 P(int i) {
   if (i == 0) return mouse;
   if (i == 1) return h0.xy;
   if (i == 2) return h0.zw;
@@ -32,7 +33,25 @@ vec2 sp_P(int i) {
   if (i == 5) return h2.xy;
   if (i == 6) return h2.zw;
   if (i == 7) return h3.xy;
-  return h3.zw;
+  if (i == 8) return h3.zw;
+  if (i == 9) return h4.xy;
+  if (i == 10) return h4.zw;
+  if (i == 11) return h5.xy;
+  if (i == 12) return h5.zw;
+  if (i == 13) return h6.xy;
+  if (i == 14) return h6.zw;
+  if (i == 15) return h7.xy;
+  return h7.zw;
+}
+float SID(int i) { return mod(hs.x - float(i) + 1.0, 4096.0); }
+float AGE(int i) { return i == 0 ? 0.0 : (float(i) - 1.0 + hs.y) / 16.0; }
+
+float sp_hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+float sp_h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float sp_noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(sp_h2(i), sp_h2(i + vec2(1.0, 0.0)), f.x), mix(sp_h2(i + vec2(0.0, 1.0)), sp_h2(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
 // a cluster of three overlapping billows with a ragged edge; returns density in x and a shade (0 = shadowed underside) in y
@@ -56,39 +75,22 @@ void main() {
   if (mouse.x < 0.0 || mouse.y < 0.0 || mouse.x > res.x || mouse.y > res.y) { fragColor = vec4(0.0); return; }
   float bestA = 0.0;
   vec3 bestC = vec3(0.0);
-  float rimGrey = 0.0;
-  // puffs that leave the pointer and rise on their own
-  for (int k = 0; k < 7; k++) {
-    float kf = float(k);
-    float sp = 0.55 + 0.15 * sp_hash(kf + 1.0);
-    float life = fract(time * sp + kf / 7.0);
-    float id = floor(time * sp + kf / 7.0) * 7.0 + kf;
-    float sway = sin(time * 1.7 + id * 2.3) * 5.0 * life + (sp_hash(id) - 0.5) * 8.0 * life;
-    vec2 c = mouse + vec2(sway, -6.0 - life * 62.0);
-    float rad = 6.0 + 17.0 * pow(life, 0.7);
+  // every sample leaves a puff that rises, spreads and thins out as it ages
+  for (int i = 1; i <= 16; i++) {
+    float moved = smoothstep(1.5, 9.0, distance(P(i), P(i == 16 ? 15 : i + 1)));
+    if (moved <= 0.0) continue;
+    float age = AGE(i);
+    float id = SID(i) * 3.7;
+    float rise = 1.0 - (1.0 - age) * (1.0 - age);                  // quick at first, then slowing
+    float rad = 10.0 + 20.0 * pow(age, 0.7);
+    vec2 c = P(i) + vec2((sp_hash(id) - 0.5) * 8.0 + sin(time * 1.3 + id) * 5.0 * age, -rise * 60.0);
     vec2 d = p - c;
+    if (dot(d, d) > rad * rad * 2.8) continue;
     vec2 cl = sp_cloud(d, rad, id);
-    float a = clamp(cl.x * 1.15, 0.0, 1.0) * pow(1.0 - life, 1.1) * smoothstep(0.0, 0.1, life) * 0.95;
+    float a = clamp(cl.x * 1.15, 0.0, 1.0) * pow(1.0 - age, 1.2) * 0.8 * moved;
     if (a > bestA) {
       bestA = a;
       bestC = mix(vec3(0.58, 0.62, 0.72), vec3(1.0, 0.99, 0.97), clamp(cl.y * 0.7 + cl.x * 0.4, 0.0, 1.0));   // a grey-blue underside so the puff also reads on bright pictures
-    }
-  }
-  // older puffs left along the path, rising and spreading
-  for (int i = 1; i < 9; i++) {
-    float age = float(i) / 8.0;
-    vec2 c0 = sp_P(i);
-    float away = smoothstep(6.0, 40.0, distance(c0, mouse));
-    if (away <= 0.0) continue;
-    float id = float(i) * 3.7;
-    vec2 c = c0 + vec2(sin(time * 1.3 + id) * 6.0 * age, -age * 34.0);
-    float rad = 8.0 + 16.0 * age;
-    vec2 d = p - c;
-    vec2 cl = sp_cloud(d, rad, id);
-    float a = clamp(cl.x * 1.15, 0.0, 1.0) * pow(1.0 - age, 1.3) * 0.85 * away;
-    if (a > bestA) {
-      bestA = a;
-      bestC = mix(vec3(0.58, 0.62, 0.72), vec3(1.0, 0.99, 0.97), clamp(cl.y * 0.7 + cl.x * 0.4, 0.0, 1.0));
     }
   }
   float alpha = bestA;

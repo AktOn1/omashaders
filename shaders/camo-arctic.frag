@@ -1,15 +1,16 @@
 #version 300 es
 // category: Art
-// desc: Arctic camouflage in white and grey-blue. Text stays readable
-// strength: 75
+// desc: Arctic camouflage: snow white with grey-blue and slate patches. The screen's light and dark are kept, so text stays readable
+// strength: 80
 precision highp float;
 in vec2 v_texcoord;
 uniform sampler2D tex;
 layout(location = 0) out vec4 fragColor;
-const vec3 C0 = vec3(0.92, 0.94, 0.96);
-const vec3 C1 = vec3(0.70, 0.76, 0.82);
-const vec3 C2 = vec3(0.80, 0.85, 0.90);
-const vec3 C3 = vec3(0.48, 0.55, 0.64);
+const vec3 C0 = vec3(0.93, 0.95, 0.97); // snow
+const vec3 C1 = vec3(0.70, 0.77, 0.85); // grey-blue
+const vec3 C2 = vec3(0.47, 0.54, 0.64); // slate
+const vec3 C3 = vec3(0.26, 0.30, 0.38); // dark slate
+const float KEEP = 0.66;  // how much of the screen's own light and dark survives
 float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -22,17 +23,25 @@ float vnoise(vec2 p) {
 }
 float fbm(vec2 p) {
     float a = 0.5, s = 0.0;
-    for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + vec2(17.3, 9.1); a *= 0.5; }
-    return s;
+    for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = p * 2.07 + vec2(17.3, 9.1); a *= 0.5; }
+    return s / 0.875;
+}
+float edge(float n, float t) {
+    float w = max(fwidth(n) * 0.75, 0.002);
+    return smoothstep(t - w, t + w, n);
 }
 void main() {
     vec4 s = texture(tex, v_texcoord);
-    vec2 p = v_texcoord * vec2(textureSize(tex, 0));
-    float e = 0.012;
+    vec2 px = v_texcoord * vec2(textureSize(tex, 0));
+    vec2 q = px / vec2(210, 130);
+    q += (vec2(fbm(q * 1.6 + 5.0), fbm(q * 1.6 + 19.0)) - 0.5) * 1.1;
     vec3 c = C0;
-    c = mix(c, C1, smoothstep(0.50 - e, 0.50 + e, fbm(p / 300.0 + 3.0)));
-    c = mix(c, C2, smoothstep(0.56 - e, 0.56 + e, fbm(p / 170.0 + 41.0)));
-    c = mix(c, C3, smoothstep(0.63 - e, 0.63 + e, fbm(p / 95.0 + 77.0)));
+    c = mix(c, C1, edge(fbm(q * 0.9 + 3.0), 0.52));
+    c = mix(c, C2, edge(fbm(q * 0.9 + 41.0), 0.60));
+    c = mix(c, C3, edge(fbm(q * vec2(2.6, 2.0) + 77.0), 0.68));
+    c *= 0.94 + 0.12 * vnoise(px * 0.7);
     float l = dot(s.rgb, vec3(0.299, 0.587, 0.114));
-    fragColor = vec4(clamp(c * mix(0.42, 1.3, l), 0.0, 1.0), s.a);
+    float k = 0.5 + KEEP * (l - 0.5);
+    c = k < 0.5 ? c * (2.0 * k) : mix(c, vec3(1.0), 2.0 * (k - 0.5));
+    fragColor = vec4(c, s.a);
 }

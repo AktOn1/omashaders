@@ -1,6 +1,6 @@
 #version 440
 // category: Trail
-// desc: Sand kick: the pointer scuffs up golden dust. Soft ochre puffs billow and fade behind it and glinting sand grains are flung up and back, with a warm sun glint at the pointer
+// desc: Sand kick: the pointer scuffs up golden dust. A soft ochre cloud billows and fades along the path behind it and glinting sand grains are flung up and back, with a warm sun glint at the pointer
 // motion: yes
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -14,15 +14,16 @@ layout(std140, binding = 0) uniform buf {
   vec4 h1;
   vec4 h2;
   vec4 h3;
+  vec4 h4;
+  vec4 h5;
+  vec4 h6;
+  vec4 h7;
+  vec4 hs;
 };
 
-float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vnoise(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
-}
+// Pointer history: P(0) is the pointer, P(1) the newest sample, P(16) the oldest (about one second back).
+// SID(i): stable id of the sample in slot i (it keeps its id as it moves to the next slot), use it to seed hashes.
+// AGE(i): 0 at the pointer, 1 when the sample is dropped; it grows continuously, so fade to 0 as AGE -> 1.
 vec2 P(int i) {
   if (i == 0) return mouse;
   if (i == 1) return h0.xy;
@@ -32,7 +33,31 @@ vec2 P(int i) {
   if (i == 5) return h2.xy;
   if (i == 6) return h2.zw;
   if (i == 7) return h3.xy;
-  return h3.zw;
+  if (i == 8) return h3.zw;
+  if (i == 9) return h4.xy;
+  if (i == 10) return h4.zw;
+  if (i == 11) return h5.xy;
+  if (i == 12) return h5.zw;
+  if (i == 13) return h6.xy;
+  if (i == 14) return h6.zw;
+  if (i == 15) return h7.xy;
+  return h7.zw;
+}
+float SID(int i) { return mod(hs.x - float(i) + 1.0, 4096.0); }
+float AGE(int i) { return i == 0 ? 0.0 : (float(i) - 1.0 + hs.y) / 16.0; }
+
+float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// direction opposite to the movement of sample i (grains fly back)
+vec2 backDir(int i) {
+  vec2 mv = P(i) - P(i == 16 ? 15 : i + 1);
+  float l = length(mv);
+  return l > 1.0 ? -mv / l : vec2(0.0);
 }
 
 void main() {
@@ -41,45 +66,56 @@ void main() {
   vec3 dust = vec3(0.92, 0.62, 0.28);      // ochre dust
   vec3 sand = vec3(1.0, 0.84, 0.54);       // lit grains
   vec3 sun  = vec3(1.0, 0.93, 0.74);       // glint
-  vec2 mv = mouse - P(4);                  // recent motion, grains fly the other way
+  vec2 mv = mouse - P(4);                  // recent motion, only used for the fresh puff at the pointer
   float spd = length(mv);
   vec2 back = spd > 1.0 ? -mv / spd : vec2(0.0, 0.0);
   vec3 col = vec3(0.0);
   float alpha = 0.0;
   float bestA = 0.0;
   vec3 bestC = vec3(0.0);
-  for (int i = 1; i < 9; i++) {
-    vec2 c = P(i);
-    float behind = smoothstep(2.0, 22.0, distance(c, mouse));
-    if (behind <= 0.0) continue;
-    float age = float(i) / 8.0;
-    float seed = float(i) * 5.3;
-    // dust puff: a ragged soft cloud along the path that grows, drifts up and thins out (capsule between neighbouring trail points, so it is one smooth ribbon)
-    vec2 pa0 = P(i - 1), pb0 = P(i);
+
+  // dust cloud: one ragged ribbon along the path that grows, drifts up and thins out
+  for (int i = 0; i < 16; i++) {
+    float moved = smoothstep(1.0, 6.0, distance(P(i), P(i + 1)));
+    if (moved <= 0.0) continue;
+    vec2 pa0 = P(i), pb0 = P(i + 1);
     vec2 sg = pb0 - pa0;
     float hh = clamp(dot(p - pa0, sg) / max(dot(sg, sg), 1e-4), 0.0, 1.0);
-    float sage = (float(i - 1) + hh) / 8.0;
-    vec2 pc = mix(pa0, pb0, hh) + vec2(back.x * 10.0 * sage, -26.0 * sage * sage - 3.0);
-    vec2 d = p - pc;
+    float sage = mix(AGE(i), AGE(i + 1), hh);
+    vec2 bk = backDir(i + 1);
+    vec2 shift = vec2(bk.x * 10.0 * sage, -26.0 * sage * sage - 3.0);
     float rad = 13.0 + sage * 54.0;
-    float ragged = vnoise(d * 0.09 + seed) * 0.6 + vnoise(d * 0.21 - seed) * 0.4;
+    vec2 d = p - (mix(pa0, pb0, hh) + shift);
+    if (dot(d, d) > rad * rad * 2.4) continue;
+    float ragged = vnoise((p - shift) * 0.09) * 0.6 + vnoise((p - shift) * 0.21 + 31.0) * 0.4;
     float puff = smoothstep(rad * (0.85 + 0.5 * ragged), 0.0, length(d * vec2(1.0, 1.35)));
-    float pa = puff * pow(1.0 - sage, 1.4) * 0.9 * behind;
+    float pa = puff * pow(1.0 - sage, 1.4) * 0.9 * moved;
     if (pa > bestA) {   // neighbouring segments overlap at the joints: keep the strongest instead of adding, so there are no beads
       bestA = pa;
       bestC = mix(vec3(0.66, 0.38, 0.16), mix(dust, sand, 0.25 * (1.0 - sage)), smoothstep(0.0, 0.75, puff));   // darker rim so the cloud reads on bright pictures too
     }
-    // flung grains: they rise, drift back and fall under gravity
-    for (int k = 0; k < 4; k++) {
+  }
+
+  // flung grains: they rise, drift back and fall under gravity
+  for (int i = 1; i <= 16; i++) {
+    float moved = smoothstep(1.5, 9.0, distance(P(i), P(i == 16 ? 15 : i + 1)));
+    if (moved <= 0.0) continue;
+    vec2 c = P(i);
+    if (dot(p - c, p - c) > 7000.0) continue;
+    float age = AGE(i);
+    vec2 bk = backDir(i);
+    float seed = SID(i) * 5.3;
+    for (int k = 0; k < 3; k++) {
       float s = seed + float(k) * 1.7;
-      float vx = (hash(s + 1.0) - 0.5) * 60.0 + back.x * 40.0 * hash(s + 4.0);
-      float vy = -(20.0 + 44.0 * hash(s + 2.0)) + back.y * 22.0;
-      float t = age * 1.0;
-      vec2 gp = c + vec2(vx * t, vy * t + 38.0 * t * t) + vec2(sin(time * 3.0 + s * 9.0), cos(time * 2.4 + s * 5.0)) * 1.4 * age;
+      float vx = (hash(s + 1.0) - 0.5) * 60.0 + bk.x * 40.0 * hash(s + 4.0);
+      float vy = -(20.0 + 44.0 * hash(s + 2.0)) + bk.y * 22.0;
+      vec2 gp = c + vec2(vx * age, vy * age + 38.0 * age * age) + vec2(sin(time * 3.0 + s * 9.0), cos(time * 2.4 + s * 5.0)) * 1.4 * age;
       float sz = 1.7 + 1.3 * hash(s + 6.0);
-      float g = smoothstep(sz, 0.0, length(p - gp));
+      vec2 dg = p - gp;
+      if (dot(dg, dg) > sz * sz) continue;
+      float g = smoothstep(sz, 0.0, length(dg));
       float tw = 0.55 + 0.45 * sin(time * 9.0 + s * 11.0);   // glinting in the sun
-      float ga = g * pow(1.0 - age, 0.8) * behind * tw;
+      float ga = g * pow(1.0 - age, 0.8) * moved * tw;
       col += mix(sand, sun, tw) * ga;
       alpha += ga;
     }

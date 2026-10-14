@@ -7,6 +7,13 @@ Scope {
   id: fx
 
   property string effect: ""
+  property var offScreens: [] // names of the monitors that get no effect (they show a fullscreen window)
+  function shownScreens(off) {
+    var out = []
+    for (var i = 0; i < Quickshell.screens.length; i++)
+      if (off.indexOf(Quickshell.screens[i].name) < 0) out.push(Quickshell.screens[i])
+    return out
+  }
   // file:// url of the folder with AI-made effects; names starting "ai-" load from genDir/mouse/
   property string genDir: ""
   function shaderUrl(n) {
@@ -26,12 +33,18 @@ Scope {
   property real lastTick: 0
 
   property real time: 0
+  // Pointer history for trail effects: 16 samples, one every histStep seconds (about one second back). A sample keeps its
+  // position as it ages; histSeq numbers the newest one (a stable id for hashing) and histPhase is how far (0-1) we are
+  // into the interval since it was taken, so shaders can age particles continuously instead of hopping once per sample.
+  readonly property real histStep: 0.066
   property var hist: []
-  property int tick: 0
+  property int histSeq: 0
+  property real histPhase: 0
+  property real lastSample: 0
   readonly property real startMs: Date.now()
 
   function pt(i) { return fx.hist[i] || fx.mouse }
-  onEffectChanged: hist = []
+  onEffectChanged: { hist = []; histPhase = 0 }
 
   Timer {
     interval: Math.round(1000 / fx.fps)
@@ -41,17 +54,22 @@ Scope {
       var now = (Date.now() - fx.startMs) / 1000
       fx.time += Math.min(Math.max(now - fx.lastTick, 0), 0.25) * fx.speed
       fx.lastTick = now
-      fx.tick++
-      if (fx.tick % 2 === 0) {
-        var h = fx.hist.slice(0, 7)
-        h.unshift(fx.mouse)
+      var wall = Date.now() / 1000
+      var since = wall - fx.lastSample
+      if (since >= fx.histStep) {
+        fx.lastSample = since < fx.histStep * 2 ? fx.lastSample + fx.histStep : wall
+        var h = fx.hist.slice(0, 15)
+        h.unshift(Qt.point(fx.mouse.x, fx.mouse.y)) // a copy: a point stored as is stays tied to fx.mouse and follows it
         fx.hist = h
+        fx.histSeq = (fx.histSeq + 1) % 4096
+        since = wall - fx.lastSample
       }
+      fx.histPhase = Math.min(since / fx.histStep, 1)
     }
   }
 
   Variants {
-    model: fx.effect !== "" ? Quickshell.screens : []
+    model: fx.effect !== "" ? fx.shownScreens(fx.offScreens) : []
 
     PanelWindow {
       id: win
@@ -84,6 +102,11 @@ Scope {
         property vector4d h1: Qt.vector4d(fx.pt(2).x - win.screen.x, fx.pt(2).y - win.screen.y, fx.pt(3).x - win.screen.x, fx.pt(3).y - win.screen.y)
         property vector4d h2: Qt.vector4d(fx.pt(4).x - win.screen.x, fx.pt(4).y - win.screen.y, fx.pt(5).x - win.screen.x, fx.pt(5).y - win.screen.y)
         property vector4d h3: Qt.vector4d(fx.pt(6).x - win.screen.x, fx.pt(6).y - win.screen.y, fx.pt(7).x - win.screen.x, fx.pt(7).y - win.screen.y)
+        property vector4d h4: Qt.vector4d(fx.pt(8).x - win.screen.x, fx.pt(8).y - win.screen.y, fx.pt(9).x - win.screen.x, fx.pt(9).y - win.screen.y)
+        property vector4d h5: Qt.vector4d(fx.pt(10).x - win.screen.x, fx.pt(10).y - win.screen.y, fx.pt(11).x - win.screen.x, fx.pt(11).y - win.screen.y)
+        property vector4d h6: Qt.vector4d(fx.pt(12).x - win.screen.x, fx.pt(12).y - win.screen.y, fx.pt(13).x - win.screen.x, fx.pt(13).y - win.screen.y)
+        property vector4d h7: Qt.vector4d(fx.pt(14).x - win.screen.x, fx.pt(14).y - win.screen.y, fx.pt(15).x - win.screen.x, fx.pt(15).y - win.screen.y)
+        property vector4d hs: Qt.vector4d(fx.histSeq, fx.histPhase, fx.histStep, 0)
         fragmentShader: fx.effect !== "" ? fx.shaderUrl(fx.effect) : ""
       }
     }

@@ -1,6 +1,6 @@
 #version 440
 // category: Trail
-// desc: Petal trail: a short stream of pink cherry-blossom petals tumbles and drifts down behind the pointer, with a soft blossom glow at the tip
+// desc: Petal trail: pink cherry-blossom petals are dropped along the path, tumble and drift down where they fell and fade out, with a soft blossom ring at the tip
 // motion: yes
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -14,9 +14,16 @@ layout(std140, binding = 0) uniform buf {
   vec4 h1;
   vec4 h2;
   vec4 h3;
+  vec4 h4;
+  vec4 h5;
+  vec4 h6;
+  vec4 h7;
+  vec4 hs;
 };
 
-float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+// Pointer history: P(0) is the pointer, P(1) the newest sample, P(16) the oldest (about one second back).
+// SID(i): stable id of the sample in slot i (it keeps its id as it moves to the next slot), use it to seed hashes.
+// AGE(i): 0 at the pointer, 1 when the sample is dropped; it grows continuously, so fade to 0 as AGE -> 1.
 vec2 P(int i) {
   if (i == 0) return mouse;
   if (i == 1) return h0.xy;
@@ -26,8 +33,20 @@ vec2 P(int i) {
   if (i == 5) return h2.xy;
   if (i == 6) return h2.zw;
   if (i == 7) return h3.xy;
-  return h3.zw;
+  if (i == 8) return h3.zw;
+  if (i == 9) return h4.xy;
+  if (i == 10) return h4.zw;
+  if (i == 11) return h5.xy;
+  if (i == 12) return h5.zw;
+  if (i == 13) return h6.xy;
+  if (i == 14) return h6.zw;
+  if (i == 15) return h7.xy;
+  return h7.zw;
 }
+float SID(int i) { return mod(hs.x - float(i) + 1.0, 4096.0); }
+float AGE(int i) { return i == 0 ? 0.0 : (float(i) - 1.0 + hs.y) / 16.0; }
+
+float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
 
 const vec3 PALE = vec3(1.00, 0.91, 0.95);
 const vec3 PINK = vec3(1.00, 0.72, 0.83);
@@ -40,20 +59,23 @@ void main() {
   if (mouse.x < 0.0 || mouse.y < 0.0 || mouse.x > res.x || mouse.y > res.y) { fragColor = vec4(0.0); return; }
   vec3 col = vec3(0.0);   // premultiplied
   float alpha = 0.0;
-  for (int i = 1; i < 9; i++) {
-    float behind = smoothstep(4.0, 40.0, distance(P(i), mouse));
-    if (behind <= 0.0) continue;
-    float age = float(i) / 8.0;
-    float seed = float(i) * 3.7;
+  // oldest first, so the newer petals lie on top
+  for (int i = 16; i >= 1; i--) {
+    float moved = smoothstep(1.5, 9.0, distance(P(i), P(i == 16 ? 15 : i + 1)));
+    if (moved <= 0.0) continue;
+    float age = AGE(i);
+    float seed = SID(i) * 3.7;
+    if (hash(seed + 5.0) > 0.6) continue;                                // not every sample drops a petal
     float size = 15.0 * (1.0 - 0.35 * age) * (0.85 + 0.3 * hash(seed));
     // each petal drifts down and sideways as it ages, wobbling on the way
-    vec2 pc = P(i) + vec2(sin(time * 2.2 + seed) * 10.0 * age + (hash(seed + 1.0) - 0.5) * 16.0, age * 40.0 + 6.0 * sin(time * 3.0 + seed));
+    vec2 pc = P(i) + vec2(sin(time * 1.2 + seed) * 10.0 * age + (hash(seed + 1.0) - 0.5) * 16.0, age * 44.0 + 6.0 * sin(time * 1.5 + seed));
     vec2 r = p - pc;
     if (dot(r, r) > size * size * 2.6) continue;
-    float a = seed + time * (1.6 + hash(seed + 2.0) * 1.4) * (hash(seed + 3.0) < 0.5 ? -1.0 : 1.0);
+    float dir = hash(seed + 3.0) < 0.5 ? -1.0 : 1.0;
+    float a = seed + age * 5.0 * dir + time * (0.5 + hash(seed + 2.0) * 0.7) * dir;
     float ca = cos(a), sa = sin(a);
     vec2 u = vec2(ca * r.x + sa * r.y, -sa * r.x + ca * r.y) / size;
-    float tx = cos(time * (3.0 + hash(seed + 4.0) * 2.0) + seed * 5.0);   // turning edge-on and back
+    float tx = cos(time * (1.2 + hash(seed + 4.0) * 1.2) + seed * 5.0 + age * 4.0);   // turning edge-on and back
     u.x /= 0.25 + 0.75 * abs(tx);
     float w = max(0.55 + 0.22 * u.y, 0.2);
     float e = length(vec2(u.x / w, u.y)) - 1.0;
@@ -67,7 +89,7 @@ void main() {
     c = mix(BACK * (0.8 + 0.2 * c), c, smoothstep(-0.25, 0.25, tx));
     c = mix(c, RIM, 0.75 * smoothstep(-0.38, -0.02, e));
     c = mix(c, vec3(1.0, 0.95, 0.97), 0.25 * smoothstep(-0.2, -0.45, e));
-    float fade = (1.0 - age * 0.7) * behind;
+    float fade = pow(1.0 - age, 0.9) * smoothstep(0.0, 0.05, age) * moved;
     float al = cover * fade;
     col = col * (1.0 - al) + c * al;
     alpha = alpha * (1.0 - al) + al;

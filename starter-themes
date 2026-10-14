@@ -129,3 +129,33 @@ focus|focushaze|halo|haze-blue|Focus Haze|morning-dew||clean
 cabin-frost|christmaseve|twinkle|yule-red-green|Christmas Eve|frost-pane||thin-gold
 lantern-glow|wintermarket|lantern-spark|mulled-wine|Winter Market|firelight||ember
 sunlit|springmeadow|petal-trail|fresh-meadow|Spring Meadow|leaf-shade||soft-round
+machine-hall|megacity-lights|reading-line|blade-haze|Hacker Loft Night|crt-monitor||holo-cyan|wall=45,cur=60,wh=jel1jq
+overcast||streak|storm-gold|Misty Pace Lap|||contact-shadow|fx=40,col=55,cur=55,wh=d8vvlo
+dust-sun||streak|kodachrome|Misty Race Day|||contact-shadow|fx=40,col=50,cur=55,wh=d8vvlo
+overcast||streak|kodachrome|Misty Fast Ride|||mono-line|fx=40,col=55,cur=60,wh=d8vvlo
+sunlit|speedlines|comet|sunny-pop|Marlboro Speed Run|sun-patch||soft-round|fx=65,col=70,wall=85,cur=85,wh=d8vvlo
+sunlit|speedlines|streak|sunny-pop|Marlboro Run|sun-patch||soft-round|fx=65,col=70,wall=85,cur=80,wh=d8vvlo
+sunlit|speedlines|streak|sunny-pop|Marlboro Rush|sunbeam-pane||soft-round|fx=65,col=72,wall=90,cur=85,wh=d8vvlo
+sunlit|speedlines|comet|sunny-pop|Sunny F40 Run|sunbeam-pane||soft-round|fx=65,col=70,wall=85,cur=85,wh=d8vvlo
+ai-misty-pace|ai-wet-road-streaks|streak|teal-orange|Marlboro Mist Run|ai-mist-pane||ai-rust-edge-line|fx=65,col=65,wall=80,cur=80,wh=d8vvlo
+ai-edge-rush|ai-velocity-streaks|comet|sunny-pop|Red Rush F40|ai-livery-rush||ai-livery-edge|fx=70,col=70,wall=85,cur=85,wh=d8vvlo
+ai-monitor-glow|ai-data-drift|ai-signal-ping|neon-noir|Midnight Workbench|ai-terminal-pane||ai-circuit-edge|fx=65,col=65,wall=80,cur=80,wh=jel1jq
+ai-pond-daylight|ai-pond-sparkle|water-rings|lagoon|Lotus Pond Noon|ai-lotus-glass||ai-lily-edge|fx=65,col=65,wall=80,cur=80,wh=216y9y
+ai-pond-caustics|ai-pond-glints|water-rings|fresh-meadow||ai-lily-glass||ai-lotus-edge|fx=65,col=65,wall=80,wspeed=55,wzoom=47,cur=80
+vignette|snow|ice-crystals|polar-night|Snow Globe|frost-pane||white-halo
+overcast|storm|silver-ripples|pitch-night|Lightning Night|blue-swell||deep-shadow
+anamorphic|bokehlights|neon-tube-trail|miami-night|Bokeh Boulevard|sign-glow||neon-pink
+overcast|fog|mist-trail|haze-blue|Foggy Harbour|morning-dew||soft-shadow
+underwater|bubbles|bubble-trail|lagoon|Bubble Dive|sea-glass||soft-round
+halation|sparks|lantern-spark|solar-corona|Spark Forge|firelight||ember-spin
+vignette|fireflies|firefly-trail|moss|Firefly Meadow|leaf-shade||spore-glow
+nave-glow|sunshafts|mote-glow|warm|Sunshaft Morning|sunbeam-pane||thin-gold
+scan-sweep|blackhole|reticle|lab-cyan|Event Horizon|starglass||holo-cyan
+sunlit|pollendrift|petal-trail|pastel|Pollen Day|leaf-shade||soft-round
+sharpen|grid|crosshair|blueprint|Blueprint Bench|dos-box||clean
+neon-edge|citytwinkle|flashlight|pitch-night|Night Shift City|sign-glow||deep-shadow
+hologram|neonglints|glitch|cyberpunk|Cyber Glints|crt-monitor||neon-cyan
+anamorphic|lensflare|neon|rose-gold|Rose Lens Flare|sunbeam-pane||sunset
+sunlit|skybirds|cloud-puff|alpenglow|Birds at Dawn|cloud-veil||clean
+moonlight|watersparkle|silver-ripples|ice|Moon Glitter|moon-glass||white-halo
+soft-sky|windstreaks|cloud-puff|fresh-meadow|Windy Ridge|cloud-veil||clean

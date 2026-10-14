@@ -135,13 +135,14 @@ class Template:
             bs = 100
         fx2 = second_layer("effect", fx)
         col2 = second_layer("color", col)
-        key = (name, fx, col, read("strength-effect"), read("strength-color"), bs, paused, fx2, col2)
+        skip = cs.parse_skip(read("fs-paused")) if read("pause-fullscreen") else None
+        key = (name, fx, col, read("strength-effect"), read("strength-color"), bs, paused, fx2, col2, skip)
         if key == self.key:
             return True
         self.key = key
         fxl = (fxp, read("strength-effect") or "100") if fx and not paused else None
         coll = (colp, read("strength-color") or "100") if col and not paused else None
-        text = cs.compose(fxl, coll, (cur, bs), fx2=fx2, col2=col2)
+        text = cs.compose(fxl, coll, (cur, bs), fx2=fx2, col2=col2, skip=skip)
         self.pre, _, self.post = text.partition(cs.CUR_MARK + "\n" + cs.CUR_DEFAULTS)
         self.animated = bool(fxl) and (is_animated(fxp) or bool(fx2 and is_animated(fx2[0])))
         try:

@@ -1,6 +1,6 @@
 #version 440
 // category: Trail
-// desc: Pop flakes: little confetti flakes in bright colours pop off the places the pointer has been, spin and flutter down as they fade
+// desc: Pop flakes: little confetti flakes in bright colours pop off the places the pointer has been, spin and flutter down behind it as they fade
 // motion: yes
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -14,10 +14,17 @@ layout(std140, binding = 0) uniform buf {
   vec4 h1;
   vec4 h2;
   vec4 h3;
+  vec4 h4;
+  vec4 h5;
+  vec4 h6;
+  vec4 h7;
+  vec4 hs;
 };
 
-float pf_hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-vec2 pf_P(int i) {
+// Pointer history: P(0) is the pointer, P(1) the newest sample, P(16) the oldest (about one second back).
+// SID(i): stable id of the sample in slot i (it keeps its id as it moves to the next slot), use it to seed hashes.
+// AGE(i): 0 at the pointer, 1 when the sample is dropped; it grows continuously, so fade to 0 as AGE -> 1.
+vec2 P(int i) {
   if (i == 0) return mouse;
   if (i == 1) return h0.xy;
   if (i == 2) return h0.zw;
@@ -26,8 +33,20 @@ vec2 pf_P(int i) {
   if (i == 5) return h2.xy;
   if (i == 6) return h2.zw;
   if (i == 7) return h3.xy;
-  return h3.zw;
+  if (i == 8) return h3.zw;
+  if (i == 9) return h4.xy;
+  if (i == 10) return h4.zw;
+  if (i == 11) return h5.xy;
+  if (i == 12) return h5.zw;
+  if (i == 13) return h6.xy;
+  if (i == 14) return h6.zw;
+  if (i == 15) return h7.xy;
+  return h7.zw;
 }
+float SID(int i) { return mod(hs.x - float(i) + 1.0, 4096.0); }
+float AGE(int i) { return i == 0 ? 0.0 : (float(i) - 1.0 + hs.y) / 16.0; }
+
+float pf_hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
 vec3 pf_col(int k) {
   if (k == 0) return vec3(1.00, 0.42, 0.38);
   if (k == 1) return vec3(1.00, 0.80, 0.22);
@@ -41,22 +60,26 @@ void main() {
   if (mouse.x < 0.0 || mouse.y < 0.0 || mouse.x > res.x || mouse.y > res.y) { fragColor = vec4(0.0); return; }
   vec3 col = vec3(0.0);
   float alpha = 0.0;
-  for (int i = 1; i < 9; i++) {
-    float behind = smoothstep(4.0, 40.0, distance(pf_P(i), mouse));
-    if (behind <= 0.0) continue;
-    float age = float(i) / 8.0;
-    float h = pf_hash(float(i) * 5.7);
-    float h2 = pf_hash(float(i) * 2.3 + 1.0);
-    // the flake flutters down and sideways from the trail point
-    vec2 o = pf_P(i) + vec2((h - 0.5) * 36.0 + 8.0 * sin(time * 2.0 + h * 30.0), age * 40.0 + 10.0);
+  for (int i = 1; i <= 16; i++) {
+    float moved = smoothstep(1.5, 9.0, distance(P(i), P(i == 16 ? 15 : i + 1)));
+    if (moved <= 0.0) continue;
+    float age = AGE(i);
+    float sid = SID(i);
+    float h = pf_hash(sid * 5.7);
+    float h2 = pf_hash(sid * 2.3 + 1.0);
+    if (pf_hash(sid * 3.3 + 7.0) > 0.7) continue;                       // not every sample pops a flake
+    // the flake pops out quickly, then flutters down and sideways
+    float pop = 1.0 - exp(-age * 6.0);
+    vec2 o = P(i) + vec2((h - 0.5) * 40.0 * pop + 8.0 * sin(time * 1.5 + h * 30.0) * age, 8.0 * pop + age * 36.0);
     vec2 d = p - o;
-    float ang = time * (1.5 + 2.0 * h2) * (h > 0.5 ? 1.0 : -1.0) + h * 20.0;
+    if (dot(d, d) > 90.0) continue;
+    float ang = (time * (0.8 + 1.0 * h2) + age * 6.0) * (h > 0.5 ? 1.0 : -1.0) + h * 20.0;
     float ca = cos(ang), sa = sin(ang);
     vec2 r = vec2(ca * d.x + sa * d.y, -sa * d.x + ca * d.y);
-    float flip = 0.3 + 0.7 * abs(sin(time * 3.0 + h2 * 30.0));
+    float flip = 0.3 + 0.7 * abs(sin(time * 1.6 + h2 * 30.0));
     float k = smoothstep(1.2, 0.0, max(abs(r.x) - 8.0, abs(r.y) - 4.0 * flip));
-    float a = k * pow(1.0 - age, 0.8) * 0.95 * behind;
-    col += pf_col(int(floor(pf_hash(float(i) * 9.1) * 5.0))) * a;
+    float a = k * pow(1.0 - age, 0.8) * 0.95 * moved * smoothstep(0.0, 0.04, age);
+    col += pf_col(int(floor(pf_hash(sid * 13.7 + 2.0) * 5.0))) * a;
     alpha += a;
   }
   float dm = length(p - mouse);

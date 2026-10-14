@@ -9,7 +9,7 @@
 #        | perf [status|on|off|report [--days N] [--notify]|bench [--kinds screen,color,wall] [--only A,B]|crashes [--hours N]] (what each effect costs; bin/perf-log)
 #        | wallopt react|speed|zoom|range [PERCENT|+N|-N|reset] | wallopt target [RRGGBB] (wallpaper effects: mouse reaction 0-200, speed 0-300, zoom 25-300, Colour reactor range and picked colour)
 #        | mouseopt size|speed [PERCENT|+N|-N|reset] (cursor overlay size 25-300 and animation speed 0-300; 100 = as designed)
-#        | fullscreen [status|on|off|toggle] (pause every effect while a fullscreen app runs; the shell calls pause/resume)
+#        | fullscreen [status|on|off|toggle] (pause the screen, wallpaper and cursor effects on the monitor that shows a fullscreen app; the shell calls pause IDS/resume)
 #        | strength [effect|color [PERCENT|+N|-N|reset]] | power [status|on|off|toggle] [--notify]
 #        | wallhaven search QUERY | wallhaven use ID (public wallhaven.cc pictures, safe for work only; bin/wallhaven)
 #        | theme share N | theme import CODE [--apply] [--wallpaper] (share codes "OMS1:..."; bin/theme-code; "combo" still works as an old name)
@@ -97,8 +97,11 @@ remembered_strength() { # KIND(fx|col) NAME FILE
 }
 cur_strength() { local v; v=$(cat "$STATE_DIR/strength-$1" 2>/dev/null); echo "${v:-100}"; }
 DISABLED="$STATE_DIR/disabled"
-FSPAUSE="$STATE_DIR/fs-paused" # set while a fullscreen app runs and "pause while fullscreen" is on
-is_disabled() { [ -s "$DISABLED" ] || [ -s "$FSPAUSE" ]; }
+FSPAUSE="$STATE_DIR/fs-paused" # Hyprland monitor ids (comma list) that show a fullscreen app while "pause while fullscreen" is on
+is_disabled() { [ -s "$DISABLED" ]; }
+fs_skip() { # ids of the monitors the screen shader skips right now (empty when none)
+  [ -s "$STATE_DIR/pause-fullscreen" ] && tr -cd '0-9,' < "$FSPAUSE" 2>/dev/null; return 0
+}
 # Mixing: a second effect (effect2) or colour (color2) can be mixed into the first one. State: mix-effect / mix-color = "MODE VALUE",
 # MODE stack (the second runs on the first one's result; VALUE is how much of it, percent) or blend (both run on the original picture;
 # VALUE is the share of the second, percent).
@@ -126,8 +129,8 @@ mix_args() { # effect|color FLAG SECOND_NAME: sets MARGS (compose-shader flags) 
 apply() {
   window_apply >/dev/null 2>&1 || true
   frame_apply >/dev/null 2>&1 || true
-  local fx col file="" out args=() fx2 col2 sig1="" sig2="" f2="" c2=""
-  fx=$(current); col=$(current_color)
+  local fx col file="" out args=() fx2 col2 sig1="" sig2="" f2="" c2="" skip
+  fx=$(current); col=$(current_color); skip=$(fs_skip)
   [ -n "$fx" ] && [ ! -f "$(sfile "$fx")" ] && fx=""
   [ -n "$col" ] && [ ! -f "$(cfile "$col")" ] && col=""
   if ! is_disabled && { [ -n "$fx" ] || [ -n "$col" ]; }; then
@@ -139,6 +142,7 @@ apply() {
     if [ -n "$fx2" ]; then mix_args effect --fx2 "$fx2"; args+=("${MARGS[@]}"); sig1="$MIXSIG"; f2="$(sfile "$fx2")"; fi
     [ -n "$col" ] && args+=(--col "$cf" "$sc")
     if [ -n "$col2" ]; then mix_args color --col2 "$col2"; args+=("${MARGS[@]}"); sig2="$MIXSIG"; c2=$(cfile "$col2"); fi
+    [ -n "$skip" ] && { args+=(--skip "$skip"); sig2="$sig2!$skip"; }
     out="$STATE_DIR/built/${fx:--}@${sf}${sig1}+${col:--}@${sc}${sig2}.frag"
     if [ ! -s "$out" ] || [ -n "$fx" -a "$out" -ot "$(sfile "$fx")" ] || [ -n "$col" -a "$out" -ot "$cf" ] || [ -n "$f2" -a "$out" -ot "$f2" ] || [ -n "$c2" -a "$out" -ot "$c2" ] || [ "$out" -ot "$ROOT/bin/compose-shader" ]; then
       mkdir -p "$STATE_DIR/built"
@@ -624,16 +628,17 @@ case "${1:-}" in
       wall|mouse) set_overlay_strength "$2" "$3" ;;
       *) echo "usage: omashaders strength [effect|color|wall|mouse [PERCENT|+N|-N|reset]]" >&2; exit 1 ;;
     esac ;;
-  fullscreen) # pause while fullscreen: status | on | off (the setting) | pause | resume (called by the shell when a fullscreen app starts or ends)
+  fullscreen) # pause while fullscreen: status | on | off (the setting) | pause IDS | resume (called by the shell when a monitor starts or stops showing a fullscreen app)
     FSON="$STATE_DIR/pause-fullscreen"
     case "${2:-status}" in
-      status) [ -s "$FSON" ] && echo on || echo off; [ -s "$FSPAUSE" ] && echo "paused now" ;;
+      status) [ -s "$FSON" ] && echo on || echo off; [ -s "$FSPAUSE" ] && echo "paused now on monitor id(s) $(cat "$FSPAUSE")" ;;
       on) mkdir -p "$STATE_DIR"; echo 1 > "$FSON" ;;
-      off) mkdir -p "$STATE_DIR"; : > "$FSON"; if [ -s "$FSPAUSE" ]; then lock; : > "$FSPAUSE"; apply; window_apply; fi ;;
+      off) mkdir -p "$STATE_DIR"; : > "$FSON"; if [ -s "$FSPAUSE" ]; then lock; : > "$FSPAUSE"; apply; fi ;;
       toggle) [ -s "$FSON" ] && exec "$0" fullscreen off || exec "$0" fullscreen on ;;
-      pause) [ -s "$FSON" ] && [ ! -s "$FSPAUSE" ] && { lock; mkdir -p "$STATE_DIR"; echo 1 > "$FSPAUSE"; apply; window_apply; } ;;
-      resume) [ -s "$FSPAUSE" ] && { lock; : > "$FSPAUSE"; apply; window_apply; } ;;
-      *) echo "usage: omashaders fullscreen [status|on|off|toggle|pause|resume]" >&2; exit 1 ;;
+      pause) ids=$(echo "${3:-}" | tr -cd '0-9,'); [ -n "$ids" ] || { echo "usage: omashaders fullscreen pause MONITOR_ID[,ID...]" >&2; exit 1; }
+             [ -s "$FSON" ] && [ "$(cat "$FSPAUSE" 2>/dev/null)" != "$ids" ] && { lock; mkdir -p "$STATE_DIR"; echo "$ids" > "$FSPAUSE"; apply; } ;;
+      resume) [ -s "$FSPAUSE" ] && { lock; : > "$FSPAUSE"; apply; } ;;
+      *) echo "usage: omashaders fullscreen [status|on|off|toggle|pause IDS|resume]" >&2; exit 1 ;;
     esac; exit 0 ;;
   wallopt|mouseopt) # wallpaper effect options: react 0-200 (mouse reaction, 100 = as designed) | range 0-100 and target RRGGBB (Colour reactor)
     f=""; max=100; min=0; def=100

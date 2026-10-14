@@ -1,6 +1,6 @@
 #version 440
 // category: Trail
-// desc: Gold coin: a tiny gold coin spins beside the pointer, with small four-point gold glints flashing around it and along the path just travelled
+// desc: Gold coin: a tiny gold coin spins beside the pointer and leaves a trail of small four-point gold glints that stay where they were dropped, twinkle and fade out over about a second
 // motion: yes
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -14,10 +14,17 @@ layout(std140, binding = 0) uniform buf {
   vec4 h1;
   vec4 h2;
   vec4 h3;
+  vec4 h4;
+  vec4 h5;
+  vec4 h6;
+  vec4 h7;
+  vec4 hs;
 };
 
-float gc_hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-vec2 gc_P(int i) {
+// Pointer history: P(0) is the pointer, P(1) the newest sample, P(16) the oldest (about one second back).
+// SID(i): stable id of the sample in slot i (it keeps its id as it moves to the next slot), use it to seed hashes.
+// AGE(i): 0 at the pointer, 1 when the sample is dropped; it grows continuously, so fade to 0 as AGE -> 1.
+vec2 P(int i) {
   if (i == 0) return mouse;
   if (i == 1) return h0.xy;
   if (i == 2) return h0.zw;
@@ -26,8 +33,20 @@ vec2 gc_P(int i) {
   if (i == 5) return h2.xy;
   if (i == 6) return h2.zw;
   if (i == 7) return h3.xy;
-  return h3.zw;
+  if (i == 8) return h3.zw;
+  if (i == 9) return h4.xy;
+  if (i == 10) return h4.zw;
+  if (i == 11) return h5.xy;
+  if (i == 12) return h5.zw;
+  if (i == 13) return h6.xy;
+  if (i == 14) return h6.zw;
+  if (i == 15) return h7.xy;
+  return h7.zw;
 }
+float SID(int i) { return mod(hs.x - float(i) + 1.0, 4096.0); }
+float AGE(int i) { return i == 0 ? 0.0 : (float(i) - 1.0 + hs.y) / 16.0; }
+
+float gc_hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
 // a four-point glint of "reach" r pixels
 float gc_star(vec2 d, float r) {
   float core = exp(-dot(d, d) / (r * r * 0.18));
@@ -72,22 +91,25 @@ void main() {
   col += pale * gc_star(q - vec2(-2.0, -2.0), 9.0) * flash * 0.9;
   alpha += gc_star(q - vec2(-2.0, -2.0), 9.0) * flash * 0.9;
 
-  // glints: around the pointer, and on the path behind it (older points fade out)
-  for (int i = 0; i < 9; i++) {
-    float fi = float(i);
-    float seed = fi * 5.31;
-    vec2 o = gc_P(i);
-    float fade = 1.0 - fi / 9.0;
-    vec2 off = vec2((gc_hash(seed + 1.0) - 0.5) * 34.0, (gc_hash(seed + 2.0) - 0.5) * 30.0);
-    if (i == 0) off = off * 0.9 + vec2(-8.0, -10.0);
-    vec2 sp = o + off;
-    float rate = 0.7 + 0.9 * gc_hash(seed + 3.0);
-    float ph2 = sin(time * rate * 3.0 + gc_hash(seed + 4.0) * 40.0);
-    float tw = pow(max(ph2, 0.0), 3.0);
-    float sz = 6.0 + 7.0 * gc_hash(seed + 6.0);
-    float g = gc_star(p - sp, sz) * tw * (0.35 + 0.65 * fade);
-    col += mix(gold, pale, 0.55) * g;
-    alpha += g;
+  // glints dropped along the path: each stays near its sample, drifts slowly and twinkles
+  for (int i = 1; i <= 16; i++) {
+    float moved = smoothstep(1.5, 9.0, distance(P(i), P(i == 16 ? 15 : i + 1)));
+    if (moved <= 0.0) continue;
+    float age = AGE(i);
+    float fade = pow(1.0 - age, 1.3);
+    for (int k = 0; k < 2; k++) {
+      float seed = SID(i) * 5.31 + float(k) * 17.7;
+      vec2 off = vec2((gc_hash(seed + 1.0) - 0.5) * 34.0, (gc_hash(seed + 2.0) - 0.5) * 30.0);
+      vec2 sp = P(i) + off + vec2(0.0, 10.0 * age);
+      float sz = 6.0 + 7.0 * gc_hash(seed + 6.0);
+      vec2 dd = p - sp;
+      if (dot(dd, dd) > sz * sz * 4.0) continue;
+      float rate = 0.7 + 0.9 * gc_hash(seed + 3.0);
+      float tw = 0.3 + 0.7 * pow(0.5 + 0.5 * sin(time * rate * 3.0 + gc_hash(seed + 4.0) * 40.0), 2.0);
+      float g = gc_star(dd, sz) * tw * fade * moved * (0.55 + 0.45 * gc_hash(seed + 7.0));
+      col += mix(gold, pale, 0.55) * g;
+      alpha += g;
+    }
   }
   float a = clamp(alpha, 0.0, 1.0);
   fragColor = vec4(clamp(col, 0.0, 1.0) * (a / max(alpha, 1e-4)), a) * qt_Opacity;
