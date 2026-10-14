@@ -12,6 +12,11 @@ import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+import aigen as _G  # noqa: E402
+if _G.render_ready():  # the Rich flow ends in the render check
+    print("skipped: the Rich flow needs the render check (%s)" % _G.render_ready())
+    sys.exit(0)
 TMP = tempfile.mkdtemp(prefix="omashaders-rich-selftest-")
 os.environ["OMASHADERS_STATE_DIR"] = os.path.join(TMP, "state")
 os.environ["HOME"] = TMP
