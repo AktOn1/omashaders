@@ -22,23 +22,43 @@ def version_of(text):
         return ""
 
 
+def headline(rest):
+    head = re.match(r"\*\*(.+?)\*\*", rest)
+    text = head.group(1) if head else re.split(r"(?<=[.!?])\s", rest)[0]
+    text = re.sub(r"[*`]", "", text).strip()
+    return text if len(text) < 150 else text[:147] + "..."
+
+
 def whats_new(readme, current):
-    out = []
-    sec = re.search(r"^## What's new\s*\n(.*?)(?=^## )", readme, re.S | re.M)
+    """Entries of the README "What's new" section, newest first, as "version: headline".
+    Understands "- **14 Oct 2026, 1.2.3:** text", "- **1.2.3 (date):** text", a "**1.2.3**" line followed by bullets, and plain
+    bullets without versions (listed as they are, never filtered)."""
+    sec = re.search(r"^## What's new([^\n]*)\n(.*?)(?=^## |\Z)", readme, re.S | re.M)
     if not sec:
-        return out
-    for line in sec.group(1).splitlines():
-        m = re.match(r"- \*\*[^*]*?,\s*(\d+(?:\.\d+)+):\*\*\s*(.*)", line)
-        if not m:
+        return []
+    own = re.search(r"\d+(?:\.\d+)+", sec.group(1))
+    out, plain, heading = [], [], own.group(0) if own else ""
+    for line in sec.group(2).splitlines():
+        h = re.match(r"\*\*v?(\d+(?:\.\d+)+)\b[^*]*\*\*\s*$", line.strip())
+        if h:
+            heading = h.group(1)
             continue
-        v, rest = m.group(1), m.group(2)
+        m = re.match(r"- \*\*[^*]*?,\s*(\d+(?:\.\d+)+):\*\*\s*(.*)", line) or re.match(r"- \*\*v?(\d+(?:\.\d+)+)\b[^*]*:\*\*\s*(.*)", line)
+        if m:
+            v, rest = m.group(1), m.group(2)
+            heading = own.group(0) if own else ""
+        else:
+            b = re.match(r"- (.*)", line)
+            if not b:
+                continue
+            v, rest = heading, b.group(1)
+        if not v:
+            plain.append(headline(rest))
+            continue
         if current and vkey(v) <= vkey(current):
             continue
-        head = re.match(r"\*\*(.+?)\*\*", rest)
-        text = head.group(1) if head else re.split(r"(?<=[.!?])\s", rest)[0]
-        text = re.sub(r"[*`]", "", text).strip()
-        out.append(v + ": " + (text if len(text) < 150 else text[:147] + "..."))
-    return out
+        out.append(v + ": " + headline(rest))
+    return out or ([] if current else plain)
 
 
 def main():

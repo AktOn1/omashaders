@@ -25,5 +25,8 @@ if not (pts[-1][0] > 0.85 and pts[-1][1] < 0.2):
     fails.append("does not end top right: %s" % (pts[-1],))
 if any(pts[i + 1][0] < pts[i][0] - 1e-9 for i in range(n)):
     fails.append("goes back to the left")
+p = g.progress_at_x(g.DEMO_SHOW_X)
+if abs(g.sweep_point(mon, p)[0] / 1000 - g.DEMO_SHOW_X) > 0.005:
+    fails.append("terminal does not open a third in from the left: %s" % (g.sweep_point(mon, p),))
 print("FAIL: " + "; ".join(fails) if fails else "ok: path checks pass")
 sys.exit(1 if fails else 0)

@@ -16,6 +16,13 @@ fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 ok() { echo "ok: $*"; }
 mark=$(log | wc -l)
+layout_set() { # Classic | New: the plugin's menuLayout setting (New is the default menu; Classic is the older one)
+  local cfg=$HOME/.config/omarchy/shell.json
+  jq --arg v "$1" '(.. | objects | select(.id? == "io.github.akton1.omashaders")) += {menuLayout: $v}' "$cfg" >"$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+  local want; want=$(echo "$1" | tr 'A-Z' 'a-z')
+  wait_for 20 "status | grep -q 'layout=$want'" || { hostipc reload; wait_for 15 "status | grep -q 'layout=$want'"; } || { omarchy-restart-shell >/dev/null 2>&1; wait_for 40 "status | grep -q 'layout=$want'"; }
+  status | grep -q "layout=$want" && ok "layout is $1 ($(status))" || bad "layout did not become $1: $(status)"
+}
 newlog() { log | tail -n +$((mark + 1)); }
 wait_for() { # SECONDS 'shell expression'
   local t=$1
@@ -27,6 +34,7 @@ reloads() { status | sed -n 's/.*reloads=\([0-9]*\).*/\1/p'; }
 shell_rss() { ps -o rss= -p "$(pgrep -x quickshell | head -1)" | tr -d ' '; }
 mkdir -p "$state"
 
+layout_set New
 # ---------------------------------------------------------------- 1. wallpaper options
 ipc wallpaper aurora; sleep 3; shot wall-zoom100
 echo 200 > "$state/wall-zoom"; sleep 3; shot wall-zoom200
@@ -48,6 +56,7 @@ if [ -n "$bad_shader" ]; then bad "pumpkin-night errors in the shell log: $bad_s
 run_phase() { # NAME DIR  (the plugin is installed the way NAME says; DIR is where its files really are)
   local name=$1 dir=$2 core=$2/Core.qml before n r0 r1 i listing
   echo "== phase $name: files in $dir"
+  layout_set New
   if ! wait_for 60 "status | grep -q 'running=yes'"; then bad "$name: host not running: $(status)"; return; fi
   ok "$name: host running ($(status))"
   cp "$core" "$out/Core.$name.orig"
@@ -216,7 +225,6 @@ EOF
   newlog | grep -iE "TypeError|ReferenceError|is not a type|ThemeDialog.qml.*(error|failed)|Cannot assign|Unable to assign" | head -5 | grep . && bad "theme: QML errors in the log (above)" || ok "theme: no QML errors in the log"
 }
 theme_check
-
 
 echo "screenshots: symlink-0..5 and copied-0..5 (bar icon text HOTRELOAD in -1 and -2, original in -0 and -3; -4 shows the menu with the new wallpaper category and the edited filter placeholder, -5 the filter 'hot test' narrowing it to the new effects)"
 exit $fail

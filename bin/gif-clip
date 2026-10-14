@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""gif-clip FILE: put a GIF on the Wayland clipboard so it pastes everywhere.
+
+Offers image/gif (Firefox, native apps), text/uri-list and x-special/gnome-copied-files (a copied file, which
+Chromium browsers paste as an upload), and image/png of the first frame (apps that only take PNG).
+Stays alive to serve the clipboard and exits when something else is copied. Exit 1 if it could not take it."""
+import os, sys
+
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gdk, Gio, GLib, Gtk
+
+
+def main():
+    path = os.path.abspath(sys.argv[1])
+    data = open(path, "rb").read()
+    uri = Gio.File.new_for_path(path).get_uri()
+    Gtk.init()
+    display = Gdk.Display.get_default()
+    if display is None:
+        return 1
+    cb = display.get_clipboard()
+    parts = [("image/gif", data),
+             ("text/uri-list", (uri + "\r\n").encode()),
+             ("x-special/gnome-copied-files", ("copy\n" + uri).encode())]
+    try:
+        png = Gdk.Texture.new_from_filename(path).save_to_png_bytes().get_data()
+        parts.append(("image/png", png))
+    except Exception:
+        pass
+    provs = [Gdk.ContentProvider.new_for_bytes(t, GLib.Bytes.new(b)) for t, b in parts]
+    if not cb.set_content(Gdk.ContentProvider.new_union(provs)):
+        return 1
+    loop = GLib.MainLoop()
+    cb.connect("changed", lambda c: None if c.is_local() else loop.quit())
+    loop.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -4,12 +4,13 @@
 The code is drawn as dark/light square cells (Reed-Solomon protected), so it survives GIF palettes, lossy video,
 scaling and screenshots. The reader works on any uniformly scaled copy of the picture.
 
-  python3 bin/omsborder.py borders PAYLOAD_FILE TOP.png BOTTOM.png     (prints the plan as JSON)
+  python3 bin/omsborder.py borders PAYLOAD_FILE TOP.png BOTTOM.png [--tint R,G,B]   (prints the plan as JSON)
   python3 bin/omsborder.py decode IMAGE_OR_VIDEO|- [--out FILE]        (prints JSON, - reads stdin)
 """
 import sys
 sys.dont_write_bytecode = True
 import base64
+import colorsys
 import io
 import json
 import math
@@ -38,6 +39,31 @@ CAPTION = "Right-click > Copy image, open OmaShaders > Import theme"
 STRIPE_W, STRIPE_H = 488, 28
 DARK, LIGHT, BG, STRIPE = (14, 38, 46), (96, 148, 158), (9, 27, 34), (4, 8, 10)
 CAPTION_COLOR = (226, 240, 243)
+TINT_BOOST, TINT_MAX_SAT = 1.5, 0.5   # an average colour is dull; dots get a bit more colour, never garish
+
+
+def _luma(c):
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+
+
+def _toned(hue, sat, luma):
+    """A colour of this hue with this grey level; less saturated if the hue cannot get that bright (blue)."""
+    while True:
+        r, g, b = colorsys.hsv_to_rgb(hue, sat, 1.0)
+        k = luma / 255 / max(_luma((r, g, b)), 1e-6)
+        if max(r, g, b) * k <= 1 or sat < 0.01:
+            return tuple(min(255, round(c * k * 255)) for c in (r, g, b))
+        sat *= 0.9
+
+
+def palette(tint=None):
+    """(dark, light, bg, stripe) cell colours. With a tint (the average colour of the picture) they take its hue and
+    a softened saturation but keep the grey levels of the teal default, so the code reads the same."""
+    if tint is None:
+        return DARK, LIGHT, BG, STRIPE
+    hue, sat, _ = colorsys.rgb_to_hsv(*(min(255, max(0, c)) / 255 for c in tint))
+    sat = min(TINT_MAX_SAT, sat * TINT_BOOST)
+    return tuple(_toned(hue, sat, _luma(c)) for c in (DARK, LIGHT, BG, STRIPE))
 
 
 class BorderError(Exception):
@@ -319,14 +345,16 @@ def _caption_font():
         size -= 1
 
 
-def _paint(cells, cs):
-    pal = np.array([DARK, LIGHT], np.uint8)
+def _paint(cells, cs, colors):
+    pal = np.array(colors, np.uint8)
     return np.repeat(np.repeat(pal[cells.astype(np.intp)], cs, axis=0), cs, axis=1)
 
 
-def render_borders(payload, out_top_png, out_bottom_png):
-    """Write the two border PNGs (960 px wide) to stack above and below the picture. Returns the plan."""
+def render_borders(payload, out_top_png, out_bottom_png, tint=None):
+    """Write the two border PNGs (960 px wide) to stack above and below the picture. Returns the plan.
+    tint = (r, g, b) average colour of the picture the dots should match; None keeps the teal default."""
     _need()
+    dark, light, bg, stripe = palette(tint)
     payload = bytes(payload)
     p = plan(len(payload))
     cs, rt, rb = p["cs"], p["rt"], p["rb"]
@@ -349,20 +377,20 @@ def render_borders(payload, out_top_png, out_bottom_png):
     hbits = np.repeat(np.unpackbits(np.frombuffer(head, np.uint8)), HEAD_REP)
     hcells = _filler_bits(WIDTH // HEAD_PX, 0xBEEF1)
     hcells[:len(hbits)] = hbits
-    top = np.concatenate([_paint(hcells[None, :], HEAD_PX), _paint(tcells, cs)])
-    bot = _paint(bcells, cs)
+    top = np.concatenate([_paint(hcells[None, :], HEAD_PX, (dark, light)), _paint(tcells, cs, (dark, light))])
+    bot = _paint(bcells, cs, (dark, light))
 
     img = Image.fromarray(bot)
     d = ImageDraw.Draw(img)
     sr, (c0, c1) = _stripe_rows(cs), _stripe_cols(cs)
     sa = (rb - sr) // 2 * cs
     area_w, area_h = (c1 - c0) * cs, sr * cs
-    d.rectangle([c0 * cs, sa, c0 * cs + area_w - 1, sa + area_h - 1], fill=BG)
+    d.rectangle([c0 * cs, sa, c0 * cs + area_w - 1, sa + area_h - 1], fill=bg)
     ox, oy = c0 * cs + (area_w - STRIPE_W) // 2, sa + (area_h - STRIPE_H) // 2
-    d.rectangle([ox, oy, ox + STRIPE_W - 1, oy + STRIPE_H - 1], fill=STRIPE)
+    d.rectangle([ox, oy, ox + STRIPE_W - 1, oy + STRIPE_H - 1], fill=stripe)
     for cx in (ox, ox + STRIPE_W - cs):
         for cy in (oy, oy + STRIPE_H - cs):
-            d.rectangle([cx, cy, cx + cs - 1, cy + cs - 1], fill=LIGHT)
+            d.rectangle([cx, cy, cx + cs - 1, cy + cs - 1], fill=light)
     d.text(((c0 + c1) * cs // 2, sa + area_h // 2), CAPTION, font=_caption_font(), fill=CAPTION_COLOR, anchor="mm")
 
     Image.fromarray(top).save(out_top_png)
@@ -542,7 +570,8 @@ def decode(source):
 def _cli(argv):
     if len(argv) >= 5 and argv[1] == "borders":
         data = open(argv[2], "rb").read()
-        print(json.dumps(render_borders(data, argv[3], argv[4])))
+        tint = tuple(int(v) for v in argv[argv.index("--tint") + 1].split(",")) if "--tint" in argv else None
+        print(json.dumps(render_borders(data, argv[3], argv[4], tint)))
         return 0
     if len(argv) >= 3 and argv[1] == "decode":
         out = None

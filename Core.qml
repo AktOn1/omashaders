@@ -1549,7 +1549,7 @@ Item {
   readonly property string aiCommand: String(setting("aiCommand", "") || "")
   readonly property string aiProviderSetting: String(setting("aiProvider", "Remembered choice") || "")
   readonly property string aiModelSetting: String(setting("aiModel", "") || "")
-  readonly property var aiProviderIds: ({ "Claude Code": "claude", "Codex": "codex", "Gemini CLI": "gemini", "OpenCode": "opencode", "Ollama (local)": "ollama", "Custom command": "custom" })
+  readonly property var aiProviderIds: ({ "Claude Code": "claude", "Codex": "codex", "Gemini CLI": "gemini", "OpenCode": "opencode", "Ollama (local)": "ollama", "OpenAI-compatible endpoint": "endpoint", "Custom command": "custom" })
   property string aiHint: ""
   property bool aiStrong: true
   property string aiProviderNow: "claude"
@@ -1725,20 +1725,31 @@ Item {
   function pal(key, fallback) { return root.palette[key] || fallback }
 
   // ---------------------------------------------------------------- pause while fullscreen, and sound for audio-* effects
-  // With "pause while fullscreen" on, every effect stops while the focused monitor shows a fullscreen window. The shell side
-  // (wallpaper, cursor, bend) just follows effectsOff; the Hyprland side (screen shader, window shaders, frames) is paused with
-  // `omashaders fullscreen pause` / `resume`, which keeps a manual pause (the Enabled box) separate.
+  // With "pause while fullscreen" on, the screen, wallpaper and cursor effects stop on each monitor that shows a fullscreen window;
+  // the other monitors keep theirs. The shell side (wallpaper, cursor) leaves those monitors out (fsOffScreens); the Hyprland side
+  // (screen shader, bend) skips them by monitor id with `omashaders fullscreen pause IDS` / `resume`, which keeps a manual pause
+  // (the Enabled box) separate. Window shaders need no pause: HyprWindowShade already drops them on a fullscreen window.
   property bool fsPauseOn: false
-  property bool fsActive: false
-  readonly property bool fsPaused: fsPauseOn && fsActive
-  readonly property bool effectsOff: paused || fsPaused
+  property var fsMonitors: [] // [{ id, name }] of the monitors that show a fullscreen window
+  readonly property var fsOffScreens: fsPauseOn ? fsMonitors.map(function(m) { return m.name }) : []
+  readonly property string fsIds: fsOffScreens.length > 0 ? fsMonitors.map(function(m) { return m.id }).join(",") : ""
+  readonly property bool effectsOff: paused
   Process {
     running: root.fsPauseOn && root.fxHost
     command: [root.fsWatchScript]
-    stdout: SplitParser { onRead: function(line) { root.fsActive = line.trim() === "1" } }
+    stdout: SplitParser {
+      onRead: function(line) {
+        var out = []
+        line.trim().split(" ").forEach(function(t) {
+          var i = t.indexOf(":")
+          if (i > 0) out.push({ id: Number(t.slice(0, i)), name: t.slice(i + 1) })
+        })
+        root.fsMonitors = out
+      }
+    }
   }
-  onFsPausedChanged: Quickshell.execDetached([root.script, "fullscreen", fsPaused ? "pause" : "resume"])
-  onFsPauseOnChanged: if (!fsPauseOn) { fsActive = false; Quickshell.execDetached([root.script, "fullscreen", "resume"]) }
+  onFsIdsChanged: Quickshell.execDetached(fsIds === "" ? [root.script, "fullscreen", "resume"] : [root.script, "fullscreen", "pause", fsIds])
+  onFsPauseOnChanged: if (!fsPauseOn) fsMonitors = []
   function setFsPause(v) { Quickshell.execDetached([root.script, "fullscreen", v ? "on" : "off"]) }
 
   // effects named audio-* react to what the speakers play: bin/audio-level prints "level bass mid treble" (0-1) and runs only while one is on
@@ -1775,6 +1786,7 @@ Item {
       treble: root.audioTreble,
       range: root.wallRange / 100,
       targetColor: "#" + root.wallTarget,
+      offScreens: root.fsOffScreens,
       effect: root.fxHost && !root.effectsOff ? root.wallShown : "",
       effect2: root.fxHost && !root.effectsOff && root.wallPreview === "" ? root.mixSecondOf("wall") : "",
       mixMode: root.wallMixMode,
@@ -1863,6 +1875,7 @@ Item {
     props: ({
       genDir: "file://" + root.stateDir + "/generated",
       strength: root.mouseStrength / 100,
+      offScreens: root.fsOffScreens,
       effect: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : "",
       motion: root.mouseMotion,
       size: root.mouseSize / 100,
@@ -2485,66 +2498,6 @@ Item {
     onTriggered: if (!gpuProc.running) gpuProc.running = true
   }
 
-  // ---------------------------------------------------------------- plugin updates (omarchy plugin update)
-  readonly property string pluginId: "io.github.akton1.omashaders"
-  property bool updAvail: false
-  property bool updOpen: false
-  property bool updBusy: false
-  property string updState: ""        // "", "ok" or "fail" after an update run
-  property string updOut: ""
-  property string updCur: ""
-  property string updLatest: ""
-  property bool updDirty: false
-  property var updChanges: []
-  property var updRecent: []
-  readonly property string updCmd: "omarchy plugin update " + pluginId + " --yes"
-  property double updCheckedAt: 0
-  function checkUpdates() {
-    if (updBusy || updCheck.running) return
-    updCheckedAt = Date.now()
-    updCheck.running = true
-  }
-  function runUpdate() {
-    if (updBusy) return
-    updBusy = true
-    updState = ""
-    updOut = ""
-    updRun.running = true
-  }
-  function toggleUpdate() {
-    updOpen = !updOpen
-    if (updOpen && !updAvail && updState === "") checkUpdates()
-  }
-  Process {
-    id: updCheck
-    command: ["python3", root.path("bin/update-check"), root.path(".")]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try {
-          var d = JSON.parse(String(text).trim())
-          root.updAvail = d.available === true
-          root.updCur = String(d.current || ""); root.updLatest = String(d.latest || "")
-          root.updChanges = d.changes || []; root.updRecent = d.recent || []; root.updDirty = d.dirty === true
-        } catch (e) { }
-      }
-    }
-  }
-  Process {
-    id: updRun
-    command: ["bash", "-c", 'omarchy plugin update "$1" --yes 2>&1', "bash", root.pluginId]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updOut = String(text).trim().split("\n").slice(-4).join("\n")
-    }
-    onExited: function(exitCode, exitStatus) {
-      root.updBusy = false
-      root.updState = exitCode === 0 ? "ok" : "fail"
-      if (exitCode === 0) root.updAvail = false
-    }
-  }
-  Timer { id: updFirstCheck; interval: 25000; running: true; onTriggered: root.checkUpdates() }
-
   // ---------------------------------------------------------------- menu actions
   property bool popupOpen: false
   property bool viaEnter: false
@@ -2591,9 +2544,9 @@ Item {
   }
   onPopupOpenChanged: {
     if (!popupOpen) renaming = false
-    if (!popupOpen) updOpen = false
+    if (!popupOpen) wn.close()
     if (popupOpen) {
-      if (Date.now() - updCheckedAt > 1800000) checkUpdates()
+      wn.refresh()
       lister.running = true
       panicProc.running = true
       screenOrigin = current
@@ -2760,7 +2713,7 @@ Item {
   }
   function moveKeys(dx, dy) {
     hoverPreviewing = false
-    if (updOpen) { if (dy !== 0) updFlick.scrollBy(dy * Style.space(60)); return }
+    if (wn.open) { if (dy !== 0) wn.scrollBy(dy * Style.space(60)); return }
     if (winPickOpen) {
       if (dy !== 0) winSec.pickerIdx = clamp(winSec.pickerIdx + dy, 0, winAppItems.length - 1)
       else if (dx < 0) winPickOpen = false
@@ -2782,7 +2735,7 @@ Item {
     else if (winPickOpen) { if (t === "q") close(); else if (t === "g") winSec.pickerIdx = 0; else if (t === "G") winSec.pickerIdx = winAppItems.length - 1 }
     else if (t === "/") focusSearch()
     else if (t === "q") close()
-    else if (t === "U") toggleUpdate()
+    else if (t === "U") wn.toggle()
     else if (t === "?") keysOpen = !keysOpen
     else if (t === "o" || t === "0") offIn(k)
     else if (t === "O") offAll()
@@ -4306,7 +4259,7 @@ Item {
         else root.activeSec.activate(!root.viaEnter, root.ctrlDown)
         root.viaEnter = false
       }
-      onCloseRequested: { if (root.updOpen) root.updOpen = false; else if (root.winPickOpen) root.winPickOpen = false; else if (root.query !== "") root.clearSearch(); else root.close() }
+      onCloseRequested: { if (wn.open) wn.close(); else if (root.winPickOpen) root.winPickOpen = false; else if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
       Keys.forwardTo: [shiftWatcher]
       Item {
@@ -4343,7 +4296,7 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: Style.space(4)
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(implicitWidth, header.width - pauseBtn.width - fsBtn.width - (updBtn.visible ? updBtn.width : 0) - 4 * Style.space(8))
+            width: Math.min(implicitWidth, header.width - pauseBtn.width - fsBtn.width - wn.width - 4 * Style.space(8))
             elide: Text.ElideRight
             textFormat: Text.PlainText
             text: root.paused ? "Effects are off. Press p" + (root.panicKey !== "" ? " or " + root.panicKey : "") + " to bring them back."
@@ -4392,14 +4345,15 @@ Item {
             label: (root.fsPauseOn ? root.boxOn : root.boxOff) + " 󰊓 Pause in fullscreen (e)"
             onClicked: root.setFsPause(!root.fsPauseOn)
           }
-          MenuRow {
-            id: updBtn
+          WhatsNewButton {
+            id: wn
+            pluginId: "io.github.akton1.omashaders"
+            keyHint: "Shift+U"
             anchors.right: parent.right
-            width: Style.space(190)
-            height: header.height
-            label: root.updState === "ok" ? "󰚰 Updated, see below"
-                   : (root.updAvail ? "󰚰 Update " + root.updLatest + " (u)" : "󰋽 What's new (u)")
-            onClicked: root.toggleUpdate()
+            anchors.verticalCenter: parent.verticalCenter
+            flyoutParent: keys
+            fg: root.fg
+            fontFamily: root.bar.fontFamily
           }
         }
 
@@ -5061,148 +5015,6 @@ Item {
           }
         }
         }
-        }
-      }
-
-      // update flyout: what changed, and the button that runs `omarchy plugin update`
-      Rectangle {
-        id: updFly
-        visible: root.updOpen
-        z: 20
-        width: Math.min(parent.width - Style.space(20), Style.space(560))
-        height: updCol.implicitHeight + Style.space(24)
-        x: parent.width - width - Style.space(10)
-        y: Style.space(38)
-        radius: Style.space(8)
-        color: root.bgA(1)
-        border.width: 1
-        border.color: root.fgA(0.6)
-
-        Column {
-          id: updCol
-          x: Style.space(12)
-          y: Style.space(12)
-          width: parent.width - Style.space(24)
-          spacing: Style.space(8)
-
-          Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            textFormat: Text.PlainText
-            text: root.updState === "ok" ? "Updated" + (root.updLatest !== "" ? " to " + root.updLatest : "")
-                  : (root.updState === "fail" ? "The update did not finish"
-                  : (root.updAvail ? "Update available" + (root.updLatest !== "" ? ": " + (root.updCur !== "" ? root.updCur + " to " : "") + root.updLatest : "")
-                  : "Latest updates" + (root.updCur !== "" ? " (you have " + root.updCur + ")" : "")))
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 1.1
-            font.bold: true
-          }
-          Text {
-            visible: root.updState === ""
-            width: parent.width
-            textFormat: Text.PlainText
-            text: root.updAvail ? "What changed (scroll for more)" : "All updates so far, newest first (scroll)"
-            opacity: 0.7
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 0.9
-          }
-          Flickable {
-            id: updFlick
-            visible: root.updState === ""
-            width: parent.width
-            height: Math.min(contentHeight, Math.round(updFly.parent.height * 0.5))
-            contentWidth: width
-            contentHeight: updList.height
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            function scrollBy(d) {
-              cancelFlick()
-              contentY = Math.max(0, Math.min(Math.max(0, contentHeight - height), contentY + d))
-            }
-            WheelHandler {
-              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-              onWheel: function(event) { updFlick.scrollBy(-(event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y * 1.25)) }
-            }
-            Rectangle {
-              visible: updFlick.contentHeight > updFlick.height
-              x: updFlick.width - width
-              y: updFlick.contentY + updFlick.contentY / Math.max(1, updFlick.contentHeight - updFlick.height) * (updFlick.height - height)
-              width: Style.space(4)
-              height: Math.max(Style.space(30), updFlick.height * updFlick.height / updFlick.contentHeight)
-              radius: width / 2
-              color: root.fgA(0.4)
-              z: 5
-            }
-            Column {
-              id: updList
-              width: updFlick.width - Style.space(10)
-              spacing: Style.space(3)
-              Repeater {
-                model: root.updAvail ? root.updChanges : root.updRecent
-                delegate: Text {
-                  required property string modelData
-                  width: parent.width
-                  wrapMode: Text.WordWrap
-                  textFormat: Text.PlainText
-                  text: "·  " + modelData
-                  color: root.fg
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.body * 0.95
-                }
-              }
-            }
-          }
-          Text {
-            visible: root.updState === "" && root.updDirty
-            width: parent.width
-            wrapMode: Text.WordWrap
-            textFormat: Text.PlainText
-            text: "This copy has local edits. The update may refuse to run until they are saved or undone."
-            color: root.fg
-            opacity: 0.85
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 0.9
-          }
-          Text {
-            visible: root.updState !== ""
-            width: parent.width
-            wrapMode: Text.WordWrap
-            textFormat: Text.PlainText
-            text: root.updState === "ok" ? "Restart the shell to load the new version. The bar is gone for a minute or two." : root.updOut
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 0.95
-          }
-          Row {
-            width: parent.width
-            spacing: Style.space(8)
-            MenuRow {
-              visible: root.updAvail && (root.updState === "" || root.updState === "fail")
-              width: Math.floor((parent.width - parent.spacing * 2) / 3)
-              label: root.updBusy ? "Updating..." : (root.updState === "fail" ? "Try again" : "Update now")
-              dim: root.updBusy
-              onClicked: root.runUpdate()
-            }
-            MenuRow {
-              visible: root.updAvail && root.updState !== "ok"
-              width: Math.floor((parent.width - parent.spacing * 2) / 3)
-              label: "Copy command"
-              onClicked: { Quickshell.execDetached(["wl-copy", root.updCmd]); root.flash("Copied: " + root.updCmd) }
-            }
-            MenuRow {
-              visible: root.updState === "ok"
-              width: Math.floor((parent.width - parent.spacing) / 2)
-              label: "Restart the shell now"
-              onClicked: Quickshell.execDetached(["omarchy-restart-shell"])
-            }
-            MenuRow {
-              width: root.updAvail && root.updState !== "ok" ? Math.floor((parent.width - parent.spacing * 2) / 3) : Math.floor((parent.width - parent.spacing) / 2)
-              label: root.updState === "ok" ? "Later" : (root.updAvail ? "Not now" : "Close")
-              onClicked: root.updOpen = false
-            }
-          }
         }
       }
     }

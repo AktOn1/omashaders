@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The scripted terminal session shown in the share GIF (run inside the demo terminal by bin/gif-capture).
 
-  gif-demo --go FLAG --state DIR [--name THEME] [--plain]
+  gif-demo --go FLAG --state DIR [--name THEME] [--plain] [--flavour FILE]
 
 The session is the same on every machine: an empty prompt with a blinking cursor, then (once FLAG exists, which the
 recorder creates when the recording starts) `omashaders theme apply NAME` is typed, its answer lists the look's parts,
 a second command follows. Timing is 12 steps per second, like the preview GIFs this look comes from.
 """
-import argparse, os, re, sys, time
+import argparse, json, os, re, sys, time
 
 FPS, CPF = 12, 2  # steps per second, characters typed per step
 T_BLANK = 5
@@ -20,44 +20,11 @@ PARTS = [  # label, state file, strength file, icon, plain icon, colour
 ]
 
 
-# Second command of the session: what a person would really type to get the look's feeling, answered by a small
-# made-up read-out (like the `depth` line of the Abyss preview GIF). If the NAME fits a topic below (word starts) the
-# topic supplies both; otherwise the command is a real-looking tool pointed at one word of the name, answered in
-# name words, moods and effects. With no name the word comes from the effect names.
-FLAVOURS = [
-    (("pumpkin", "halloween"), "./carve-pumpkin --grin wide", "teeth: 7 · candle: lit"),
-    (("taco",), "curl wttr.in/taco", "chance of tacos: 100%"),
-    (("jazz", "smoky", "blues", "sax"), "mpv --shuffle ~/music/smoky-jazz", "now playing: saxophone · smoke: 60%"),
-    (("marlboro", "speed", "racing", "redline"), "nice -n -20 ./redline", "speed: 312 · speedlines: 80%"),
-    (("fallout", "shelter", "vault", "bunker"), "systemctl status vault-door", "sealed · cans: 12 · morale: glowing"),
-    (("detective", "noir", "mystery", "crime", "sleuth"), 'grep -r "alibi" /var/log/rain.log', "0 matches · suspects: 3 · rain: steady"),
-    (("haunted", "ghost", "crypt", "witch", "gothic", "graveyard", "manor"), "./summon-ghosts.sh", "ghosts: 3 awake · temperature: -4°"),
-    (("abyss", "deep", "sea", "ocean", "reef", "plankton", "tide", "lagoon"), "dive --depth 4000m", "4000 m · 400 atm · light: none"),
-    (("pond", "lotus", "lake", "koi", "river", "water"), "tail -f /var/log/pond/ripples.log", "ripple +1 · frog: nearby · koi: smug"),
-    (("forest", "grove", "wood", "leaf", "moss", "jungle", "fern", "canopy", "pine"), "cat /dev/forest | less", "canopy: dense · birds: 14"),
-    (("space", "star", "galaxy", "nebula", "cosmos", "orbit", "void", "observ", "hyperdrive", "bridge"), "ping -c 3 andromeda", "no reply · lightyears: 2.5M"),
-    (("desert", "dune", "sand", "saloon", "canyon", "mirage"), "watch -n 5 cat /sys/class/thermal/sun", "42 °C · wind 18 km/h · shade: none"),
-    (("ember", "lava", "volcano", "fire", "magma", "hearth", "coal"), "systemctl --user start fireplace", "fire: low · logs: 2 · room: 24 °C"),
-    (("snow", "ice", "frost", "winter", "aurora", "glacier", "polar", "cabin"), "systemctl --user start snowfall", "-18 °C · wind 22 km/h · aurora: likely"),
-    (("sakura", "blossom", "petal", "bloom"), "tail -f /var/log/sakura/petals.log", "petal falling · wind: soft · day 6 of bloom"),
-    (("sunset", "dusk", "dawn", "golden", "horizon", "twilight", "honey"), "watch -n 60 date --sunset", "golden hour · 18:42"),
-    (("moon", "night sky", "midnight"), "curl wttr.in/moon", "phase: 87% · rise 21:14 · sky: clear"),
-    (("lantern", "izakaya", "alley", "tea"), "systemctl --user start lanterns", "lit: 24 · glow: warm red · crowd: quiet"),
-    (("ink", "washi", "brush", "wave", "aquarelle", "paper", "sketch"), "tail -f /var/log/brush/strokes.log", "stroke: slow · ink: sumi · paper: washi"),
-    (("lavender", "cloud", "sky"), "curl wttr.in/sky", "cloud cover 30% · wind: calm · view: far"),
-    (("mainframe", "matrix", "machine", "terminal", "hacker", "crt"), "uptime", "up 412 days · load: 0.04 · users: 1"),
-    (("city", "neon", "cyber", "synth", "skyline", "blade"), "tail -f /var/log/city/neon.log", "rain: yes · neon 87% · traffic: low"),
-    (("rain", "storm", "thunder", "drizzle", "monsoon"), "curl wttr.in/rain", "rain 4 mm/h · wind 12 km/h · umbrella: yes"),
-    (("library", "study", "lamp", "cafe", "lounge", "book"), "systemctl --user start reading-lamp", "bulb: warm · pages: many · tea: cooling"),
-]
+# Second command of the session: a made-up, tongue-in-cheek command that someone who knows the theme's topic would
+# smile at, answered by a one-line read-out. The AI the theme creator uses writes it (`--prepare`, run by gif-capture
+# before the recording and stored in the --flavour file); with no AI, or when it fails, the command is a real-looking
+# tool pointed at one word of the name, answered in name words, moods and effects.
 STOP = {"the", "a", "an", "of", "and", "my", "night", "hour", "calm", "light", "glow", "soft", "new"}
-
-
-def match(text):
-    for words, cmd, out in FLAVOURS:
-        if any(re.search(r"\b" + re.escape(w), text) for w in words):
-            return cmd, out
-    return None
 
 
 GENERIC = {"my", "theme", "look", "untitled", "new", "custom", "copy"}
@@ -102,10 +69,55 @@ def made_up(name, rows):
     return cmd, out
 
 
-def flavour(name, rows):
-    hit = match(name.lower())
-    if hit:
-        return hit
+SYSTEM = "You write one joke line for a screenshot of a desktop theme. Answer with one JSON object and nothing else."
+PROMPT = """A desktop theme is called "%s"%s.
+Write the LAST line of a terminal demo: a made-up shell command that fits this theme's topic and makes a person who knows
+that topic smile (a nerdy in-joke, a fitting tool, flag or file name). It does not have to exist. Then one line the command
+prints, with a couple of made-up read-outs in the same spirit.
+Rules: the command is at most 44 characters, the output at most 62, plain ASCII except the middle dot, no quotes
+around the whole thing, nothing that could hurt a computer. Never write about the desktop theme itself, only the topic.
+Example for a theme called Abyss: {"command": "dive --depth 4000m", "output": "4000 m \u00b7 400 atm \u00b7 light: none"}
+Answer: {"command": "...", "output": "..."}"""
+
+
+def clean_line(v, limit):
+    v = re.sub(r"[^\x20-\x7e\u00b7\u00b0\u2013\u2014]", "", str(v or "")).strip()
+    return v if 2 <= len(v) <= limit else ""
+
+
+def ask_ai(name, rows):
+    """-> (command, output) from the AI the theme creator uses, or None."""
+    try:
+        import aiprov
+        ch = aiprov.choice()
+        if not aiprov.availability(ch)["available"]:
+            return None
+        if ch["provider"] == "claude":
+            ch["model"] = "haiku"
+        effects = ", ".join(r[1] for r in rows)
+        text, _ = aiprov.call(ch, SYSTEM, PROMPT % (name, (" (it uses the effects: %s)" % effects) if effects else ""), timeout=45)
+        m = re.search(r"\{.*?\}", text, re.S)
+        d = json.loads(m.group(0)) if m else {}
+    except Exception:
+        return None
+    cmd, out = clean_line(d.get("command"), 44), clean_line(d.get("output"), 62)
+    return (cmd, out) if cmd and out else None
+
+
+def prepare(path, name, rows):
+    hit = ask_ai(name, rows) if name else None
+    with open(path, "w") as f:
+        json.dump({"command": hit[0], "output": hit[1]} if hit else {}, f)
+    return hit
+
+
+def flavour(name, rows, path=""):
+    try:
+        d = json.load(open(path)) if path else {}
+        if d.get("command") and d.get("output"):
+            return d["command"], d["output"]
+    except (OSError, ValueError, AttributeError):
+        pass
     return made_up(name, rows)
 
 
@@ -131,10 +143,10 @@ def parts(state):
 
 
 class Session:
-    def __init__(self, name, rows, plain):
+    def __init__(self, name, rows, plain, flavour_file=""):
         self.name, self.rows, self.plain = name, rows, plain
         self.cmd1 = "omashaders theme apply " + (('"%s"' % name) if " " in name else name)
-        self.cmd2, self.out2 = flavour(name, rows)
+        self.cmd2, self.out2 = flavour(name, rows, flavour_file)
         self.t_type1 = T_BLANK
         self.t_enter1 = self.t_type1 + (len(self.cmd1) + CPF - 1) // CPF
         self.t_apply = self.t_enter1 + 3
@@ -191,9 +203,16 @@ def main():
     p.add_argument("--state", required=True)
     p.add_argument("--name", default="")
     p.add_argument("--plain", action="store_true")
+    p.add_argument("--flavour", default="", help="JSON file with the second command (written by --prepare)")
+    p.add_argument("--prepare", action="store_true", help="ask the AI for the second command, write it to --flavour and exit")
     a = p.parse_args()
+    if a.prepare:
+        if not a.flavour:
+            p.error("--prepare needs --flavour")
+        prepare(a.flavour, a.name, parts(a.state))
+        return
     if a.duration:
-        sess = Session(a.name or "my theme", parts(a.state), False)
+        sess = Session(a.name or "my theme", parts(a.state), False, a.flavour)
         print("%.2f" % ((sess.t_out2 + 4) / FPS if sess.cmd2 else (sess.t_done + 4) / FPS))
         return
     if not a.go:
@@ -202,13 +221,13 @@ def main():
     out.write("\033[?25l\033[2J\033[H")
     out.flush()
     name = a.name or "my theme"
-    session = Session(name, [], a.plain)
+    session = Session(name, [], a.plain, a.flavour)
     start, t0, last = time.monotonic(), None, None
     while True:
         now = time.monotonic()
         if t0 is None and os.path.exists(a.go):
             t0 = now
-            session = Session(name, parts(a.state), a.plain)  # the look was applied after this terminal opened
+            session = Session(name, parts(a.state), a.plain, a.flavour)  # the look was applied after this terminal opened
         f = int((now - t0) * FPS) if t0 is not None else int((now - start) * FPS) % 6
         text = session.frame(f)
         if text != last:

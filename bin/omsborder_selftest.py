@@ -151,6 +151,35 @@ def run(tmp):
         pad.paste(small, (60, 30))
         roundtrip("%d B: PNG with a plain margin around it" % n, pad, data)
 
+    # bright dots take the tint of the picture, readable contrast stays
+    import colorsys
+    data = payload(1000, 3)
+    for name, tint in (("red", (150, 40, 40)), ("green", (40, 140, 60)), ("blue", (30, 50, 160)),
+                       ("orange", (190, 120, 40)), ("grey", (90, 90, 90)), ("near black", (6, 5, 4)), ("white", (250, 250, 250))):
+        d = os.path.join(tmp, "tint-" + name.replace(" ", ""))
+        os.makedirs(d)
+        top, bot, gif = (os.path.join(d, x) for x in ("top.png", "bottom.png", "out.gif"))
+        ob.render_borders(data, top, bot, tint=tint)
+        f = np.array(Image.open(top).convert("RGB"), dtype=np.float64)[ob.HEAD_PX:]
+        grey = f @ [0.299, 0.587, 0.114]
+        lit = f[grey > (grey.min() + grey.max()) / 2].mean(0)
+        luma = lit @ [0.299, 0.587, 0.114]
+        ref = np.array(ob.LIGHT) @ [0.299, 0.587, 0.114]
+        check(abs(luma - ref) < 4, "%s tint: bright dots keep the same brightness for reading (%.0f vs %.0f)" % (name, luma, ref))
+        hl, hs, _ = colorsys.rgb_to_hsv(*(lit / 255))
+        ht, ts, _ = colorsys.rgb_to_hsv(*(np.array(tint) / 255))
+        if ts > 0.3 and max(tint) > 40:
+            dh = min(abs(hl - ht), 1 - abs(hl - ht)) * 360
+            check(dh < 12 and hs > 0.1, "%s tint: bright dots have the picture's colour (hue off by %.0f deg)" % (name, dh))
+        if ts < 0.05:
+            check(hs < 0.1, "%s tint: grey picture gets grey dots" % name)
+        stack(base, top, bot, gif)
+        roundtrip("%s tint: GIF reads back" % name, gif, data)
+        roundtrip("%s tint: frame reads back" % name, frame(gif, 10), data)
+    ob.render_borders(data, os.path.join(tmp, "n1.png"), os.path.join(tmp, "n2.png"))
+    ob.render_borders(data, os.path.join(tmp, "m1.png"), os.path.join(tmp, "m2.png"), tint=None)
+    check(open(os.path.join(tmp, "n1.png"), "rb").read() == open(os.path.join(tmp, "m1.png"), "rb").read(), "no tint gives the original teal border")
+
     # damage and corruption, on the 1,000 byte picture
     data = payload(1000, 1000)
     d = os.path.join(tmp, "1000")

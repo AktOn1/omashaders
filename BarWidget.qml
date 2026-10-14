@@ -12,7 +12,10 @@ BarWidget {
   id: root
   moduleName: "io.github.akton1.omashaders"
 
-  readonly property var files: ["Core.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml", "Wallhaven.qml", "ThemeDialog.qml"]
+  // "New" (default) is the themes layout; "Classic" is the older menu with Screen, Color, Wallpaper, Cursor, Windows and Combos columns
+  readonly property bool newLayout: String(setting("menuLayout", "New")) !== "Classic"
+  readonly property var files: newLayout ? ["Core.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml", "Wallhaven.qml", "ThemeDialog.qml"] : ["CoreClassic.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml"]
+  onNewLayoutChanged: debounce.restart()
   property int reloads: 0
   property string reloadError: ""
   property var core: null
@@ -105,7 +108,7 @@ BarWidget {
   IpcHandler {
     target: "io.github.akton1.omashaders-host"
     function reload(): void { root.broadcast("reload") }
-    function status(): string { return "reloads=" + root.reloads + " running=" + (root.core ? "yes" : "no") + " error=" + (root.reloadError === "" ? "none" : root.firstLine(root.reloadError)) }
+    function status(): string { return "layout=" + (root.newLayout ? "new" : "classic") + " reloads=" + root.reloads + " running=" + (root.core ? "yes" : "no") + " error=" + (root.reloadError === "" ? "none" : root.firstLine(root.reloadError)) }
   }
 
   Component.onCompleted: reload()
