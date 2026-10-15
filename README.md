@@ -12,6 +12,10 @@ Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar ico
 
 ## What's new
 
+**1.39.0 (15 Oct 2026)**
+
+- **Palette: make your own colour grade.** In the Color list, **Palette…** opens an editor. A palette is 2 to 5 colours the screen's brightness is mapped onto (dark colour on the left, bright on the right), plus **Keep original** (how much of the real colours stays), **Saturation**, **Contrast**, **Midtones**, a **tint for the shadows and one for the lights** (the original colours are pushed toward a hue in the dark or bright parts, brightness unchanged) and **Flat levels** (2 to 15 steps per channel, for a poster look). The screen changes live as you edit; **Start from** lists a few starters and a copy of 122 of the built-in grades. A palette is a normal colour name (`pal-…`), so Color strength, favourites (`f` in the editor), themes, share codes, AI themes and per-app windows work with it unchanged. `docs/palette-coverage.md` says which built-in grades a palette can reproduce (111 exactly, 11 closely) and why 18 cannot (for example invert, and the grades that treat some hues differently); the built-in grades stay as they are.
+
 **1.38.1 (15 Oct 2026)**
 
 - **The text boxes no longer use Qt's built-in text input.** Qt's own text fields read the clipboard by themselves whenever another program changes it, before any length limit applies. The search, rename, hex-colour, Wallhaven, theme-dialog and AI-settings boxes are now drawn by the plugin (`PlainField.qml`) and never touch the clipboard on their own. Typing, selecting (shift+arrows, `Ctrl+A`, double click), word delete and Enter work as before. `Ctrl+V` and `Shift+Insert` still paste, but through a separate `wl-paste` process with a 2-second deadline and a hard size limit; middle click does not paste.

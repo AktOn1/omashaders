@@ -1,0 +1,949 @@
+#!/usr/bin/env python3
+"""palette-fit: measure which of the shipped colour grades (colors/*.frag) a Palette (bin/omspalette.py) can reproduce.
+
+    palette-fit [options]
+
+What it does
+  1. Builds a test picture (320x248): a grey ramp strip, a grid of 20 hues x 12 brightness/saturation steps, bands of skin tones,
+     greens, blues and desktop-style colours, and a smooth natural-looking area (sky, ground, a sun, a skin-coloured blob, noise).
+  2. Renders every colors/*.frag over it with bin/shader-preview (CPU, no display, cached in the scratch directory).
+  3. Fits palette parameters to each render: the colour stops are solved by linear least squares for any given set of
+     non-linear parameters (stop positions, gamma, keep, saturation, contrast, tints); those are searched by coordinate descent
+     from several starting points (stop positions come from the grade's grey-ramp response); then everything is polished.
+     The result is quantised to a real palette id and re-measured with omspalette.render() on the whole picture.
+  4. Classifies by the abs error over all pixels and channels:
+         exact  mean <= 0.012 and 99th percentile <= 0.05   (visually identical)
+         close  mean <= 0.030 and 99th percentile <= 0.12   (same look, small differences)
+         no     anything worse
+     Grades are fitted as rendered, i.e. at 100 % strength (the strength slider is applied outside the shader).
+  5. Hold-out check: the fitted palette is also scored on a second picture that was never fitted on. A grade gets the worse of
+     its two classes, so a palette that only matches the fitting picture does not count.
+
+Options
+  --scratch DIR     work directory (default: a new temp dir; reuse one to keep the render and fit caches)
+  --jobs N          parallel workers (default: all cores)
+  --only a,b,c      only these grades
+  --refit           ignore cached fits (cached renders are reused if the shader and picture are unchanged)
+  --tsv FILE        write the exact/close presets (default palettes/presets.tsv; "-" = do not write)
+  --report FILE     write all results as JSON
+  --sheet FILE      write a contact sheet PNG (every "no" grade plus a sample of exact/close ones)
+  --gaps            also prototype extra engine features in the fitter only (smooth stop interpolation, colour invert,
+                    uneven luma steps, 7 stops, post-mix saturation/contrast, hue keep, per-channel gain, colour matrix,
+                    nearest-colour snap), and print how many grades each would move to exact/close
+  --validate        check every emitted id: compose-shader --custom ... then glslangValidator -S frag
+  --picture FILE    only write the test picture there and exit
+Needs python3, numpy, Pillow, bin/shader-preview (Mesa), and glslangValidator for --validate.
+"""
+import os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):  # one thread per worker: the workers are the parallelism
+    os.environ.setdefault(_v, "1")
+import argparse, colorsys, glob, hashlib, json, math, multiprocessing as mp, os, subprocess, sys, tempfile, time
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+import omspalette as P  # noqa: E402
+
+LUMA = np.array(P.LUMA)
+EXACT = (0.012, 0.05)
+CLOSE = (0.030, 0.12)
+W, H = 320, 248
+PIC_TAG = "x"
+SEARCH_PX = 5000
+POLISH_PX = 30000
+
+
+# ----------------------------------------------------------------------------- test picture
+
+def _noise(rng, h, w, cell):
+    small = rng.random((h // cell + 3, w // cell + 3)).astype("float32")
+    big = Image.fromarray(small, "F").resize(((w // cell + 3) * cell, (h // cell + 3) * cell), Image.BICUBIC)
+    return np.asarray(big)[:h, :w]
+
+
+def build_picture():
+    img = np.zeros((H, W, 3), dtype=float)
+    # rows 0-15: grey ramp, one level per column (320 columns, 256 levels)
+    ramp = np.round(np.arange(W) / (W - 1) * 255) / 255
+    img[0:16] = ramp[None, :, None]
+    # rows 16-111: 20 hues x (4 values x 3 saturations)
+    y = 16
+    for v in (1.0, 0.7, 0.4, 0.2):
+        for s in (1.0, 0.6, 0.3):
+            for i in range(20):
+                img[y:y + 8, i * 16:(i + 1) * 16] = colorsys.hsv_to_rgb(i / 20.0, s, v)
+            y += 8
+
+    def band(rows, colours):
+        nonlocal y
+        for i, c in enumerate(colours):
+            img[y:y + rows, i * 16:(i + 1) * 16] = [int(c[k:k + 2], 16) / 255 for k in (0, 2, 4)]
+        y += rows
+    skin = ["fde7d5", "f6d3bd", "efc3a5", "e7b494", "dca585", "d09672", "c28662", "b17752", "9f6845", "8d5a3a",
+            "7a4b2f", "683f28", "f5cdb8", "e8b39c", "d99a80", "c4826a", "af6f5a", "945d4c", "7c4c40", "5f3a31"]
+    green = ["e7f5c8", "cfe9a0", "b4dc7a", "98cc5a", "7dba43", "62a634", "4c9028", "3b7a22", "2f661f", "24521a",
+             "1a3f15", "13300f", "a8b45a", "8c9b44", "6f7f35", "546428", "3f4e1f", "9fd6a8", "5fb489", "2f7a58"]
+    blue = ["e3f1ff", "c2e0fb", "9ccbf5", "74b3ec", "4f99e0", "3580d0", "2568b8", "1c529a", "163f7c", "102f5f",
+            "0b2146", "07152d", "bfe7ef", "8ed3e2", "5cbad0", "3a9db8", "2a7e98", "1f607a", "c8c4f0", "8c86d6"]
+    desk = ["1e1e2e", "181825", "313244", "45475a", "6c7086", "a6adc8", "cdd6f4", "f38ba8", "fab387", "f9e2af",
+            "a6e3a1", "94e2d5", "89b4fa", "cba6f7", "282a36", "ff5555", "50fa7b", "f1fa8c", "bd93f9", "8be9fd"]
+    for c in (skin, green, blue, desk):
+        band(8, c)
+    # rows 144-247: a smooth natural-looking area
+    h = H - y
+    rng = np.random.default_rng(7)
+    yy, xx = np.mgrid[0:h, 0:W].astype(float)
+    t = yy / h
+    sky_top = np.array([0.30, 0.50, 0.88])
+    sky_low = np.array([0.97, 0.78, 0.58])
+    gr_a = np.array([0.20, 0.42, 0.13])
+    gr_b = np.array([0.46, 0.33, 0.20])
+    n1, n2, n3 = (_noise(rng, h, W, c) for c in (48, 20, 8))
+    horizon = 0.52 + 0.04 * (n1 - 0.5)
+    ks = np.clip((t - 0.0) / horizon, 0, 1)[..., None]
+    sky = sky_top + (sky_low - sky_top) * (ks ** 1.5)
+    gmix = np.clip(n2 * 1.6 - 0.3, 0, 1)[..., None]
+    ground = gr_a + (gr_b - gr_a) * gmix
+    ground = ground * (0.55 + 0.9 * n3[..., None]) * (1.15 - 0.5 * ((t - horizon) / (1 - horizon))[..., None].clip(0, 1))
+    pic = np.where((t < horizon)[..., None], sky, ground)
+    # clouds, a sun, a skin-coloured shaded blob, a dark patch, a pure white patch
+    cloud = np.clip((n2 - 0.66) * 4, 0, 1)[..., None] * (t < horizon)[..., None]
+    pic = pic * (1 - cloud * 0.8) + cloud * 0.8 * np.array([0.98, 0.97, 0.96])
+    d = np.hypot(xx - 250, yy - 22)
+    sun = np.clip(1 - d / 18, 0, 1)[..., None] ** 1.5
+    pic = pic * (1 - sun) + sun * np.array([1.0, 0.93, 0.7])
+    d = np.hypot((xx - 70) / 1.0, (yy - 62) / 1.2)
+    blob = np.clip(1 - d / 34, 0, 1)
+    shade = (0.6 + 0.5 * np.clip(1 - np.hypot(xx - 58, yy - 50) / 40, 0, 1))[..., None]
+    pic = pic * (1 - blob[..., None]) + blob[..., None] * np.array([0.90, 0.66, 0.52]) * shade
+    pic[h - 22:h - 4, 130:190] = 0.03 + 0.05 * n3[h - 22:h - 4, 130:190, None]
+    pic[h - 22:h - 4, 200:260] = 0.97
+    img[y:] = np.clip(pic, 0, 1)
+    return np.round(np.clip(img, 0, 1) * 255).astype(np.uint8)
+
+
+REGIONS = {"ramp": (0, 16), "grid": (16, 112), "named": (112, 144), "natural": (144, H)}
+
+
+def build_holdout():
+    """A second picture the fit never sees: random colours (half uniform in the RGB cube, half 'desktop-like' low saturation) and sweeps."""
+    rng = np.random.default_rng(99)
+    hp = np.zeros((160, W, 3))
+    for by in range(28):
+        for bx in range(80):
+            if (bx + by) % 2:
+                c = rng.random(3)
+            else:
+                hh, ss, vv = rng.random(), rng.random() ** 2 * 0.6, rng.random() ** 0.8
+                c = colorsys.hsv_to_rgb(hh, ss, vv)
+            hp[by * 4:by * 4 + 4, bx * 4:bx * 4 + 4] = c
+    xs = np.linspace(0, 1, W)
+    for i, (s_, v_) in enumerate(((1.0, 1.0), (0.5, 0.8), (0.8, 0.4))):
+        for x in range(W):
+            hp[112 + i * 12:124 + i * 12, x] = colorsys.hsv_to_rgb((xs[x] * 1.0) % 1.0, s_, v_)
+    yy, xx = np.mgrid[0:12, 0:W]
+    hp[148:160] = np.stack([xs[None, :] * np.ones((12, 1)), 0.5 + 0.5 * np.sin(xs[None, :] * 9) * np.ones((12, 1)), 1 - xs[None, :] * np.ones((12, 1))], -1)
+    return np.round(np.clip(hp, 0, 1) * 255).astype(np.uint8)
+
+
+# ----------------------------------------------------------------------------- rendering
+
+def render_real(frag, pic_png, out_png):
+    r = subprocess.run([os.path.join(HERE, "shader-preview"), pic_png, frag, out_png], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0 or not os.path.isfile(out_png):
+        return (r.stdout + r.stderr).strip()[-300:] or "render failed"
+    return None
+
+
+def _render_job(args):
+    frag, pic_png, out_png = args
+    if os.path.isfile(out_png) and os.path.getmtime(out_png) >= max(os.path.getmtime(frag), os.path.getmtime(pic_png)):
+        return None
+    return render_real(frag, pic_png, out_png)
+
+
+def load_rgb(png):
+    return np.asarray(Image.open(png).convert("RGB")).astype(float) / 255
+
+
+# ----------------------------------------------------------------------------- the candidate model (same maths as omspalette.render, plus prototypes)
+
+def smooth01(t):
+    return t * t * (3 - 2 * t)
+
+
+def weights(lk, pos, smooth):
+    n = len(pos)
+    ts = []
+    for k in range(1, n):
+        a, b = pos[k - 1], pos[k]
+        if b - a < 1 / 255.0:
+            t = (lk >= b).astype(float)
+        else:
+            t = np.clip((lk - a) / (b - a), 0, 1)
+            if smooth:
+                t = smooth01(t)
+        ts.append(t)
+    Wt = np.empty((len(lk), n))
+    rem = np.ones(len(lk))
+    for k in range(n - 1, 0, -1):
+        Wt[:, k] = ts[k - 1] * rem
+        rem = rem * (1 - ts[k - 1])
+    Wt[:, 0] = rem
+    return Wt
+
+
+def prelude(th, rgb):
+    """-> (tinted originals o, luma l used for the ramp lookup)"""
+    o = rgb
+    if th.get("invert"):
+        o = 1 - o
+    if th.get("mat") is not None:
+        o = np.clip(o @ np.asarray(th["mat"]).T, 0, 1)
+    if abs(th["sat"] - 1) > 1e-3:
+        lu = o @ LUMA
+        o = lu[:, None] + (o - lu[:, None]) * th["sat"]
+    if abs(th["con"] - 1) > 1e-3:
+        o = np.clip((o - 0.5) * th["con"] + 0.5, 0, 1)
+    l = np.clip(o @ (np.asarray(th["lw"]) if th.get("lw") is not None else LUMA), 0, 1)
+    if th["sha"] > 0.002 or th["lia"] > 0.002:
+        tc, tw = th.get("tc", 0.5), th.get("tw", 0.5)
+        w = smooth01(np.clip((l - (tc - tw / 2)) / tw, 0, 1))
+        mult = np.ones_like(o)
+        for key, wt in (("sh", 1 - w), ("li", w)):
+            amt = th[key + "a"]
+            if amt > 0.002:
+                c = np.asarray(th[key])
+                m = c / max(float(c @ LUMA), 0.05)
+                mult = mult * (1 + (m - 1) * (amt * wt)[:, None])
+        o = np.clip(o * mult, 0, 1)
+    return o, l
+
+
+def hue_of(c):
+    mx, mn = c.max(1), c.min(1)
+    d = np.maximum(mx - mn, 1e-6)
+    r, g, b = c[:, 0], c[:, 1], c[:, 2]
+    h = np.where(mx == r, ((g - b) / d) % 6, np.where(mx == g, (b - r) / d + 2, (r - g) / d + 4)) / 6.0
+    return h, mx - mn
+
+
+def keep_vec(th, orig):
+    """per-pixel keep amount: the global keep, plus (prototype) a hue window that keeps more of the original colour"""
+    k = th["keep"] if th["keep"] > 0.002 else 0.0
+    if th.get("ha", 0) > 0.002:
+        h, ch = hue_of(orig)
+        dh = np.abs(((h - th["hc"] + 0.5) % 1.0) - 0.5)
+        bump = np.exp(-0.5 * (dh / max(th["hw"], 0.01)) ** 2) * smooth01(np.clip((ch - 0.08) / 0.3, 0, 1))
+        return np.clip(k + th["ha"] * bump, 0, 1)
+    return np.full(len(orig), k)
+
+
+def post_apply(th, out):
+    if th.get("psat", 1.0) != 1.0:
+        lu = out @ LUMA
+        out = lu[:, None] + (out - lu[:, None]) * th["psat"]
+    if th.get("pcon", 1.0) != 1.0:
+        out = (out - 0.5) * th["pcon"] + 0.5
+    return out
+
+
+def post_invert(th, t):
+    if th.get("pcon", 1.0) != 1.0:
+        t = (t - 0.5) / th["pcon"] + 0.5
+    if th.get("psat", 1.0) != 1.0:
+        lu = t @ LUMA
+        t = lu[:, None] + (t - lu[:, None]) / max(th["psat"], 0.2)
+    return t
+
+
+def lookup_coord(th, l):
+    lk = l
+    if th.get("lsteps"):
+        k = th["lsteps"]
+        lk = np.floor(np.clip(l, 0, 0.9999) * k) / (k - 1)
+    if abs(th["gam"] - 1) > 1e-3:
+        lk = lk ** th["gam"]
+    return lk
+
+
+def finish(th, out):
+    out = post_apply(th, out)
+    if th.get("chg") is not None:
+        out = np.clip(out, 0, 1) ** np.asarray(th["chg"])
+    if th["steps"] >= 2:
+        k = th["steps"] - 1
+        out = np.floor(out * k + 0.5) / k
+    return np.clip(out, 0, 1)
+
+
+def forward(th, rgb, Wt=None, parts=None):
+    o, l = parts if parts is not None else prelude(th, rgb)
+    n = len(th["pos"])
+    if n >= 2:
+        if Wt is None:
+            Wt = weights(lookup_coord(th, l), th["pos"], th.get("smooth"))
+        g = Wt @ np.asarray(th["C"])
+        kv = keep_vec(th, rgb)
+        out = g + (o - g) * kv[:, None] if kv.max() > 0.002 else g
+    else:
+        out = o
+    return finish(th, out)
+
+
+def solve_colours(th, rgb, tgt, lo, hi, iters, parts):
+    """Least-squares stop colours (clipped to 0..1) for the given non-linear parameters."""
+    o, l = parts
+    n = len(th["pos"])
+    Wt = weights(lookup_coord(th, l), th["pos"], th.get("smooth"))
+    kv = keep_vec(th, rgb)[:, None]
+    A = (1 - kv) * Wt
+    T = tgt
+    wts = None
+    if th.get("psat", 1.0) != 1.0 or th.get("pcon", 1.0) != 1.0:  # solve in front of the post stage; clipped pixels carry no information
+        T = post_invert(th, tgt)
+        wts = (~(((tgt <= 0.004) | (tgt >= 0.996)).any(1))).astype(float)[:, None]
+        A = A * wts
+        lo = np.full_like(tgt, -9.0)
+        hi = np.full_like(tgt, 9.0)
+    AtA = A.T @ A + 1e-6 * np.eye(n)
+    C = None
+    for it in range(iters):
+        B = T - kv * o
+        if wts is not None:
+            B = B * wts
+        C = np.linalg.solve(AtA, A.T @ B)
+        C = np.clip(C, 0, 1)
+        if it + 1 < iters:
+            pred = (1 - kv) * Wt @ C + kv * o
+            T = np.clip(pred, lo, hi) if wts is None else T
+    return C, Wt
+
+
+def loss_of(out, tgt):
+    e = np.abs(out - tgt).ravel()
+    k = int(len(e) * 0.99)
+    return float(e.mean() + 0.2 * np.partition(e, k)[k])
+
+
+# parameter vector for the profiled search (stop colours are solved, not searched)
+class Search:
+    def __init__(self, rgb, tgt, n, steps, feats, lsteps=0, invert=False, nmax=5):
+        self.rgb, self.tgt, self.n, self.steps = rgb, tgt, n, steps
+        self.feats = feats
+        self.lsteps, self.invert = lsteps, invert
+        h = 0.5 / (steps - 1) if steps >= 2 else 0.0
+        self.lo = np.where(tgt <= 0.004, -9.0, tgt - h)
+        self.hi = np.where(tgt >= 0.996, 9.0, tgt + h)
+        self.iters = 3 if (steps >= 2 or ((tgt <= 0.004) | (tgt >= 0.996)).mean() > 0.01) else 1
+        names = []
+        lo, hi, st = [], [], []
+        for i in range(n):
+            names.append("pos%d" % i); lo.append(0.0); hi.append(1.0); st.append(0.08)
+        if n >= 2:
+            names += ["gam", "keep"]; lo += [0.1, 0.0]; hi += [1.99, 1.0]; st += [0.15, 0.2]
+        names += ["sat", "con", "sha", "lia"]; lo += [0.0, 0.0, 0.0, 0.0]; hi += [1.99, 1.99, 1.0, 1.0]; st += [0.25, 0.25, 0.3, 0.3]
+        for k in "sh", "li":
+            for c in "rgb":
+                names.append(k + c); lo.append(0.0); hi.append(1.0); st.append(0.2)
+        if "chg" in feats:
+            for c in "rgb":
+                names.append("chg" + c); lo.append(0.4); hi.append(2.5); st.append(0.15)
+        if "lw" in feats:
+            for c in "rgb":
+                names.append("lw" + c); lo.append(0.0); hi.append(1.0); st.append(0.1)
+        for key, nm, l_, h_, s_ in (("post", ("psat", "pcon"), (0.3, 0.3), (2.5, 2.5), (0.2, 0.2)),
+                                    ("gain", ("mr", "mg", "mb"), (0.0, 0.0, 0.0), (1.5, 1.5, 1.5), (0.1, 0.1, 0.1)),
+                                    ("matrix", tuple("m%d%d" % (i, j) for i in range(3) for j in range(3)), (-1.0,) * 9, (2.0,) * 9, (0.1,) * 9),
+                                    ("tintw", ("tc", "tw"), (0.05, 0.1), (0.95, 1.0), (0.15, 0.15)),
+                                    ("huekeep", ("hc", "hw", "ha"), (0.0, 0.02, 0.0), (1.0, 0.4, 1.0), (0.08, 0.05, 0.2))):
+            if key in feats:
+                names += list(nm); lo += list(l_); hi += list(h_); st += list(s_)
+        self.names, self.lob, self.hib, self.st0 = names, np.array(lo), np.array(hi), np.array(st)
+
+    def theta(self, x):
+        d = dict(zip(self.names, x))
+        th = {"pos": np.array([d["pos%d" % i] for i in range(self.n)]), "steps": self.steps,
+              "keep": d.get("keep", 0.0), "gam": d.get("gam", 1.0), "sat": d["sat"], "con": d["con"],
+              "sha": d["sha"], "lia": d["lia"], "sh": np.array([d["shr"], d["shg"], d["shb"]]), "li": np.array([d["lir"], d["lig"], d["lib"]]),
+              "smooth": "smooth" in self.feats, "invert": self.invert, "lsteps": self.lsteps}
+        if "chg" in self.feats:
+            th["chg"] = np.array([d["chgr"], d["chgg"], d["chgb"]])
+        if "lw" in self.feats:
+            v = np.array([d["lwr"], d["lwg"], d["lwb"]])
+            th["lw"] = v / max(v.sum(), 1e-3)
+        for k in ("psat", "pcon", "tc", "tw", "hc", "hw", "ha"):
+            if k in d:
+                th[k] = d[k]
+        if "mr" in d:
+            th["mat"] = np.diag([d["mr"], d["mg"], d["mb"]])
+        elif "m00" in d:
+            th["mat"] = np.array([[d["m%d%d" % (i, j)] for j in range(3)] for i in range(3)])
+        if self.n:
+            th["pos"] = np.sort(th["pos"])
+        return th
+
+    def __call__(self, x, full=False):
+        th = self.theta(x)
+        parts = prelude(th, self.rgb)
+        if self.n >= 2:
+            C, Wt = solve_colours(th, self.rgb, self.tgt, self.lo, self.hi, self.iters, parts)
+            th["C"] = C
+            out = forward(th, self.rgb, Wt, parts)
+        else:
+            th["C"] = np.zeros((0, 3))
+            out = forward(th, self.rgb, None, parts)
+        f = loss_of(out, self.tgt)
+        return (f, th) if full else f
+
+
+def coord_descent(f, x, lo, hi, st, min_step=0.004, max_evals=2500, pos_idx=()):
+    x = x.copy()
+    st = st.copy()
+    fx = f(x)
+    evals = 1
+    while evals < max_evals and st.max() > min_step:
+        improved = False
+        for i in range(len(x)):
+            for sgn in (1, -1):
+                tries = 0
+                while tries < 4:
+                    y = x.copy()
+                    y[i] = min(max(y[i] + sgn * st[i], lo[i]), hi[i])
+                    if y[i] == x[i]:
+                        break
+                    fy = f(y)
+                    evals += 1
+                    if fy < fx - 1e-7:
+                        x, fx = y, fy
+                        improved = True
+                        tries += 1
+                    else:
+                        break
+                if tries:
+                    break
+        if not improved:
+            st = st * 0.5
+    return x, fx
+
+
+# ----------------------------------------------------------------------------- grey-ramp analysis
+
+def knots_dp(R, n, smooth):
+    """n knot indices (first 0, last M-1) whose piecewise interpolation best follows the grey response R (M x 3)."""
+    M = len(R)
+    cost = np.full((M, M), np.inf)
+    for i in range(M - 1):
+        for j in range(i + 1, M):
+            t = (np.arange(i, j + 1) - i) / (j - i)
+            if smooth:
+                t = smooth01(t)
+            seg = R[i] + (R[j] - R[i]) * t[:, None]
+            cost[i, j] = ((seg - R[i:j + 1]) ** 2).sum()
+    best = np.full((n, M), np.inf)
+    arg = np.zeros((n, M), int)
+    best[0, 0] = 0
+    for k in range(1, n):
+        for j in range(1, M):
+            c = best[k - 1, :j] + cost[:j, j]
+            i = int(np.argmin(c))
+            best[k, j] = c[i]
+            arg[k, j] = i
+    idx = [M - 1]
+    for k in range(n - 1, 0, -1):
+        idx.append(arg[k, idx[-1]])
+    return idx[::-1]
+
+
+def detect_steps(tgt):
+    v = tgt.ravel()
+    for n in range(2, 16):
+        k = n - 1
+        d = np.abs(v * k - np.round(v * k)) / k
+        if (d < 0.006).mean() > 0.97:
+            return n
+    return 0
+
+
+def detect_plateaus(R):
+    """number of flat luma levels in the grey response (0 when it is a smooth curve)"""
+    d = np.abs(np.diff(R, axis=0)).max(axis=1)
+    flat = d < 0.004
+    runs, i = 0, 0
+    longest = 0
+    cur = 0
+    for f in flat:
+        if f:
+            cur += 1
+        else:
+            if cur >= 6:
+                runs += 1
+            cur = 0
+    if cur >= 6:
+        runs += 1
+    jumps = int((d > 0.03).sum())
+    return runs if 2 <= runs <= 16 and jumps >= runs - 1 and jumps <= 16 else 0
+
+
+def tint_guess(rgb, tgt, dark):
+    sel = (rgb @ LUMA < 0.35) if dark else (rgb @ LUMA > 0.65)
+    if sel.sum() < 20:
+        return np.ones(3)
+    r = tgt[sel].mean(0) / np.maximum(rgb[sel].mean(0), 0.02)
+    r = np.clip(r / r.max(), 0.05, 1)
+    return r
+
+
+# ----------------------------------------------------------------------------- fitting one grade
+
+class Ctx:
+    pass
+
+
+def subsample(n_total, k, seed):
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(n_total, size=min(k, n_total), replace=False))
+
+
+def make_x(S, th):
+    d = {}
+    for i in range(S.n):
+        d["pos%d" % i] = th["pos"][i]
+    d.update(gam=th.get("gam", 1.0), keep=th.get("keep", 0.0), sat=th.get("sat", 1.0), con=th.get("con", 1.0),
+             sha=th.get("sha", 0.0), lia=th.get("lia", 0.0))
+    for k in "sh", "li":
+        c = th.get(k, np.ones(3))
+        for j, ch in enumerate("rgb"):
+            d[k + ch] = c[j]
+    d.update(mr=1.0, mg=1.0, mb=1.0)
+    for i in range(3):
+        for j in range(3):
+            d["m%d%d" % (i, j)] = float(i == j)
+    for k, v in (("psat", 1.0), ("pcon", 1.0), ("tc", 0.5), ("tw", 0.5), ("hc", 0.0), ("hw", 0.08), ("ha", 0.5)):
+        d[k] = th.get(k, v)
+    for j, ch in enumerate("rgb"):
+        d["chg" + ch] = 1.0
+        d["lw" + ch] = P.LUMA[j]
+    return np.array([d[nm] for nm in S.names])
+
+
+def quantise_palette(th):
+    """th (my model, base features only) -> (palette id, palette dict as the engine will decode it)"""
+    stops = [(float(p), "%02x%02x%02x" % tuple(int(round(float(v) * 255)) for v in np.clip(c, 0, 1))) for p, c in zip(th["pos"], th["C"])]
+    sh = "%02x%02x%02x" % tuple(int(round(float(v) * 255)) for v in np.clip(th["sh"], 0, 1))
+    li = "%02x%02x%02x" % tuple(int(round(float(v) * 255)) for v in np.clip(th["li"], 0, 1))
+    pal = P.make(stops=stops, keep=th["keep"] if len(stops) else 0, sat=th["sat"], con=th["con"], gam=th["gam"] if len(stops) else 1,
+                 shadow=(sh, th["sha"]), light=(li, th["lia"]), steps=th["steps"])
+    pid = P.encode(pal)
+    return pid, P.decode(pid)
+
+
+def stats(out, real):
+    e = np.abs(out - real).ravel()
+    return float(e.mean()), float(np.percentile(e, 99))
+
+
+def classify(mean, p99):
+    if mean <= EXACT[0] and p99 <= EXACT[1]:
+        return "exact"
+    if mean <= CLOSE[0] and p99 <= CLOSE[1]:
+        return "close"
+    return "no"
+
+
+BASE_FEATS = frozenset()
+FIT_VERSION_EXT = "w2"  # same for the prototype feature sets (their fits start from the base fit)
+FIT_VERSION = "v1"  # bump when the fitting code changes: cached fits are keyed by it
+FEATURE_SETS = {
+    "smooth": {"smooth"},
+    "invert": {"invert"},
+    "lsteps": {"lsteps"},
+    "chg": {"chg"},
+    "lw": {"lw"},
+    "stops7": {"stops7"},
+    "post": {"post"},
+    "gain": {"gain"},
+    "matrix": {"matrix"},
+    "tintw": {"tintw"},
+    "huekeep": {"huekeep"},
+}
+
+
+def run_starts(rgb_full, real_full, feats, nmax, quick, warm=None):
+    """Fit one render. Returns dict with the best theta and its full-picture error."""
+    flat_rgb = rgb_full.reshape(-1, 3)
+    flat_tgt = real_full.reshape(-1, 3)
+    N = len(flat_rgb)
+    idx = subsample(N, SEARCH_PX, 1)
+    rgb, tgt = flat_rgb[idx], flat_tgt[idx]
+    R = real_full[0, np.round(np.linspace(0, W - 1, 64)).astype(int)]  # grey response at 64 levels
+    steps = detect_steps(flat_tgt)
+    smooth = "smooth" in feats
+    invert_opts = [False]
+    if "invert" in feats and R[:, :].mean(1)[0] > R[:, :].mean(1)[-1] + 0.2:
+        invert_opts = [True]
+    ls_opts = [0]
+    if "lsteps" in feats:
+        pl = detect_plateaus(real_full[0])
+        ls_opts = [pl] if pl else [0]
+    results = []
+    tg_dark, tg_light = tint_guess(flat_rgb, flat_tgt, True), tint_guess(flat_rgb, flat_tgt, False)
+    for invert in invert_opts:
+        # the response seen through the (maybe inverted) pipeline: grey is symmetric, so the grey knots are those of R
+        Rk = R[::-1] if invert else R
+        for lsn in ls_opts:
+            for n in range(0, nmax + 1):
+                if n == 1:
+                    continue
+                if n and lsn:
+                    # with a luma quantiser the response is a staircase: knots at the staircase levels
+                    levels = np.linspace(0, 1, lsn)
+                    pos0 = list(levels) if n == lsn else None
+                    if pos0 is None:
+                        continue
+                    pos0 = np.array(pos0)
+                else:
+                    pos0 = None
+                if n and pos0 is None:
+                    pos0 = np.array([i / 63.0 for i in knots_dp(Rk, n, smooth)])
+                keeps = (0.0, 0.5) if n else (0.0,)
+                hue_starts = [{}]
+                if "huekeep" in feats:
+                    if n < 3:
+                        continue
+                    keeps = (0.2,)
+                    hue_starts = [{"hc": h / 6.0, "hw": 0.08, "ha": 0.6} for h in range(6)]
+                for keep in keeps:
+                    for tinted in (False, True):
+                        if tinted and (n and keep == 0.0 or "huekeep" in feats):
+                            continue
+                        for hs in hue_starts:
+                            S = Search(rgb, tgt, n, steps, feats, lsteps=lsn, invert=invert)
+                            th0 = {"pos": pos0 if n else np.zeros(0), "keep": keep, "gam": 1.0, "sat": 1.0, "con": 1.0,
+                                   "sha": 0.5 if tinted else 0.0, "lia": 0.5 if tinted else 0.0,
+                                   "sh": tg_dark, "li": tg_light}
+                            th0.update(hs)
+                            x0 = make_x(S, th0)
+                            results.append((S, x0, False))
+    if warm is not None:
+        # start from the current engine's best fit (extra parameters neutral): a superset model can then never come out worse
+        wth = dict(warm)
+        wth.pop("smooth", None)
+        for hs in ([{"hc": h / 6.0, "hw": 0.08, "ha": 0.6} for h in range(6)] if "huekeep" in feats else [{}]):
+            S = Search(rgb, tgt, len(wth["pos"]), steps, feats)
+            t2 = dict(wth)
+            t2.update(hs)
+            results.append((S, make_x(S, t2), True))
+    scored = []
+    for S, x0, wflag in results:
+        x, fx = coord_descent(S, x0, S.lob, S.hib, S.st0, min_step=0.03 if quick else 0.02, max_evals=250 if not quick else 120)
+        scored.append((fx, S, x, wflag))
+    scored.sort(key=lambda t: t[0])
+    final = [(fx, S, x) for fx, S, x, w in [t for t in scored if t[3]][:2]]
+    seen = set()
+    scored = [t[:3] for t in scored if not t[3]]
+    for fx, S, x in scored:
+        key = (S.n, S.lsteps, S.invert)
+        if key in seen and len(final) >= 2:
+            continue
+        seen.add(key)
+        final.append((fx, S, x))
+        if len(final) >= (4 if warm is not None else (2 if quick else 3)):
+            break
+    best = None
+    idx2 = subsample(N, POLISH_PX, 2)
+    for fx, S, x in final:
+        x, fx = coord_descent(S, x, S.lob, S.hib, S.st0 * 0.5, min_step=0.002, max_evals=1500)
+        S2 = Search(flat_rgb[idx2], flat_tgt[idx2], S.n, S.steps, S.feats, lsteps=S.lsteps, invert=S.invert)
+        x, fx = coord_descent(S2, x, S2.lob, S2.hib, S2.st0 * 0.15, min_step=0.001, max_evals=600)
+        f, th = S2(x, full=True)
+        # polish colours directly on the real loss (stop colours are no longer solved)
+        if S.n >= 2:
+            th = polish_colours(S2, x, th)
+            f = loss_of(forward(th, S2.rgb), S2.tgt)
+        if best is None or f < best[0]:
+            best = (f, th)
+    return best[1], steps
+
+
+def polish_colours(S, x, th):
+    """coordinate descent on the stop colours (and nothing else) with the real clipped/stepped output"""
+    C = th["C"].copy()
+    parts = prelude(th, S.rgb)
+    Wt = weights(lookup_coord(th, parts[1]), th["pos"], th.get("smooth"))
+
+    def f(v):
+        t2 = dict(th)
+        t2["C"] = v.reshape(-1, 3)
+        return loss_of(forward(t2, S.rgb, Wt, parts), S.tgt)
+    v, _ = coord_descent(f, C.ravel(), np.zeros(C.size), np.ones(C.size), np.full(C.size, 0.03), min_step=0.002, max_evals=800)
+    th = dict(th)
+    th["C"] = v.reshape(-1, 3)
+    return th
+
+
+def th_to_json(th):
+    return {k: (np.asarray(v).tolist() if isinstance(v, np.ndarray) else v) for k, v in th.items()}
+
+
+def th_from_json(d):
+    th = dict(d)
+    for k in ("pos", "C", "sh", "li", "chg", "lw", "mat"):
+        if th.get(k) is not None:
+            th[k] = np.array(th[k], dtype=float)
+    if len(th["pos"]) == 0:
+        th["C"] = np.zeros((0, 3))
+    return th
+
+
+def get_theta(name, feat_names, scratch, quick):
+    """the fitted parameters of one grade (cached; the cache key changes with FIT_VERSION and the test picture)"""
+    feats = frozenset(feat_names)
+    cache = os.path.join(scratch, "fits", (FIT_VERSION if not feat_names else FIT_VERSION_EXT) + "-" + PIC_TAG, "+".join(sorted(feat_names)) or "base", name + ".json")
+    if os.path.isfile(cache) and not os.environ.get("PALETTE_FIT_REFIT"):
+        d = json.load(open(cache))
+        return th_from_json(d["th"]), d["steps"], d["secs"]
+    pic = np.asarray(Image.open(os.path.join(scratch, "test.png")).convert("RGB")).astype(float) / 255
+    real = load_rgb(os.path.join(scratch, "renders", name + ".png"))
+    t0 = time.time()
+    warm = get_theta(name, [], scratch, quick)[0] if feat_names else None
+    th, steps = run_starts(pic, real, feats, 7 if "stops7" in feats else 5, quick, warm)
+    secs = round(time.time() - t0, 1)
+    os.makedirs(os.path.dirname(cache), exist_ok=True)
+    json.dump({"th": th_to_json(th), "steps": steps, "secs": secs}, open(cache, "w"))
+    return th, steps, secs
+
+
+def fit_grade(job):
+    name, feat_names, scratch, quick = job
+    th, steps, secs = get_theta(name, feat_names, scratch, quick)
+    pic = np.asarray(Image.open(os.path.join(scratch, "test.png")).convert("RGB")).astype(float) / 255
+    hold = np.asarray(Image.open(os.path.join(scratch, "holdout.png")).convert("RGB")).astype(float) / 255
+    real = load_rgb(os.path.join(scratch, "renders", name + ".png"))
+    real_h = load_rgb(os.path.join(scratch, "holdout-renders", name + ".png"))
+    res = {"name": name, "feats": sorted(feat_names), "steps_detected": steps, "secs": secs, "params": describe(th)}
+    plain = (not th.get("smooth") and not th.get("invert") and not th.get("lsteps") and th.get("chg") is None and th.get("lw") is None
+             and th.get("mat") is None and not th.get("psat", 1.0) != 1.0 and not th.get("pcon", 1.0) != 1.0 and not th.get("ha", 0) and "tc" not in th and "tw" not in th
+             and len(th["pos"]) <= 5)
+    if plain:
+        pid, pal = quantise_palette(th)
+        res["id"] = pid
+        run = lambda im: P.render(pal, im.reshape(-1, 3)).reshape(im.shape)
+    else:
+        run = lambda im: forward(th, im.reshape(-1, 3)).reshape(im.shape)
+    out = run(pic)
+    m, p99 = stats(out, real)
+    mh, p99h = stats(run(hold), real_h)
+    c1, c2 = classify(m, p99), classify(mh, p99h)
+    res.update(mean=m, p99=p99, cls_test=c1, hold_mean=mh, hold_p99=p99h, cls_hold=c2, cls=max((c1, c2), key=("exact", "close", "no").index))
+    # per-region mean error (helps to see where a grade fails)
+    res["regions"] = {k: float(np.abs(out[a:b] - real[a:b]).mean()) for k, (a, b) in REGIONS.items()}
+    if plain and not feat_names:
+        Image.fromarray(np.round(out * 255).astype(np.uint8)).save(os.path.join(scratch, "palette-renders", name + ".png"))
+    return res
+
+
+def fit_nearest(job):
+    """Prototype of a 'nearest of N colours' quantiser (N <= 8): only for grades whose render has at most 8 flat colours. The colours are
+    taken from the render itself (best case); each pixel gets the nearest one to its (saturation/contrast adjusted) original colour."""
+    name, scratch = job
+    pic = np.asarray(Image.open(os.path.join(scratch, "test.png")).convert("RGB")).astype(float) / 255
+    hold = np.asarray(Image.open(os.path.join(scratch, "holdout.png")).convert("RGB")).astype(float) / 255
+    real = load_rgb(os.path.join(scratch, "renders", name + ".png"))
+    real_h = load_rgb(os.path.join(scratch, "holdout-renders", name + ".png"))
+    keys, counts = np.unique(np.round(real.reshape(-1, 3) * 255).astype(int), axis=0, return_counts=True)
+    order = np.argsort(-counts)
+    keys, counts = keys[order], counts[order]
+    if counts[:8].sum() < 0.99 * counts.sum():
+        return None
+    cols = keys[:8][counts[:8] >= 0.003 * counts.sum()] / 255.0
+
+    def run(im, sat, con):
+        o = im.reshape(-1, 3)
+        lu = o @ LUMA
+        o = np.clip((lu[:, None] + (o - lu[:, None]) * sat - 0.5) * con + 0.5, 0, 1)
+        d = ((o[:, None, :] - cols[None, :, :]) ** 2).sum(2)
+        return cols[np.argmin(d, 1)].reshape(im.shape)
+    best = None
+    for sat in (0.0, 0.5, 1.0, 1.5):
+        for con in (0.8, 1.0, 1.3):
+            m, p99 = stats(run(pic, sat, con), real)
+            if best is None or m < best[0]:
+                best = (m, p99, sat, con)
+    m, p99, sat, con = best
+    mh, p99h = stats(run(hold, sat, con), real_h)
+    c1, c2 = classify(m, p99), classify(mh, p99h)
+    return {"name": name, "feats": ["nearest"], "mean": m, "p99": p99, "cls": max((c1, c2), key=("exact", "close", "no").index),
+            "hold_mean": mh, "hold_p99": p99h, "colours": len(cols)}
+
+
+def describe(th):
+    return {"n": len(th["pos"]), "pos": [round(float(v), 3) for v in th["pos"]], "keep": round(float(th["keep"]), 3),
+            "gam": round(float(th["gam"]), 3), "sat": round(float(th["sat"]), 3), "con": round(float(th["con"]), 3),
+            "sha": round(float(th["sha"]), 3), "lia": round(float(th["lia"]), 3), "steps": th["steps"],
+            "invert": bool(th.get("invert")), "lsteps": th.get("lsteps", 0), "smooth": bool(th.get("smooth"))}
+
+
+# ----------------------------------------------------------------------------- contact sheet
+
+def contact_sheet(results, scratch, path, extra=14):
+    pic_crop = (0, 144)  # ramp, grid and the colour bands
+    order = [r for r in results if r["cls"] == "no"]
+    ok = [r for r in results if r["cls"] != "no"]
+    ok.sort(key=lambda r: r["mean"])
+    pick = ok[:: max(1, len(ok) // extra)][:extra] if extra else []
+    rows = order + pick
+    from PIL import ImageFont
+    try:
+        font = ImageFont.load_default(size=13)
+    except TypeError:
+        font = ImageFont.load_default()
+    cw, ch = W, pic_crop[1] - pic_crop[0]
+    colw = 2 * cw + 18
+    ncols = 2
+    nrows = (len(rows) + ncols - 1) // ncols
+    rowh = ch + 22
+    sheet = Image.new("RGB", (ncols * colw + 10, nrows * rowh + 40), (24, 24, 28))
+    d = ImageDraw.Draw(sheet)
+    d.text((8, 8), "Left: the shipped grade   Right: its palette version   (ramp, hue grid, skin / green / blue / desktop bands)", fill=(230, 230, 230), font=font)
+    for i, r in enumerate(rows):
+        cx, cy = (i // nrows) * colw + 5, (i % nrows) * rowh + 34
+        col = {"exact": (120, 220, 130), "close": (240, 210, 110), "no": (245, 120, 110)}[r["cls"]]
+        d.text((cx, cy), "%s  [%s]  mean err %.3f" % (r["name"], r["cls"].upper(), r["mean"]), fill=col, font=font)
+        real = Image.open(os.path.join(scratch, "renders", r["name"] + ".png")).convert("RGB").crop((0, pic_crop[0], W, pic_crop[1]))
+        mine = Image.open(os.path.join(scratch, "palette-renders", r["name"] + ".png")).convert("RGB").crop((0, pic_crop[0], W, pic_crop[1]))
+        sheet.paste(real, (cx, cy + 16))
+        sheet.paste(mine, (cx + cw + 6, cy + 16))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    sheet.save(path)
+
+
+# ----------------------------------------------------------------------------- main
+
+def validate_ids(rows, scratch):
+    """rows: (name, id, quality, mean). Every id must make compose-shader write a shader that glslangValidator accepts, and the generated
+    shader, rendered for real, must agree with the numpy model (so the numbers above are what the engine will draw)."""
+    state = os.path.join(scratch, "state")
+    os.makedirs(os.path.join(scratch, "validate-renders"), exist_ok=True)
+    bad, worst = [], (0.0, "")
+    pic_png = os.path.join(scratch, "test.png")
+    for name, pid, _q, mean in rows:
+        r = subprocess.run([os.path.join(HERE, "compose-shader"), "--custom", state, pid], capture_output=True, text=True)
+        path = r.stdout.strip()
+        if r.returncode != 0 or not os.path.isfile(path):
+            bad.append((pid, "compose-shader: " + r.stderr.strip()[-200:]))
+            continue
+        v = subprocess.run(["glslangValidator", "-S", "frag", path], capture_output=True, text=True)
+        if v.returncode != 0:
+            bad.append((pid, v.stdout.strip()[-200:]))
+            continue
+        out = os.path.join(scratch, "validate-renders", name + ".png")
+        err = render_real(path, pic_png, out)
+        if err:
+            bad.append((pid, "render: " + err))
+            continue
+        m, _ = stats(load_rgb(out), load_rgb(os.path.join(scratch, "renders", name + ".png")))
+        if abs(m - float(mean)) > worst[0]:
+            worst = (abs(m - float(mean)), name)
+    return bad, worst
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--scratch")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--only")
+    ap.add_argument("--refit", action="store_true")
+    ap.add_argument("--tsv", default=os.path.join(ROOT, "palettes", "presets.tsv"))
+    ap.add_argument("--report")
+    ap.add_argument("--sheet")
+    ap.add_argument("--gaps", action="store_true")
+    ap.add_argument("--combos", help="with --gaps: also try feature combinations, e.g. smooth+post,smooth+lsteps")
+    ap.add_argument("--validate", action="store_true")
+    ap.add_argument("--picture")
+    ap.add_argument("--quick", action="store_true", help="fewer restarts (fast, a little less accurate)")
+    a = ap.parse_args()
+    t0 = time.time()
+    pic = build_picture()
+    hold = build_holdout()
+    global PIC_TAG
+    PIC_TAG = hashlib.sha1(pic.tobytes()).hexdigest()[:6]
+    if a.picture:
+        Image.fromarray(pic).save(a.picture)
+        return
+    scratch = a.scratch or tempfile.mkdtemp(prefix="palette-fit-")
+    for sub in ("renders", "palette-renders", "fits", "holdout-renders"):
+        os.makedirs(os.path.join(scratch, sub), exist_ok=True)
+    pic_png = os.path.join(scratch, "test.png")
+    if not os.path.isfile(pic_png) or not np.array_equal(np.asarray(Image.open(pic_png).convert("RGB")), pic):
+        Image.fromarray(pic).save(pic_png)
+    hold_png = os.path.join(scratch, "holdout.png")
+    if not os.path.isfile(hold_png) or not np.array_equal(np.asarray(Image.open(hold_png).convert("RGB")), hold):
+        Image.fromarray(hold).save(hold_png)
+    if a.refit:
+        os.environ["PALETTE_FIT_REFIT"] = "1"
+    frags = sorted(glob.glob(os.path.join(ROOT, "colors", "*.frag")))
+    names = [os.path.basename(f)[:-5] for f in frags]
+    if a.only:
+        keep = set(a.only.split(","))
+        names = [n for n in names if n in keep]
+    print("scratch: %s   grades: %d" % (scratch, len(names)), file=sys.stderr)
+    with mp.get_context("fork").Pool(a.jobs) as pool:
+        errs = pool.map(_render_job, [(os.path.join(ROOT, "colors", n + ".frag"), pic_png, os.path.join(scratch, "renders", n + ".png")) for n in names])
+        errs2 = pool.map(_render_job, [(os.path.join(ROOT, "colors", n + ".frag"), hold_png, os.path.join(scratch, "holdout-renders", n + ".png")) for n in names])
+        errs = [e or e2 for e, e2 in zip(errs, errs2)]
+        failed = {n: e for n, e in zip(names, errs) if e}
+        names = [n for n in names if n not in failed]
+        t_render = time.time() - t0
+        print("rendered %d shaders in %.0fs, %d failed" % (len(names), t_render, len(failed)), file=sys.stderr)
+        jobs = [(n, [], scratch, a.quick) for n in names]
+        results = pool.map(fit_grade, jobs, chunksize=1)
+        gaps = {}
+        if a.gaps:
+            weak = [r["name"] for r in results if r["cls"] != "exact"]
+            for fs in FEATURE_SETS:
+                gaps[fs] = pool.map(fit_grade, [(n, [fs], scratch, True) for n in weak], chunksize=1)
+            gaps["nearest"] = [r for r in pool.map(fit_nearest, [(n, scratch) for n in weak], chunksize=1) if r]
+            for combo in (a.combos.split(",") if a.combos else []):
+                gaps[combo] = pool.map(fit_grade, [(n, combo.split("+"), scratch, True) for n in weak], chunksize=1)
+    results.sort(key=lambda r: r["name"])
+    counts = {c: sum(1 for r in results if r["cls"] == c) for c in ("exact", "close", "no")}
+    print("exact %(exact)d  close %(close)d  no %(no)d" % counts)
+    for r in results:
+        print("%-18s %-6s mean %.4f p99 %.3f | holdout %-6s mean %.4f p99 %.3f | %s" % (r["name"], r["cls"], r["mean"], r["p99"], r["cls_hold"], r["hold_mean"], r["hold_p99"], json.dumps(r["params"])))
+    for n, e in failed.items():
+        print("RENDER FAILED %s: %s" % (n, e))
+    rows = [(r["name"], r["id"], r["cls"], "%.4f" % r["mean"]) for r in results if r["cls"] != "no" and "id" in r and P.is_palette_id(r["id"])]
+    if a.tsv != "-":
+        os.makedirs(os.path.dirname(a.tsv), exist_ok=True)
+        with open(a.tsv, "w") as f:
+            for row in sorted(rows):
+                f.write("\t".join(row) + "\n")
+        print("wrote %s (%d presets)" % (a.tsv, len(rows)))
+    if gaps:
+        print("\nengine-gap prototypes (grades that were not exact with the current engine: %d)" % len([r for r in results if r["cls"] != "exact"]))
+        base = {r["name"]: r for r in results}
+        for fs, rs in gaps.items():
+            c = {k: sum(1 for r in rs if r["cls"] == k) for k in ("exact", "close", "no")}
+            before_ok = sum(1 for r in rs if base[r["name"]]["cls"] != "no")
+            moved_ok = [r["name"] for r in rs if r["cls"] != "no" and base[r["name"]]["cls"] == "no"]
+            up = [r["name"] for r in rs if r["cls"] == "exact" and base[r["name"]]["cls"] != "exact"]
+            print("  %-8s -> exact+%d (to exact: %s)  new exact/close from no: +%d (%s)" % (fs, len(up), ",".join(up), len(moved_ok), ",".join(moved_ok)))
+    if a.report:
+        json.dump({"results": results, "gaps": gaps, "failed": failed, "counts": counts}, open(a.report, "w"), indent=1)
+    if a.sheet:
+        contact_sheet([r for r in results if "id" in r], scratch, a.sheet)
+        print("wrote", a.sheet)
+    if a.validate:
+        bad, worst = validate_ids(sorted(rows), scratch)
+        print("validate: %d ids, %d rejected; worst gap between the real GLSL render and the numpy model: %.4f mean error (%s)" % (len(rows), len(bad), worst[0], worst[1]))
+        for b in bad:
+            print("  BAD", b)
+    print("total runtime %.0fs" % (time.time() - t0))
+
+
+if __name__ == "__main__":
+    main()
