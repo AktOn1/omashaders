@@ -36,15 +36,16 @@ Item {
     q.stops.sort(function(a, b) { return a[0] - b[0] })
     p = q
     note = ""
-    applyTimer.restart()
+    applyTimer.start()
   }
   function show(id) {
     var q = Pal.decode(id)
-    if (q) { p = q; note = ""; applyTimer.restart() }
+    if (q) { p = q; note = ""; applyTimer.start() }
   }
+  // starts (does not restart) the timer: while a slider is dragged the screen follows every 220 ms instead of only after you stop
   Timer {
     id: applyTimer
-    interval: 140
+    interval: 220
     onTriggered: { if (pd.core) { pd.core.colorOrigin = pd.pid; pd.core.colorPreviewed = false; pd.core.applyColor(pd.pid) } }
   }
   function setStop(i, pos, hex) {
@@ -62,6 +63,12 @@ Item {
     })
   }
   function removeStop(i) { change(function(q) { q.stops.splice(i, 1); if (q.stops.length < 2) q.stops = [] }) }
+  function surprise() {
+    var q = Pal.surprise()
+    p = q
+    note = "Surprise: " + q.title + ". Press again for another."
+    applyTimer.start()
+  }
   function toggleFav() {
     if (!core) return
     var next = core.colorFavs.filter(function(f) { return f !== pid })
@@ -85,7 +92,7 @@ Item {
     var q = Pal.decode(origin)
     p = q ? q : JSON.parse(JSON.stringify(Pal.decode(Pal.starters[0].id)))
     note = q ? "" : "Pick a start below, or edit the colours. The screen changes as you edit."
-    if (!q) applyTimer.restart()
+    if (!q) applyTimer.start()
     presetLoader.reload()
     focusTimer.restart()
   }
@@ -251,6 +258,7 @@ Item {
         else if (t === "f") pd.toggleFav()
         else if (t === "r") pd.revert()
         else if (t === "a") pd.addStop()
+        else if (t === "s") pd.surprise()
       }
 
       Column {
@@ -445,6 +453,7 @@ Item {
         }
         Row {
           spacing: Style.space(8)
+          Btn { label: "Surprise me  (s)"; onClicked: pd.surprise() }
           Btn { label: pd.isFav ? "★ Favorite  (f)" : "☆ Favorite  (f)"; onClicked: pd.toggleFav() }
           Btn { label: "Undo all  (r)"; onClicked: pd.revert() }
           Btn { label: "Done  (esc)"; onClicked: pd.close() }

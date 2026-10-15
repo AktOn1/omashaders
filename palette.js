@@ -75,4 +75,73 @@ var starters = [
   { label: "Poster: 4 levels", id: encode({ stops: [], keep: 0, sat: 1.3, con: 1, gam: 1, shadow: ["808080", 0], light: ["808080", 0], steps: 4 }) }
 ]
 
-if (typeof module !== "undefined") module.exports = { encode: encode, decode: decode, isId: isId, neutral: neutral, rampAt: rampAt, starters: starters, label: label }
+// ---- Surprise me: a random palette that stays readable (dark end dark, bright end bright, lightness rising along the ramp)
+function hsl(h, s, l) {
+  h = ((h % 360) + 360) % 360
+  var a = s * Math.min(l, 1 - l)
+  function f(n) { var k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)) }
+  return h2(byte(f(0), 255)) + h2(byte(f(8), 255)) + h2(byte(f(4), 255))
+}
+// the colour of this hue and saturation whose brightness (luma) is y, so a ramp really goes dark to bright whatever the hue
+function hslY(h, s, y) {
+  var lo = 0, hi = 1, c = ""
+  for (var i = 0; i < 14; i++) {
+    var l = (lo + hi) / 2
+    c = hsl(h, s, l)
+    var v = rgb(c)
+    if (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2] < y) lo = l; else hi = l
+  }
+  return c
+}
+function pick(list) { return list[Math.floor(Math.random() * list.length)] }
+function between(a, b) { return a + Math.random() * (b - a) }
+
+var moods = [
+  { name: "soft and milky", sat: [0.35, 0.65], dark: [0.22, 0.38], light: [0.93, 0.98], keep: [0, 0.2], con: [0.9, 1.05] },
+  { name: "rich", sat: [0.6, 0.9], dark: [0.07, 0.2], light: [0.82, 0.95], keep: [0, 0.1], con: [1, 1.2] },
+  { name: "deep and dark", sat: [0.5, 0.85], dark: [0.03, 0.1], light: [0.6, 0.8], keep: [0, 0.1], con: [1, 1.15] },
+  { name: "neon", sat: [0.85, 1], dark: [0.05, 0.14], light: [0.78, 0.92], keep: [0, 0], con: [1.05, 1.25] },
+  { name: "faded", sat: [0.2, 0.45], dark: [0.15, 0.3], light: [0.85, 0.95], keep: [0.1, 0.3], con: [0.9, 1] }
+]
+var schemes = [
+  { name: "one hue", spread: function() { return between(-12, 12) } },
+  { name: "neighbouring hues", spread: function() { return between(25, 55) * pick([-1, 1]) } },
+  { name: "opposite hues", spread: function() { return between(150, 200) } },
+  { name: "three hues", spread: function() { return pick([-1, 1]) * between(100, 130) } }
+]
+
+function surprise() {
+  var mood = pick(moods), scheme = pick(schemes), h0 = Math.random() * 360
+  var span = scheme.spread(), sat = between(mood.sat[0], mood.sat[1])
+  var p = neutral(), title = scheme.name + ", " + mood.name
+  if (Math.random() < 0.15) {
+    // no ramp: keep the picture's colours and push the dark and bright parts toward two hues
+    p.shadow = [hsl(h0, between(0.55, 0.9), between(0.25, 0.4)), between(0.35, 0.6)]
+    p.light = [hsl(h0 + (Math.abs(span) < 40 ? 180 : span), between(0.6, 1), between(0.55, 0.7)), between(0.3, 0.55)]
+    p.sat = between(1, 1.3)
+    p.con = between(1, 1.15)
+    p.title = "Two tints on your own colours"
+    return p
+  }
+  var n = pick([2, 3, 3, 4, 4, 5])
+  var lo = between(mood.dark[0], mood.dark[1]), hi = between(mood.light[0], mood.light[1])
+  for (var i = 0; i < n; i++) {
+    var t = i / (n - 1)
+    var pos = i === 0 ? 0 : (i === n - 1 ? 1 : clamp(t + between(-0.08, 0.08), 0.12, 0.88))
+    var l = lo + (hi - lo) * Math.pow(t, between(0.85, 1.2))
+    var s = sat * (t > 0.85 ? between(0.3, 0.8) : 1)
+    p.stops.push([pos, hslY(h0 + span * t, clamp(s, 0, 1), l)])
+  }
+  p.stops.sort(function(a, b) { return a[0] - b[0] })
+  p.keep = between(mood.keep[0], mood.keep[1])
+  p.con = between(mood.con[0], mood.con[1])
+  p.sat = between(0.95, 1.2)
+  p.gam = between(0.9, 1.08)
+  if (Math.random() < 0.3) p.shadow = [hsl(h0 + 180, 0.7, 0.3), between(0.15, 0.35)]
+  if (Math.random() < 0.3) p.light = [hsl(h0 + span, 0.8, 0.65), between(0.15, 0.35)]
+  if (Math.random() < 0.08) p.steps = pick([4, 5, 6, 8])
+  p.title = title.charAt(0).toUpperCase() + title.substring(1)
+  return p
+}
+
+if (typeof module !== "undefined") module.exports = { encode: encode, decode: decode, isId: isId, neutral: neutral, rampAt: rampAt, starters: starters, label: label, surprise: surprise }
