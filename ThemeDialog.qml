@@ -1056,7 +1056,7 @@ Item {
               Btn { label: "Test connection  (t)"; onClicked: td.testConnection() }
             }
           }
-          TextField {
+          PlainField {
             id: modelField
             visible: td.provId !== "custom"
             width: col.width
@@ -1077,7 +1077,7 @@ Item {
             visible: td.provId === "endpoint"
             width: col.width
             spacing: Style.space(6)
-            TextField {
+            PlainField {
               id: epUrlField
               width: col.width
               height: Style.space(32)
@@ -1095,7 +1095,7 @@ Item {
             }
             Row {
               spacing: Style.space(8)
-              TextField {
+              PlainField {
                 id: epKeyEnvField
                 width: (col.width - Style.space(8)) / 2
                 height: Style.space(32)
@@ -1111,7 +1111,7 @@ Item {
                 }
                 onEditingFinished: td.saveEndpoint()
               }
-              TextField {
+              PlainField {
                 id: epKeyFileField
                 width: (col.width - Style.space(8)) / 2
                 height: Style.space(32)
@@ -1135,7 +1135,7 @@ Item {
             Btn { toggle: true; checked: td.provImage; label: (td.provImage ? "󰄲 " : "󰄱 ") + "This AI can look at pictures"; onClicked: td.setCaps(!td.provImage, td.provStrong) }
             Btn { toggle: true; checked: td.provStrong; label: (td.provStrong ? "󰄲 " : "󰄱 ") + "Strong enough to invent effects"; onClicked: td.setCaps(td.provImage, !td.provStrong) }
           }
-          TextField {
+          PlainField {
             id: customField
             visible: td.provId === "custom"
             width: col.width
@@ -1172,7 +1172,7 @@ Item {
           Row {
             visible: td.rich && td.formMode
             spacing: Style.space(8)
-            TextField {
+            PlainField {
               id: genreField
               width: col.width - Style.space(240)
               height: Style.space(30)
@@ -1252,7 +1252,7 @@ Item {
                   Btn { label: "Test connection"; onClicked: td.testImgConnection() }
                 }
               }
-            TextField {
+            PlainField {
               id: imgUrlField
               visible: td.imgProv === "comfyui"
               width: col.width
@@ -1269,7 +1269,7 @@ Item {
               }
               onEditingFinished: td.saveImg()
             }
-            TextField {
+            PlainField {
               id: imgEpUrlField
               visible: td.imgProv === "endpoint"
               width: col.width
@@ -1286,7 +1286,7 @@ Item {
               }
               onEditingFinished: td.saveImg()
             }
-            TextField {
+            PlainField {
               id: imgEpModelField
               visible: td.imgProv === "endpoint"
               width: col.width
@@ -1303,7 +1303,7 @@ Item {
               }
               onEditingFinished: td.saveImg()
             }
-            TextField {
+            PlainField {
               id: imgEpKeyEnvField
               visible: td.imgProv === "endpoint"
               width: col.width
@@ -1320,7 +1320,7 @@ Item {
               }
               onEditingFinished: td.saveImg()
             }
-            TextField {
+            PlainField {
               id: imgEpKeyFileField
               visible: td.imgProv === "endpoint"
               width: col.width
@@ -1337,7 +1337,7 @@ Item {
               }
               onEditingFinished: td.saveImg()
             }
-            TextField {
+            PlainField {
               id: imgCmdField
               visible: td.imgProv === "custom"
               width: col.width
@@ -1563,7 +1563,7 @@ Item {
               }
             }
           }
-          TextField {
+          PlainField {
             id: promptField
             visible: td.formMode || (td.chatActive && !td.busy)
             width: col.width
@@ -1590,7 +1590,7 @@ Item {
             Repeater {
               id: partFields
               model: td.partKeys
-              delegate: TextField {
+              delegate: PlainField {
                 required property var modelData
                 width: (col.width - Style.space(8)) / 2
                 height: Style.space(30)
@@ -1731,7 +1731,7 @@ Item {
             font.family: td.font
             font.pixelSize: Style.font.body
           }
-          TextField {
+          PlainField {
             id: saveField
             width: col.width
             height: Style.space(32)
@@ -1763,7 +1763,7 @@ Item {
             font.family: td.font
             font.pixelSize: Style.font.body * 0.95
           }
-          TextField {
+          PlainField {
             id: codeField
             width: col.width
             height: Style.space(32)

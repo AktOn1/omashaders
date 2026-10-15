@@ -265,7 +265,7 @@ Item {
           width: col.width
           height: Style.space(28)
           spacing: Style.space(6)
-          TextField {
+          PlainField {
             id: searchField
             width: row1.width - catRow.width - sortBtn.width - resBtn.width - ratioBtn.width - 4 * row1.spacing
             height: row1.height

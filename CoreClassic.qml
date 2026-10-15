@@ -3114,7 +3114,7 @@ Item {
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body
       }
-      TextField {
+      PlainField {
         id: targetField
         anchors.left: targetLabel.right
         anchors.right: targetPick.left
@@ -3189,7 +3189,7 @@ Item {
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
         }
-        TextField {
+        PlainField {
           id: hexField
           anchors.left: customLabel.right
           anchors.right: starText.left
@@ -3416,7 +3416,7 @@ Item {
           height: Style.space(28)
           spacing: Style.space(10)
 
-          TextField {
+          PlainField {
             id: renameField
             visible: root.renaming
             width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
@@ -3432,7 +3432,7 @@ Item {
               else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.finishRename(true); event.accepted = true }
             }
           }
-          TextField {
+          PlainField {
             id: searchField
             visible: !root.renaming
             width: searchRow.width - matchText.width - randHint.width - 2 * searchRow.spacing
