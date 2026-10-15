@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
+import "palette.js" as Pal
 
 // One bar icon, five effect menus (tick any of them at the top, ticked menus sit side by side):
 //   Screen    full-screen GLSL effects applied by Hyprland (bin/omashaders)
@@ -191,6 +192,7 @@ Item {
   property string disabledFlag: ""
   readonly property bool paused: disabledFlag !== ""
   function defaultStrengthOf(section, name) {
+    if (section === "color" && Pal.isId(name)) return 100
     if (section === "color" && customRe.test(name)) return 80
     for (var i = 0; i < allEntries.length; i++) if (allEntries[i].section === section && allEntries[i].name === name) return allEntries[i].dflt
     return 100
@@ -797,6 +799,7 @@ Item {
     var out = []
     colorFavs.forEach(function(id) {
       if (customRe.test(id)) { out.push({ id: id, label: "Custom #" + id.slice(7), desc: "Your own colour", hint: "" }); return }
+      if (Pal.isId(id)) { out.push({ id: id, label: Pal.label(id), desc: "Your own palette", hint: "" }); return }
       for (var i = 0; i < colorItems.length; i++) if (colorItems[i].id === id) { out.push(colorItems[i]); break }
     })
     return out
@@ -850,9 +853,19 @@ Item {
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
       out.push({ id: c, label: c, items: colorEntries.filter(function(e) { return e.cat === c }).map(colorItem), note: "" })
     })
+    out.push({ id: "@palette", label: "Palette…  (make your own)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
+  }
+
+  // the Palette editor (PaletteDialog.qml) is loaded the first time it opens
+  property bool palOpen: false
+  property bool palLoaded: false
+  function openPalette() {
+    popupOpen = false
+    palLoaded = true
+    Qt.callLater(function() { root.palOpen = true })
   }
 
   function applyColor(name) {
@@ -1583,6 +1596,11 @@ Item {
   Timer { id: hoverLeaveTimer; interval: 220; onTriggered: root.revertHoverPreview() }
 
   FxHost {
+    active: root.palLoaded
+    source: root.sub("PaletteDialog.qml")
+    props: ({ core: root, open: root.palOpen })
+  }
+  FxHost {
     source: root.sub("MouseFx.qml")
     props: ({
       strength: root.mouseStrength / 100,
@@ -1787,7 +1805,7 @@ Item {
     var r = perfCost[kind + ":" + name]
     return r && r.rating !== "light" ? (r.rating === "heavy" || r.rating === "rework" ? " ⚠" : " ") + "[" + r.rating + " +" + r.cost + "%]" : ""
   }
-  function perfName(n) { return n.indexOf("custom-") === 0 ? "custom" : n }
+  function perfName(n) { return n.indexOf("custom-") === 0 || n.indexOf("pal-") === 0 ? "custom" : n }
   readonly property var activeNow: {
     var a = []
     function add(sec, key, text) { a.push({ sec: sec, key: key, text: text }) }
@@ -1796,7 +1814,7 @@ Item {
       if (mixSecondOf("screen") !== "") add("screen", "screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2))
     }
     if (colorOn) {
-      add("color", "color", colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)))
+      add("color", "color", (Pal.isId(colorCurrent) ? Pal.label(colorCurrent) : colorCurrent) + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)))
       if (mixSecondOf("color") !== "") add("color", "color2", (mixColorMode === "blend" ? "~ " : "+ ") + color2 + " " + mixColorAmt + "%")
     }
     if (wallOn) {
@@ -1970,6 +1988,7 @@ Item {
     if (k === "win" && id === "@copy") { Quickshell.execDetached(["wl-copy", installCmd]); flash("Copied: " + installCmd); return }
     if (k === "win" && id === "@inherit") { winRunS(["inherit"]); return }
     if (k === "win" && id === "@off" && winScope !== "*") { winRunS(["off"]); return }
+    if (k === "color" && id === "@palette") { openPalette(); return }
     if (id === "@off") offIn(k)
     else if (id === "@random") randomIn(k)
   }
@@ -2065,6 +2084,7 @@ Item {
   IpcHandler {
     target: "io.github.akton1.omashaders"
     function toggle(): void { root.toggle() }
+    function palette(): void { root.openPalette() }
     function open(): void { root.open() }
     function close(): void { root.close() }
     function set(name: string): void { root.applyScreen(name === "off" ? "" : name) }

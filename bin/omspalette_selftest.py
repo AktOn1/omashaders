@@ -94,5 +94,20 @@ if have_pil and os.path.exists("/usr/share/glvnd/egl_vendor.d/50_mesa.json"):
 else:
     print("skip: picture comparison needs numpy, Pillow and Mesa")
 
+# a palette travels in a share code like any colour grade, and a look-alike is refused
+import json
+sys.path.insert(0, HERE)
+import omslib as L
+with tempfile.TemporaryDirectory() as t:
+    env = dict(os.environ, OMASHADERS_STATE_DIR=t)
+    for label, color, want_ok in (("a palette", pid, True), ("a look-alike with a shell command", pid + ";rm", False)):
+        code = L.encode_code({"v": 1, "n": "Pal test", "s": "", "w": "", "m": "", "c": color, "o": {"col": 100}})
+        r = subprocess.run([sys.executable, os.path.join(HERE, "theme-code"), "import", code, "--json"], capture_output=True, text=True, env=env)
+        try:
+            got = json.loads(r.stdout).get("theme", {}).get("c", "") if r.returncode == 0 else None
+        except ValueError:
+            got = None
+        check((got == pid) if want_ok else (got is None or got == ""), "share code import: %s is %s" % (label, "kept" if want_ok else "refused or dropped"))
+
 print("all palette checks ok" if not fails else "%d palette check(s) failed" % fails)
 sys.exit(1 if fails else 0)

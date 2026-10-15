@@ -5,6 +5,7 @@ import Quickshell.Hyprland
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
+import "palette.js" as Pal
 
 // One bar icon, five effect menus (tick any of them at the top, ticked menus sit side by side):
 //   Screen    full-screen GLSL effects applied by Hyprland (bin/omashaders)
@@ -216,6 +217,7 @@ Item {
   property string disabledFlag: ""
   readonly property bool paused: disabledFlag !== ""
   function defaultStrengthOf(section, name) {
+    if (section === "color" && Pal.isId(name)) return 100
     if (section === "color" && customRe.test(name)) return 80
     for (var i = 0; i < allEntries.length; i++) if (allEntries[i].section === section && allEntries[i].name === name) return allEntries[i].dflt
     return 100
@@ -814,6 +816,7 @@ Item {
     var out = []
     colorFavs.forEach(function(id) {
       if (customRe.test(id)) { out.push({ id: id, label: "Custom #" + id.slice(7), desc: "Your own colour", hint: "" }); return }
+      if (Pal.isId(id)) { out.push({ id: id, label: Pal.label(id), desc: "Your own palette", hint: "" }); return }
       for (var i = 0; i < colorItems.length; i++) if (colorItems[i].id === id) { out.push(colorItems[i]); break }
     })
     return out
@@ -867,10 +870,21 @@ Item {
     catList(colorEntries, ["Comfort", "Color", "Retro", "Devices"]).forEach(function(c) {
       out.push({ id: c, label: c, items: colorEntries.filter(function(e) { return e.cat === c }).map(colorItem), note: "" })
     })
+    out.push({ id: "@palette", label: "Palette…  (make your own)", action: true })
     out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
     out.push({ id: "@random", label: "Surprise me", action: true })
     out.push({ id: "@off", label: "Off", action: true })
     return out
+  }
+
+  // the Palette editor (PaletteDialog.qml) is loaded the first time it opens
+  property bool palOpen: false
+  property bool palLoaded: false
+  function openPalette() {
+    popupOpen = false
+    whOpen = false
+    palLoaded = true
+    Qt.callLater(function() { root.palOpen = true })
   }
 
   function applyColor(name) {
@@ -1540,6 +1554,11 @@ Item {
     }
   }
   FxHost {
+    active: root.palLoaded
+    source: root.sub("PaletteDialog.qml")
+    props: ({ core: root, open: root.palOpen })
+  }
+  FxHost {
     active: root.dlgLoaded
     source: root.sub("ThemeDialog.qml")
     props: ({ core: root, open: root.dlgOpen, mode: root.dlgMode, whId: root.dlgWh, number: root.dlgNum })
@@ -1983,7 +2002,7 @@ Item {
   }
   function partOr(kind, id) {
     if (id === "" || !haveIds.loaded) return id
-    if (kind === "color" && /^custom-[0-9a-fA-F]{6}$/.test(id)) return id
+    if (kind === "color" && (/^custom-[0-9a-fA-F]{6}$/.test(id) || Pal.isId(id))) return id
     return haveIds[kind][id] === true ? id : ""
   }
   function themeItem(line) {
@@ -2203,7 +2222,8 @@ Item {
     var r = perfCost[kind + ":" + name]
     return r && r.rating !== "light" ? (r.rating === "heavy" || r.rating === "rework" ? " ⚠" : " ") + "[" + r.rating + " +" + r.cost + "%]" : ""
   }
-  function perfName(n) { return n.indexOf("custom-") === 0 ? "custom" : n }
+  function colorName(n) { return Pal.isId(n) ? Pal.label(n) : n }
+  function perfName(n) { return n.indexOf("custom-") === 0 || n.indexOf("pal-") === 0 ? "custom" : n }
   readonly property var activeNow: {
     var a = []
     function add(sec, key, text, kind, name, label) { a.push({ sec: sec, key: key, text: text, kind: kind || "", name: name || "", label: label || text }) }
@@ -2212,7 +2232,7 @@ Item {
       if (mixSecondOf("screen") !== "") add("screen", "screen2", (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%" + costTag("screen", effect2), "screen", effect2, (mixEffectMode === "blend" ? "~ " : "+ ") + effect2 + " " + mixEffectAmt + "%")
     }
     if (colorOn) {
-      add("color", "color", colorCurrent + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)), "color", perfName(colorCurrent), colorCurrent + " " + colStrength + "%")
+      add("color", "color", colorName(colorCurrent) + " " + colStrength + "%" + costTag("color", perfName(colorCurrent)), "color", perfName(colorCurrent), colorName(colorCurrent) + " " + colStrength + "%")
       if (mixSecondOf("color") !== "") add("color", "color2", (mixColorMode === "blend" ? "~ " : "+ ") + color2 + " " + mixColorAmt + "%")
     }
     if (wallOn) {
@@ -2622,6 +2642,7 @@ Item {
     if (k === "win" && id === "@copy") { Quickshell.execDetached(["wl-copy", installCmd]); flash("Copied: " + installCmd); return }
     if (k === "win" && id === "@inherit") { winRunS(["inherit"]); return }
     if (k === "win" && id === "@off" && winScope !== "*") { winRunS(["off"]); return }
+    if (k === "color" && id === "@palette") { openPalette(); return }
     if (id === "@delete") deleteSelected(true)
     else if (id === "@off") offIn(k)
     else if (id === "@random") randomIn(k)
@@ -2791,6 +2812,7 @@ Item {
     function wallhaven(): void { root.openWallhaven() }
     function aiTheme(): void { root.openDialog("ai", "", 0) }
     function importTheme(): void { root.openDialog("import", "", 0) }
+    function palette(): void { root.openPalette() }
     function shareTheme(which: string): void { root.openDialog("share", "", Math.floor(Number(which)) || 1) }
     function gif(seconds: string, out: string): void { root.recordGif(Number(seconds) || 0, out) }
     function gifFinished(): void { root.gifFinished() }
@@ -2850,7 +2872,7 @@ Item {
     text: root.barGlyph
     active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn || root.winAnyOn)
     tooltipText: "OmaShaders" + (root.paused ? " (paused)" : "") + "\nScreen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off")
-                 + "\nColor: " + (root.colorOn ? root.colorCurrent + " " + root.colStrength + "%" : "off")
+                 + "\nColor: " + (root.colorOn ? root.colorName(root.colorCurrent) + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
                  + "\nWindows: " + (root.winAnyOn ? root.winOwnText() + [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off")
                  + "\nCursor: " + (root.mouseOn ? root.mouseCurrent : "off") + (root.shiftOnly ? " (only while Shift is held)" : "")
