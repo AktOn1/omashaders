@@ -63,18 +63,18 @@ def state():
     col, col2 = rd("color"), rd("color2")
 
     def col_ok(c):
-        return have("colors", c) or re.fullmatch(r"custom-[0-9a-fA-F]{6}", c or "") is not None
+        return have("colors", c) or re.fullmatch(r"(custom-[0-9a-fA-F]{6}|pal-[0-9a-f]{26,66})", c or "") is not None
 
     if col_ok(col):
-        layers.append("color:" + ("custom" if col.startswith("custom-") else col))
+        layers.append("color:" + ("custom" if col.startswith(("custom-", "pal-")) else col))
         strengths["color"] = rd("strength-color")
         if col2 and col2 != col and col_ok(col2):
-            layers.append("color2:" + ("custom" if col2.startswith("custom-") else col2))
+            layers.append("color2:" + ("custom" if col2.startswith(("custom-", "pal-")) else col2))
     if rd("window-target"):
         for k, f in (("win", "window-effect"), ("wincolor", "window-color")):
             n = rd(f)
-            if n and (have("shaders", n) or have("colors", n) or n.startswith("custom-")):
-                layers.append(k + ":" + ("custom" if n.startswith("custom-") else n))
+            if n and (have("shaders", n) or have("colors", n) or n.startswith(("custom-", "pal-"))):
+                layers.append(k + ":" + ("custom" if n.startswith(("custom-", "pal-")) else n))
     frame = rd("window-frame")
     if frame:
         layers.append("frame:" + frame)

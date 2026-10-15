@@ -160,7 +160,7 @@ def safety_scan(d, customs=False):
         v = d.get(k, "")
         if not isinstance(v, str) or v == "":
             continue
-        if re.fullmatch(r"custom-#?[0-9a-fA-F]{6}", v) or L.ID_RE.match(v):
+        if re.fullmatch(r"custom-#?[0-9a-fA-F]{6}", v) or L.omspalette.is_palette_id(v) or L.ID_RE.match(v):
             continue
         problems.append("the %s field holds something that is not an effect id" % label)
     name = d.get("n", "")

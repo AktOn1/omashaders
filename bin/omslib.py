@@ -41,6 +41,8 @@ CODE_PREFIX = "OMS1:"
 MAX_CODE = 6000          # characters of a share code we accept
 MAX_JSON = 8192          # bytes after decompression
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$")
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import omspalette  # noqa: E402
 CUSTOM_RE = re.compile(r"^custom-[0-9a-f]{6}$")
 WH_RE = re.compile(r"^[a-z0-9]{6}$")
 # optional per-theme numbers (the 9th field of a theme line): key -> (low, high)
@@ -210,6 +212,8 @@ def pick_id(value, pool, slot, notes, allow_animated=True, fuzzy=True, allow_cus
     if allow_custom:
         low = v.lower()
         if CUSTOM_RE.match(low):
+            return low
+        if omspalette.is_palette_id(low):
             return low
         m = re.fullmatch(r"custom-#?([0-9a-fA-F]{6})", v)
         if m:

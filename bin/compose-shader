@@ -43,11 +43,15 @@ def layer(path, percent, prefix, sample=None, evalable=False):
     return src, "const float %sS = %.4f;\n%s" % (prefix, s, text), native
 
 CUSTOM_RE = re.compile(r'^custom-([0-9a-fA-F]{6})$')
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import omspalette  # noqa: E402
 
 
 def custom_source(name):
     """GLSL for the custom colour grade `custom-RRGGBB`: shadows go to a dark shade of the colour, mid greys to the
     colour, highlights to a pale tint of it. Luminance is kept, so text stays readable."""
+    if name.startswith(omspalette.PREFIX):
+        return omspalette.glsl(name)
     m = CUSTOM_RE.match(name)
     if not m:
         raise ValueError("not a custom colour name: %s" % name)
@@ -74,12 +78,13 @@ void main() {
 
 
 def custom_file(state_dir, name):
-    """Path of the generated shader for a custom colour name (written on first use)."""
+    """Path of the generated shader for a custom colour (custom-RRGGBB) or palette (pal-...) name, written on first use."""
     path = os.path.join(state_dir, "custom-colors", name.lower() + ".frag")
     if not os.path.isfile(path):
+        text = custom_source(name.lower() if name.lower().startswith(omspalette.PREFIX) else name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".tmp", "w") as f:
-            f.write(custom_source(name))
+            f.write(text)
         os.replace(path + ".tmp", path)
     return path
 

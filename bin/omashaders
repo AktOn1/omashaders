@@ -52,10 +52,10 @@ names() {
 COLOR_STATE="$STATE_DIR/color"
 current() { cat "$STATE" 2>/dev/null; }
 current_color() { cat "$COLOR_STATE" 2>/dev/null; }
-# path of a colour grade's shader; "custom-RRGGBB" is a colour of your own, generated on first use into the state folder
+# path of a colour grade's shader; "custom-RRGGBB" is a colour of your own and "pal-..." a palette (bin/omspalette.py), generated on first use into the state folder
 cfile() {
   case "$1" in
-    custom-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) python3 "$ROOT/bin/compose-shader" --custom "$STATE_DIR" "$1" ;;
+    custom-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|pal-[0-9a-f]*) python3 "$ROOT/bin/compose-shader" --custom "$STATE_DIR" "$1" 2>/dev/null ;;
     ai-*) echo "$GDIR/color/$1.frag" ;;
     *) echo "$CDIR/$1.frag" ;;
   esac
@@ -159,7 +159,7 @@ apply() {
 lock() { mkdir -p "$STATE_DIR"; exec 9>"$STATE_DIR/lock"; flock 9; }
 set_shader() {
   lock
-  if [ ! -f "$(sfile "$1")" ] && { [ -f "$CDIR/$1.frag" ] || [ -f "$GDIR/color/$1.frag" ] || [[ "$1" == custom-* ]]; }; then set_color "$1"; return; fi
+  if [ ! -f "$(sfile "$1")" ] && { [ -f "$CDIR/$1.frag" ] || [ -f "$GDIR/color/$1.frag" ] || [[ "$1" == custom-* ]] || [[ "$1" == pal-* ]]; }; then set_color "$1"; return; fi
   [ -f "$(sfile "$1")" ] || { echo "unknown shader: $1" >&2; exit 1; }
   ! is_winfx "$(sfile "$1")" || { echo "$1 is a window shader (use it in the Windows column)" >&2; exit 1; }
   mkdir -p "$STATE_DIR"; echo "$1" > "$STATE"; : > "$STATE_DIR/effect2"; echo "$(remembered_strength fx "$1" "$(sfile "$1")")" > "$STATE_DIR/strength-effect"; : > "$DISABLED"; apply
