@@ -2,13 +2,13 @@
 
 Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: over 100 screen and window shaders (CRT, pixel art, e-ink, Game Boy, camouflage, halation, oil paint, matrix rain ...), over 130 colour grades plus your own custom colour, about 170 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick), more than 50 cursor effects (trails, glows, rain ripples, plus ones that bend the real screen under the pointer), and 156 ready-made themes that set everything together. Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
-<a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
-
 > **Brand new: this plugin is five days old** (first written on 9 October 2026, first public release on 10 October 2026, this update on 14 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
 ![Nine of the screen effects, each combined with a colour grade](preview.png)
 
 *The picture is a sample desktop rendered with the plugin's own shaders (`bin/shader-preview`), not a screenshot of the menu.*
+
+<a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 ## What's new
 
