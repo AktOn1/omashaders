@@ -10,16 +10,13 @@ layout(std140, binding = 0) uniform buf {
   float time;
   vec2 mouse;
   vec2 res;
+  float size;
   vec4 h0;
   vec4 h1;
   vec4 h2;
   vec4 h3;
 };
 
-float onScreen() {
-  vec2 q = step(vec2(0.0), mouse) * step(mouse, res);
-  return q.x * q.y;
-}
 float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
 vec3 hue(float h) { return 0.5 + 0.5 * cos(6.28318 * (h + vec3(0.0, 0.33, 0.67))); }
 vec2 P(int i) {
@@ -42,7 +39,7 @@ vec2 segment(vec2 p, vec2 a, vec2 b) {
 void main() {
   vec2 p = qt_TexCoord0 * res;
   float d = length(p - mouse);
-  float on = onScreen();
-  float dim = 0.88 * smoothstep(90.0, 170.0, d) * on;
+  float k = max(size, 0.05);
+  float dim = 0.88 * smoothstep(90.0 * k, 170.0 * k, d);
   fragColor = vec4(0.0, 0.0, 0.0, dim) * qt_Opacity;
 }

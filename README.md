@@ -2,7 +2,7 @@
 
 Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: over 100 screen and window shaders (CRT, pixel art, e-ink, Game Boy, camouflage, halation, oil paint, matrix rain ...), over 130 colour grades plus your own custom colour, about 170 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick), more than 50 cursor effects (trails, glows, rain ripples, plus ones that bend the real screen under the pointer), and 156 ready-made themes that set everything together. Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
-> **Brand new: this plugin is five days old** (first written on 9 October 2026, first public release on 10 October 2026, this update on 14 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
+> **Brand new: this plugin is about two weeks old** (first written on 9 October 2026, first public release on 10 October 2026, this update on 25 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
 ![Nine of the screen effects, each combined with a colour grade](preview.png)
 
@@ -11,6 +11,89 @@ Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar ico
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 ## What's new
+
+**1.47.3 (25 Oct 2026)**
+
+- **The colour rail keys work without clicking.** On the Color menu, `z` `Z` `v` `V` `m` `M` now work with the cursor simply on an effect row, even when no custom colour is on: the first key turns the Custom colour on from the colour shown on the rails (and says so in the status line), then moves it. Before, they only acted after you had clicked into the picker or typed a colour with `u`.
+
+**1.47.2 (25 Oct 2026)**
+
+- **The three colour rails have keys.** On the Color menu, with a custom colour on, `z` `Z` change the hue (wraps round the colour wheel), `v` `V` the saturation and `m` `M` the brightness: the lower-case key lowers, the upper-case key (Shift) raises. The caps sit next to the H, S and V labels of the rails and follow `F1`; the hint strip lists them while the cursor is on Color. The letters are shared with the Wallpaper and Cursor sliders and only act on the menu the cursor is in.
+
+**1.47.1 (25 Oct 2026)**
+
+- **The hint strip explains the flag.** Under the menus, after the keys of the Themes list (and of the other lists that mark built-in rows), a small legend shows the flag glyph and "built in (Duplicate to change)". It is the same wording as the status line under the lists, and it follows `F1` like the rest of the strip. On a small screen, where the strip shrinks to one line, the legend is left out with the second row.
+
+**1.47.0 (24 Oct 2026)**
+
+- **`Enter` no longer closes the menu.** `Enter` does the same as `Space`: it applies the item and the menu stays open, so you can pick a theme, then an effect, then a colour. Close with `Esc` or `q`. Mouse clicks behave as before.
+- **`r` on the Themes list applies a random complete theme** (from the open category or the filter result, never the one that is already on). `R` still shuffles every part separately. The hints say "random theme" on Themes, "random" in the other menus and "random everything" for `R`.
+- **`m` (go to Themes) is gone**; `Tab` moves between the menus.
+- **The `/` filter key is shown right next to the search box** (it follows `F1`), and no longer takes room in the "Everywhere" row.
+- **A second effect is added with `a`.** `Ctrl+Space` and `Ctrl+Enter` could not work on a desktop that binds `Ctrl+Space` itself (for example to switch the keyboard layout): the compositor takes the key before the menu sees it. The Screen, Color, Wallpaper and Windows hints now show `a` "add a second effect"; `t` "flip stack/blend" and `Backspace` "remove mix" appear only while a mix is on. `Ctrl+click` with the mouse is unchanged.
+- **The menu no longer closes by itself the first time a colour grade or cursor effect is applied.** Two helper scripts (`compose-shader`, `cursor-bend`) wrote a `__pycache__` folder into the plugin folder; the shell saw a changed plugin folder, reloaded the plugin and closed the open menu.
+
+**1.46.0 (24 Oct 2026)**
+
+- **The hotkey hints are sorted by where they work.** The strip under the menus now has a row "Everywhere" (keys that work in every menu) and a second row for the menu the cursor is in: the Themes list shows its own keys, Screen / Color / Wallpaper / Cursor / Windows show theirs (`A` only on Windows, `u` only on Color and Wallpaper). On a small screen only the "Everywhere" row stays. `m` is now called "go to Themes".
+- **The `F1` hotkeys cap is always in the menu header.** It stays when the hints are hidden (dimmed) and on small screens; clicking it does the same as pressing `F1`. The old "F1 more hints / hide hints" text is gone from the strip.
+- **The keyboard no longer applies anything by moving.** Arrows, `h j k l`, `Tab` and entering another menu only move the cursor; `Space` applies the item and the menu stays open, `Enter` applies and closes. So you can build Screen + Color + Wallpaper + Cursor + Windows one by one with the keys and stack with `Ctrl+Enter` / `t`, and moving through Themes no longer overwrites your current look. `Right` / `l` on the last column only moves on to the next menu.
+- **`F2` turns live preview on or off** (cap next to `F1`, remembered, off by default). `Shift` + arrow previews one step while it is held, like `Shift` + hover.
+- **`B` stars a custom colour** (the star next to the hex field); it used to share `U` with What's new, which now has `U` to itself.
+
+**1.45.1 (24 Oct 2026)**
+
+- **Built-in themes and effects are marked with a flag instead of a lock.** The little flag in front of a row (and in the line below the menu: "Built in, locked (Duplicate to change)") means the same as the lock did: it is one of the plugin's own, you can use it and duplicate it, but not change or delete it.
+
+**1.45.0 (24 Oct 2026)**
+
+- **Every button shows its key, and F1 hides them all.** With hints on, the five tabs (Screen, Color, Wallpaper, Cursor, Windows), Pause, Pause in fullscreen, What's new and the buttons of the Themes list (Save, Revert, Undo, Share, Import, Duplicate, New category, Move to category, Create with AI, Surprise me) and of the effect lists (Off, Surprise me, Delete selected) carry a small key cap, drawn like the ones next to the sliders. The strip under the menus no longer repeats keys a button already shows. **One bracket pair on Strength:** the slider shows only `[` `]` and `d`; hold **Shift** for a 1 % step instead of 5 % (`{` `}` still work). The mix amount works the same way (`,` `.`, Shift = 1 %).
+
+**1.44.2 (24 Oct 2026)**
+
+- **The theme list on the right no longer jumps by a row.** When you were scrolled down and chose a theme, the "What is using my GPU" block under the lists grew or shrank, so the list fitted one row more or fewer and scrolled. That block now keeps a fixed height while the menu is open, so the list stays where it is.
+
+**1.44.1 (23 Oct 2026)**
+
+- **Choosing a theme no longer shakes the Themes menu.** After clicking All themes and a theme, the capsules on the left (Save, Revert, Undo ...) changed and re-wrapped, the theme list flickered back to its top and the left list shifted for a moment. Save, Revert and Undo now have fixed places that are only shown or hidden, the lists keep their rows and scroll position while a theme is applied, and the "(changed)" label no longer flashes on while the theme's parts are still being applied.
+
+**1.44.0 (23 Oct 2026)**
+
+- **Hotkeys sit where you use them, and F1 hides them.** Each slider now shows its keys right next to its name (Strength `[` `]` `d`, Speed `v` `V`, Size / Zoom `z` `Z`, Mouse reaction `(` `)`, the mix amount `,` `.`), and the keys for the lists and tabs (open a part, filter, favorite, delete, surprise, save, revert, share, import, pause) sit in a strip directly under the Themes list and the tabs. The folded "Hotkeys (?)" list at the bottom is gone, and `?` no longer does anything. **F1** shows or hides all of these hints; hidden, the menu gets the space back. The first start shows them, and after that the menu keeps your last choice.
+
+**1.43.2 (22 Oct 2026)**
+
+- **The Themes menu stays where you clicked.** Choosing a theme (or stepping onto one with the arrow keys) made the list jump to another category for a moment, because Save as new, Revert and Undo appear above the categories and shifted every row. The menu now follows its category by name, so the category, the row and the scroll position stay put and the theme you picked stays highlighted, in the built-in groups, in your own categories and in All themes.
+
+**1.43.1 (21 Oct 2026)**
+
+- **Dimming cursor effects work on every monitor.** With Flashlight, Spotlight or Reading line on, only the monitor under the pointer was dimmed; the other one stayed bright, and moving the pointer across made the screens flash. Now the whole desktop stays dark and only the spot (or band) around the pointer is lit; the lit spot also follows the size setting without uncovering the edges of the screen. Glow and line effects (Crosshair, Lamp, Aura, Halo) are unchanged.
+
+**1.43.0 (20 Oct 2026)**
+
+- **Theme categories.** The Themes list is no longer one flat list of 156: the built-in themes are grouped (Classics, Calm and cozy, Focus and sleep, Sea and water, Sky and weather, Landscapes, Seasons and holidays, Spooky, Fantasy and adventure, Steam and wasteland, Cyber and city, Space, Speed and sport, Art and party), each with a count; **All themes** is still the first row. Make your own with **New category** (`K`) and put any theme in one with **Move to category** (`M`; type a name or press `Tab` / `↑` `↓` to pick an existing one, an empty name puts the theme back in its usual place). Themes you save yourself start in **My themes**. `Delete` on one of your categories removes it (its themes go back to their usual place). Built-in themes stay locked; moving one only changes where it is listed for you. The filter also finds a theme by its category name.
+
+**1.42.0 (18 Oct 2026)**
+
+- **Change a theme without losing it.** Edit anything while a theme is on (a new wallpaper from Create with AI, another effect, a strength): nothing is copied and the theme in the list stays as shipped. The Themes header and the bar tooltip say **Abyss (changed)** while the look differs from it. **Save as new** (`F`) is the only thing that creates a theme; on your own theme the Save window also offers **Replace** to overwrite it. **Revert** (`b`) puts the theme back; picking another theme drops the edits with a one-line note, and **Undo** (`y`) brings them back.
+
+**1.41.1 (18 Oct 2026)**
+
+- **A broken effect can no longer fill the disk or memory.** Some AI-made wallpaper and cursor effects were saved with a compiled shader for the wrong stage, which the graphics driver rejected on every frame; the shell log then grew by gigabytes and the computer froze. Now every wallpaper, second wallpaper and cursor effect is checked before it is drawn, and one that is missing, damaged, cut off, built for the wrong stage or refused by the renderer is tried once, switched off by itself and announced with one short notice (and only a few log lines). A background watcher (`bin/fx-guard`) also notices a shader error, a fast-growing shell log or fast-growing memory, switches the effects off and, as a last resort, restarts the shell. Effects made earlier with the wrong-stage fault are rebuilt on start-up. AI-made effects are compiled and checked before they are saved, and an effect that cannot run on this computer is marked in the list.
+
+**1.41.0 (18 Oct 2026)**
+
+- **Commands on top, a filter that shows its matches.** In every list of the themes menu (Themes, Screen, Color, Wallpaper, Cursor, Window) the commands (Off, Create with AI, Surprise me, Delete, Share, ...) are small buttons in one block above the categories, never hidden at the bottom. Typing in the filter now lists every match at once under **All matches** (each row names its category on the right); the categories that have a match follow with a count, so you no longer click through each one. The filter box is smaller, has a **Clear** button at its end (`Esc` still clears it), and the "N found" text sits next to it. The older column menu is unchanged.
+
+**1.40.1 (16 Oct 2026)**
+
+- **Create with AI moved to the left list.** In the Screen, Color, Wallpaper, Cursor and Window menus it is now a row next to Delete and Surprise me, no longer the last row of every category.
+
+**1.40.0 (15 Oct 2026)**
+
+- **Built-in themes and effects carry a lock.** Every built-in theme and every built-in effect (screen, colour, wallpaper, cursor, window frame) shows a lock in its list and says "Built in, locked" in the line below the menu. They are the plugin's own, so they cannot be changed or deleted; you can always use them, change them and save the result as your own.
+- **Duplicate (`N`).** On a theme, **Duplicate** asks for a new name and keeps a copy that is yours to edit and delete. Saving a changed built-in theme never overwrites it: you are asked for a new name. Only the author's own copy (the one with the `dev-export` file) may replace a built-in.
+- **Create with AI in every effect menu.** A **Create with AI** row in the left list of the Screen, Color, Wallpaper, Cursor and Window menus (next to Delete and Surprise me, like in Themes) opens the AI dialog for one new effect of that kind. It is previewed on your current look and **Keep effect** saves it as your own (no lock), without making a theme. The themes menu keeps **Create with AI (T)** for a whole theme. The older Classic menu is unchanged (it has no built-in protection and no AI).
 
 **1.39.0 (15 Oct 2026)**
 
@@ -67,8 +150,8 @@ Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy she
 ## First run
 
 1. Click the monitor icon in the bar. The **Themes** column opens on the left: pick a complete look first (hover to preview). On the right, the **Effects** pane always lists five groups (**Screen**, **Color**, **Wallpaper**, **Cursor**, **Windows**) as folded headers that show what is on in each; click one to open it with all its settings, and the one that was open folds. The menu uses the full height of the screen.
-2. Move with `h j k l` or the arrow keys. Moving onto an effect with the keys previews it live; hovering with the mouse only highlights it; hold `Shift` while hovering to preview, and the previous setting comes back when you release Shift or move off the item (a click keeps it). Categories (left column) are never selected by hovering; click one.
-3. `Enter` keeps the effect and closes, `Space` keeps it and stays open, a click keeps it and stays open, `Esc` puts everything back as it was.
+2. Move with `h j k l` or the arrow keys. Moving with the keys only moves the cursor and applies nothing; hovering with the mouse only highlights it. Hold `Shift` while hovering (or press `Shift` + arrow) to preview, and the previous setting comes back when you release Shift or move off the item (a click keeps it). `F2` turns live preview on if you want every move to preview. Categories (left column) are never selected by hovering; click one.
+3. `Enter` or `Space` applies the effect and the menu stays open (so you can pick several things), a click keeps it and stays open too, `Esc` or `q` closes and puts any preview back as it was.
 4. Pick an effect and a colour together: the effect runs first, then the colour grade is applied to its result (for example `crt` + `gameboy` is a CRT look in Game Boy greens).
 5. Lower the **Strength** slider if an effect is too strong. Every effect starts at a readable value (pixelate 20 %, Game Boy LCD 25 %, C64 25 % ...); 0 % is the original screen.
 
@@ -76,36 +159,39 @@ Then add the **OmaShaders** widget (monitor icon) to your bar in the Omarchy she
 
 Bar icon: **left click** menu, **right click** pause / resume all effects (they come back exactly as they were), **middle click** next wallpaper, **scroll** steps the screen effect.
 
-The menu has two steps. **1 Pick a complete theme** on the left (hover to preview, `Enter` keeps it). **2 Fine-tune the effects** on the right: the Effects pane lists Screen, Color, Wallpaper, Cursor and Windows as headers that are always visible, folded or open. Each folded header says what is on in that group; click it (or press the group's key) to open it with all its settings (strength, mixing, options), which closes the one that was open. The open group is remembered. **Surprise me** is a category in the Themes pane: a random complete theme, a surprise for everything, or only for Screen, Color, Wallpaper, Cursor or Windows; *Clear everything* is there too. At the top left, the line "Screen black or laggy? Press p" is followed by the big **Pause all effects** button (key `p`) and the *Pause in fullscreen* box. Below the columns, **What is using my GPU** lists everything that is on in plain words (green light, yellow medium, red heavy), says in one sentence what to switch off if the system lags (click a chip to switch that effect off) and how busy the graphics card is. The detailed cost report is command line only (`omashaders perf report`). The bottom of the menu has a **Hotkeys** button (key `?`) that unfolds every hotkey; folded, it shows just the few you need first. **Ctrl+Alt+P** pauses and resumes everything from anywhere (the plugin binds it in Hyprland when the shell starts; see *Pause key* below), and the menu shows it, so you know what to press when the screen has gone black. **Save** (`F`) and **Share** (`S`) open a small window each; they are not rows in the Themes list any more.
+The menu has two steps. **1 Pick a complete theme** on the left (hover to preview, `Enter` or `Space` keeps it). **2 Fine-tune the effects** on the right: the Effects pane lists Screen, Color, Wallpaper, Cursor and Windows as headers that are always visible, folded or open. Each folded header says what is on in that group; click it (or press the group's key) to open it with all its settings (strength, mixing, options), which closes the one that was open. The open group is remembered. **Surprise me** is a category in the Themes pane: a random complete theme, a surprise for everything, or only for Screen, Color, Wallpaper, Cursor or Windows; *Clear everything* is there too. At the top left, the line "Screen black or laggy? Press p" is followed by the big **Pause all effects** button (key `p`) and the *Pause in fullscreen* box. Below the columns, **What is using my GPU** lists everything that is on in plain words (green light, yellow medium, red heavy), says in one sentence what to switch off if the system lags (click a chip to switch that effect off) and how busy the graphics card is. The detailed cost report is command line only (`omashaders perf report`). The keys are shown where you use them: each slider has its keys next to its name, and a strip right under the Themes list and the tabs lists the keys for the menus. **F1** hides or shows all of these hints (the menu gets the space back; your choice is remembered). **Ctrl+Alt+P** pauses and resumes everything from anywhere (the plugin binds it in Hyprland when the shell starts; see *Pause key* below), and the menu shows it, so you know what to press when the screen has gone black. **Save** (`F`) and **Share** (`S`) open a small window each; they are not rows in the Themes list any more.
 
 | Key | Action |
 | --- | --- |
-| `h j k l`, arrows | move between categories, effects and menus |
+| `h j k l`, arrows | move the cursor between categories, effects and menus. Moving only moves the cursor, nothing is applied (the mouse works the same: hover previews only while `Shift` is held). `Shift` + arrow previews the item under the cursor while you hold it, `F2` turns live preview on for every move |
 | `Tab` | jump to the next menu |
-| `Enter` / `Space` | keep (and close) / keep and stay open |
-| `/` | filter every column at once: type to narrow (name, description, category; several words must all match), `Tab` or `Enter` keeps the filter and moves to the results (then `j k` and `Enter` pick one); if Themes has no match, the first effect group with matches opens, `Esc` clears it |
+| `Space` / `Enter` | apply the item under the cursor; the menu stays open (close it with `Esc` or `q`) |
+| `/` (cap next to the search box) | filter every column at once: type to narrow (name, description, category; several words must all match), `Tab` or `Enter` keeps the filter and moves to the results (then `j k` and `Enter` pick one); if Themes has no match, the first effect group with matches opens, `Esc` clears it |
 | `Esc`, `q` | clear the filter, or undo and close |
-| `[` `]`, `{` `}`, `d` | strength -/+ 5 %, -/+ 1 %, back to the start value (acts on the focused Screen, Color, Wallpaper or Cursor menu; wallpaper and cursor strength is how visible the effect is over the real wallpaper / screen) |
-| `v` `V` | **Speed** -/+ 10 % of the focused Wallpaper or Cursor menu (Cursor: overlay effects only) - wallpaper effect speed (slider under the Mix row: 0 % freezes the animation, 100 % as made, up to 300 % three times faster) |
-| `z` `Z` | wallpaper effect **Zoom** (on the Cursor menu: cursor effect **Size**, 25 % to 300 % around the pointer) -/+ 10 % (25 % to 300 %: how large the effect is drawn; the wallpaper picture under it keeps its size. A stacked second effect is not zoomed again, it follows the first) |
+| `[` `]`, `d` | strength -/+ 5 % (hold `Shift`, or use `{` `}`, for -/+ 1 %), back to the start value (acts on the focused Screen, Color, Wallpaper or Cursor menu; wallpaper and cursor strength is how visible the effect is over the real wallpaper / screen) |
+| `v` `V` | **Speed** -/+ 10 % of the focused Wallpaper or Cursor menu (Cursor: overlay effects only); on the Color menu: custom colour **saturation** -/+ 5 % - wallpaper effect speed (slider under the Mix row: 0 % freezes the animation, 100 % as made, up to 300 % three times faster) |
+| `z` `Z` | on the Color menu: custom colour **hue** -/+ 2.5 % of the wheel; wallpaper effect **Zoom** (on the Cursor menu: cursor effect **Size**, 25 % to 300 % around the pointer) -/+ 10 % (25 % to 300 %: how large the effect is drawn; the wallpaper picture under it keeps its size. A stacked second effect is not zoomed again, it follows the first) |
 | `(` `)` | wallpaper mouse reaction -/+ 10 % (the **Mouse reaction** slider under the Wallpaper strength slider: 0 % ignores the pointer, 100 % is how the effect was made, up to 200 % exaggerates it). The slider's `Colour range` and `Reacts to #` rows belong to **Colour reactor**; `u` on the Wallpaper menu focuses its hex field, **Pick from screen** is an eyedropper (`hyprpicker`) |
-| `Ctrl+Enter`, `Ctrl+click` | mix a second effect (Screen, Wallpaper, Windows) or grade (Color, Windows) with the first, see Mixing below. Plain `Enter` / click replaces both |
-| `t`, `,` `.`, `<` `>`, `D`, `Backspace` | with a mix on: stack / blend, mix amount -/+ 5 % and -/+ 1 %, amount back to its start value, remove the second |
-| `u`, `U` | custom colour: focus the hex field (`Enter` applies it) / save the custom colour as a favourite (the star next to the field does the same). The H, S and V rails under the Color menu pick it by mouse |
+| `a`, `Ctrl+click` | add the item under the cursor as a second effect (Screen, Wallpaper, Windows) or grade (Color, Windows) next to the first, see Mixing below. Plain `Space` / `Enter` / click replaces both; `a` again on the second removes it. The menu stays open |
+| `t`, `,` `.`, `<` `>`, `D`, `Backspace` | with a mix on (the hint "flip stack/blend" shows only then): stack / blend, mix amount -/+ 5 % (`Shift`, or `<` `>`: -/+ 1 %), amount back to its start value, remove the second |
+| `m` `M` | custom colour **brightness** -/+ 5 % on the Color menu (`M` is "move to category" on the Themes list) |
+| `u`, `B` | custom colour: focus the hex field (`Enter` applies it) / save the custom colour as a favourite on the Color menu (the star next to the field does the same). The H, S and V rails under the Color menu pick it by mouse |
 | `p` | pause or resume every effect; they come back exactly as they were |
 | `e` | **pause while fullscreen** on or off (the *Pause in fullscreen* box in the header row): on each monitor that shows a fullscreen window, the screen, colour, wallpaper and cursor effects switch off and come back when you leave fullscreen; the other monitors keep their effects; a manual pause (`p`) is kept separate |
 | `f` | favourite (each menu has its own list); on the Themes menu it removes the selected theme (built-in ones are refused) |
-| `F` | open the Save window (type a name, Enter) for the current Screen + Color + Wallpaper + Cursor + Windows (effect, colour and frame) combination as a theme (`m` shows the Themes menu) |
+| `F` | open the Save window (type a name, Enter) for the current Screen + Color + Wallpaper + Cursor + Windows (effect, colour and frame) combination as a theme (`Tab` moves between the menus) |
+| `b` / `y` | Revert the look to the theme it came from (while the menu says "(changed)") / undo the edits that Revert or picking another theme just dropped |
 | `n` | on the Themes menu: name (rename) the selected theme; `Enter` keeps the name, an empty name goes back to the automatic one, `Esc` cancels |
 | `S` | on the Themes menu: share the selected theme as a code (`s` opens or closes the Screen part) |
 | `i` | import a theme code (see Share and import) |
 | `T` | create a theme with AI (see AI themes) |
 | `Delete` | delete the selected effect (any column) or theme; asks first and names the themes that use it, `Delete` again confirms. Built-in ones are refused (see Deleting) |
 
-| `r` / `R` | Surprise me in the focused menu / in Screen, Color, Wallpaper and Cursor together (the same as the Surprise me category in Themes) |
+| `r` / `R` | random in the focused menu / random everything (Screen, Color, Wallpaper and Cursor each get a random pick). On the Themes list `r` applies a random complete theme from the open category or the filter result (never the one that is on now); `R` shuffles every part separately |
 | `o` / `O` | off in the focused menu / in Screen, Color, Wallpaper and Cursor together |
-| `?` | show or hide the full hotkey list at the bottom |
-| `s` `C` `w` `c` `W` | open or close the Screen / Color / Wallpaper / Cursor / Windows group (one is open at a time) (`m` jumps to Themes) |
+| `F1` | show or hide all the hotkey hints: the keys next to each slider and the strip under the menus (one row of keys that work everywhere, one row for the menu the cursor is in). The **F1 hotkeys** cap in the menu header always stays (dimmed while the hints are off; a click does the same). On the first start they are shown; the last choice is remembered |
+| `F2` | live preview on or off (cap in the header next to F1; remembered, off by default). Off: moving the cursor with the keyboard changes nothing until `Space` / `Enter`. On: every move previews the item, the way it used to |
+| `s` `C` `w` `c` `W` | open or close the Screen / Color / Wallpaper / Cursor / Windows group (one is open at a time) |
 | `A` | Windows column: open the app picker (`j` `k` choose, `Enter` edits that app, `Esc` closes) |
 | `Shift+U` | open the What's new list (with **Update now** when a newer version is available); the newspaper icon in the header does the same |
 | `x` | cursor effects only while Shift is held |
@@ -128,12 +214,12 @@ Command line: `omarchy-shell io.github.akton1.omashaders toggle|open|close|power
 
 ### Mixing two effects (1.12)
 
-Hold **Ctrl** while you pick (`Ctrl+Enter`, or `Ctrl+click`) a second effect in the Screen, Wallpaper or Windows menu, or a second grade in the Color or Windows menu (1.17 added Wallpaper and Windows; a window mix belongs to the app you are editing). The first stays; the second is marked `+ stack` / `+ blend`, and a **Mix** row appears under the strength slider. Picking the second again with Ctrl removes it.
+Press `a` on an item (or hold **Ctrl** and click it) to add it as a second effect in the Screen, Wallpaper or Windows menu, or a second grade in the Color or Windows menu (1.17 added Wallpaper and Windows; a window mix belongs to the app you are editing). The first stays; the second is marked `+ stack` / `+ blend`, and a **Mix** row appears under the strength slider. Picking the second again (`a`, or Ctrl+click) removes it. (`Ctrl+Space` is not used: many desktops bind it, for example to switch the keyboard layout, so it never reaches the menu.)
 
 - **Stack:** the second runs on the result of the first, and the Mix slider is the second one's strength (pixelate under a CRT, an amber grade on top of a duotone ...).
 - **Blend:** both run on the original picture and the slider is the share of the second (0 % = only the first, 100 % = only the second).
 
-Click the mode name (or press `t`) to flip between them. Both layers are merged into the same single shader Hyprland runs, so a mix costs about the sum of both effects; mixing an animated effect needs the same `debug:damage_tracking=0` as any animated one. While a mix is on, hover and key-move previews are off so they cannot throw it away; choosing any item normally replaces both, and so do Surprise me, Off and Themes (themes do not store a mix). The Cursor menu does not mix. A wallpaper mix is drawn by the shell as two layers (the second reads the first one's picture in stack mode), so it costs about both effects. Command line: `omashaders mix effect|color status|set NAME|off|mode stack|blend|toggle|amount N|+N|-N|reset`, and for windows `omashaders window [-a CLASS] mix effect|color ...` the same way.
+Click the mode name (or press `t`, shown in the hints while a mix is on) to flip between them. Both layers are merged into the same single shader Hyprland runs, so a mix costs about the sum of both effects; mixing an animated effect needs the same `debug:damage_tracking=0` as any animated one. While a mix is on, hover and key-move previews are off so they cannot throw it away; choosing any item normally replaces both, and so do Surprise me, Off and Themes (themes do not store a mix). The Cursor menu does not mix. A wallpaper mix is drawn by the shell as two layers (the second reads the first one's picture in stack mode), so it costs about both effects. Command line: `omashaders mix effect|color status|set NAME|off|mode stack|blend|toggle|amount N|+N|-N|reset`, and for windows `omashaders window [-a CLASS] mix effect|color ...` the same way.
 
 ### Animated effects
 
@@ -286,7 +372,7 @@ Themes saved from now on also remember the strengths of the effects that are on,
 
 ### Share a theme as a picture (1.37)
 
-The Share window (`S`) has two buttons: **Create code** (the text code above) and **Record sharable GIF** (`g`). The second records your current look (the parts you left switched on) as a short GIF, 960 px wide, under 5 MB, with the theme code drawn as dark and light squares (Reed-Solomon protected) in the top and bottom border of every frame, and a short line of text in the bottom border: "Right-click > Copy image, open OmaShaders > Import theme". The GIF is saved in `~/Pictures/OmaShaders/` and copied to the clipboard, so you can paste it into a post. Because every frame carries the code, any frame works, and the squares survive GIF palettes, scaling and lossy video re-encoding (tested down to half width). The border grows with the code: a typical single custom shader is about 1 KB and adds a border of about 180 px; the picture holds up to about 5.4 KB, above that the button says the theme is too big for a picture and the text code is the way.
+The Share window (`S`) has two buttons: **Create code** (the text code above) and **Record sharable GIF** (`g`). The second records your current look (the parts you left switched on) as a short GIF, up to 960 px wide (scaled down with its border when needed, never below 560 px, about 12 frames a second), under 5 MB, with the theme code drawn as dark and light squares (Reed-Solomon protected) in the top and bottom border of every frame, and a short line of text in the bottom border: "Right-click > Copy image, open OmaShaders > Import theme". The GIF is saved in `~/Pictures/OmaShaders/` and copied to the clipboard, so you can paste it into a post. Because every frame carries the code, any frame works, and the squares survive GIF palettes, scaling and lossy video re-encoding (tested down to half width). The border grows with the code: a typical single custom shader is about 1 KB and adds a border of about 180 px; the picture holds up to about 5.4 KB, above that the button says the theme is too big for a picture and the text code is the way.
 
 **Import theme** (`i`) accepts a text code, a copied picture (clipboard), a saved GIF/video/image file or a screenshot of the post. It reads the squares, runs the same strict checks as a text code, applies the theme as a preview and asks **Keep** or **Undo**; Undo removes the theme and any shaders that import added.
 
@@ -309,7 +395,7 @@ For a preview picture of a look (a store page, sharing with a code). Open the Sh
 1. The menu closes. The pointer's monitor switches to an empty workspace, so your windows are hidden (they are not touched), and the bar is hidden. Notifications are held back for the few seconds it takes. A **demo terminal** is prepared out of sight on that workspace and shown during the recording, so every picture shows the same terminal and nothing of yours: a rounded window in the look of the Abyss preview GIFs, with your wallpaper around it, that types `omashaders theme apply` with the name of your theme and lists its screen, colour, wallpaper and cursor parts (your look, not made-up ones), then a second small command. Its colours, font and size are fixed and scale with the monitor; a window effect limited to some apps is extended to it for the recording only.
 2. A small centred number counts 3, 2, 1. **Esc** cancels; everything is put back.
 3. The monitor is recorded while the pointer draws an S along the bottom (about 4 seconds, `--seconds`, 1 to 5; eased, so it starts and ends slowly) and then climbs up the right side to the top right, never through the centre. The picture starts with the bare wallpaper and your cursor effect. When the pointer is a third of the way in from the left, the demo terminal opens and starts typing, and the pointer climbs through its right part, so a window effect (a glow under the pointer, for example) shows too. The recording ends a moment after the typing is done.
-4. Windows, focus, bar and pointer position are restored **before** the encoding starts. The GIF is made with ffmpeg (palette, 960 px wide, 15 fps, loops forever) and made smaller step by step (down to 480 px, 10 fps) until it is under 5 MB. It is saved as `~/Pictures/OmaShaders/<theme name>-<date>.gif`, the GIF is copied to the clipboard with `wl-copy` (as an image, so you can paste it straight into a post), and a notification shows it.
+4. Windows, focus, bar and pointer position are restored **before** the encoding starts. The GIF is made with ffmpeg (palette, 960 px wide, 15 fps, loops forever) and made smaller step by step (fewer palette colours, then down to 480 px, 10 fps) until it is under 5 MB. It is saved as `~/Pictures/OmaShaders/<theme name>-<date>.gif`, the GIF is copied to the clipboard with `wl-copy` (as an image, so you can paste it straight into a post), and a notification shows it.
 
 If effects are paused the GIF shows none, and the notification says so. If anything fails, or the script is killed, a saved state file puts the desktop back (`omashaders gif restore`, also run every time the shell starts). **Nothing else is allowed in the picture:** before the recording starts and all through it, any other window or layer-shell surface on the monitor (a notification, another program's overlay) stops the recording with a message that names it, and no GIF is made; close it and record again. A running F9 screen recording blocks it (stop that one first).
 

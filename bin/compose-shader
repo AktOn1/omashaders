@@ -13,6 +13,7 @@ colour are drawn on the bent screen. bin/cursor-bend swaps the line //@CURSOR-CO
 STRENGTH (0.0-1.0) itself; every other shader is blended with its input: mix(input, result, strength).
 """
 import os, re, sys
+sys.dont_write_bytecode = True  # a __pycache__ in the plugin folder would make the shell reload the plugin (and close the open menu)
 
 HEADER = re.compile(r'^\s*(#version\b|precision\b|in\s+vec2\s+v_texcoord|uniform\s+sampler2D\s+tex\b|uniform\s+float\s+time\b|layout\s*\(location\s*=\s*0\)\s*out\s+vec4\s+fragColor)')
 PLUGIN_UNIFORMS = {"surface_size": "vec2", "is_active": "float", "is_floating": "float", "is_fullscreen": "float", "seed": "float",

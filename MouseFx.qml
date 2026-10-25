@@ -7,6 +7,9 @@ Scope {
   id: fx
 
   property string effect: ""
+  // report(kind, name, why, driver): set by the plugin; called when the renderer refuses a shader, so the effect is switched off
+  // instead of the graphics driver retrying it on every frame (which fills the shell log and memory)
+  property var report: null
   property var offScreens: [] // names of the monitors that get no effect (they show a fullscreen window)
   function shownScreens(off) {
     var out = []
@@ -25,6 +28,9 @@ Scope {
   property int fps: 30
   property real strength: 1.0
   property real size: 1.0 // effect scale around the pointer: 1 = as designed
+  // Dimming effects cover the whole monitor, so they must not be scaled as a picture (that would uncover the edges and put
+  // the other monitor's dim off the screen); they read `size` themselves and scale only their lit spot.
+  readonly property bool selfSized: ["flashlight", "spotlight", "reading-line"].indexOf(fx.effect) >= 0
   property real speed: 1.0 // animation speed: 0 = frozen, 1 = as designed
   property real audio: 0.0 // sound level 0-1: overall, bass, mids, treble (all 0 unless an audio-* effect runs)
   property real bass: 0.0
@@ -83,14 +89,23 @@ Scope {
       WlrLayershell.namespace: "omashaders-mouse"
 
       ShaderEffect {
+        id: layer
+        property bool dead: false // the renderer refused this shader: stop feeding it to the GPU
+        Connections { target: fx; function onEffectChanged() { layer.dead = false } }
+        onStatusChanged: if (status === ShaderEffect.Error && !dead) {
+          dead = true
+          if (fx.report) fx.report("mouse", fx.effect, "the graphics driver rejected the shader", true)
+        }
         anchors.fill: parent
         opacity: fx.strength
+        visible: fx.mouse.x > -5000 // no pointer position yet: a dimming effect would darken the screen with no lit spot
         transform: Scale {
           origin.x: fx.mouse.x - win.screen.x
           origin.y: fx.mouse.y - win.screen.y
-          xScale: fx.size
-          yScale: fx.size
+          xScale: fx.selfSized ? 1 : fx.size
+          yScale: fx.selfSized ? 1 : fx.size
         }
+        property real size: fx.selfSized ? fx.size : 1.0
         property real time: fx.time
         property real audio: fx.audio
         property real bass: fx.bass
@@ -107,7 +122,7 @@ Scope {
         property vector4d h6: Qt.vector4d(fx.pt(12).x - win.screen.x, fx.pt(12).y - win.screen.y, fx.pt(13).x - win.screen.x, fx.pt(13).y - win.screen.y)
         property vector4d h7: Qt.vector4d(fx.pt(14).x - win.screen.x, fx.pt(14).y - win.screen.y, fx.pt(15).x - win.screen.x, fx.pt(15).y - win.screen.y)
         property vector4d hs: Qt.vector4d(fx.histSeq, fx.histPhase, fx.histStep, 0)
-        fragmentShader: fx.effect !== "" ? fx.shaderUrl(fx.effect) : ""
+        fragmentShader: (fx.effect !== "" && !layer.dead) ? fx.shaderUrl(fx.effect) : ""
       }
     }
   }

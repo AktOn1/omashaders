@@ -13,4 +13,8 @@ for q in *.frag.qsb ../mouse-effects/*.frag.qsb; do
     echo "ERROR: $q contains an array (replace it with an if-chain function)" >&2; bad=1
   fi
 done
+# every shipped pack must be a fragment shader the shell will accept (bin/fxcheck.py); a wrong-stage pack floods the shell log
+for q in *.frag.qsb ../mouse-effects/*.frag.qsb; do
+  r=$(python3 ../bin/fxcheck.py check "$q") || { echo "ERROR: $q: $r" >&2; bad=1; }
+done
 exit $bad

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# vm-check-timeout: 600
 # Runs inside the Omarchy VM (vm-test omashaders): (1) wallpaper Speed/Zoom render without shader errors,
 # (2) hot reload: edits to the plugin show up in the running shell without a restart, in the symlinked layout
 # (a developer, where Omarchy's own reload cannot see the files) and in the copied layout (store install).
@@ -231,6 +232,9 @@ EOF
   newlog | grep -iE "TypeError|ReferenceError|is not a type|ThemeDialog.qml.*(error|failed)|Cannot assign|Unable to assign" | head -5 | grep . && bad "theme: QML errors in the log (above)" || ok "theme: no QML errors in the log"
 }
 theme_check
+
+# a broken effect must switch itself off and leave memory and the log alone
+bash "$PLUGIN_DIR/tests/vm-check-fxguard.sh" || fail=1
 
 echo "screenshots: symlink-0..5 and copied-0..5 (bar icon text HOTRELOAD in -1 and -2, original in -0 and -3; -4 shows the menu with the new wallpaper category and the edited filter placeholder, -5 the filter 'hot test' narrowing it to the new effects)"
 exit $fail

@@ -14,7 +14,7 @@ BarWidget {
 
   // "New" (default) is the themes layout; "Classic" is the older menu with Screen, Color, Wallpaper, Cursor, Windows and Combos columns
   readonly property bool newLayout: String(setting("menuLayout", "New")) !== "Classic"
-  readonly property var files: newLayout ? ["Core.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml", "Wallhaven.qml", "ThemeDialog.qml"] : ["CoreClassic.qml", "WallpaperFx.qml", "MouseFx.qml", "BendMarker.qml"]
+  readonly property var files: newLayout ? ["Core.qml", "WallpaperFx.qml", "MouseFx.qml", "FxSafety.qml", "BendMarker.qml", "Wallhaven.qml", "ThemeDialog.qml"] : ["CoreClassic.qml", "WallpaperFx.qml", "MouseFx.qml", "FxSafety.qml", "BendMarker.qml"]
   onNewLayoutChanged: debounce.restart()
   property int reloads: 0
   property string reloadError: ""

@@ -162,6 +162,11 @@ def run():
         for kind, code in (("screen", SCREEN_OK), ("window", WINDOW_OK), ("color", COLOR_OK), ("wallpaper", WALL_OK), ("cursor", CURSOR_OK)) if ready else ():
             r = G.gate(kind, code, "good", "good effect", 60, profile="rich")
             check("rich: good %s passes" % kind, r["ok"], " | ".join(r["problems"]))
+        # builds with qsb but the old GLSL variant (what many GL ES drivers compile) has clamp() on integers: refused, with advice
+        if ready and shutil.which("glslangValidator"):
+            code = "vec3 overlay(vec2 uv, vec3 base, vec2 m, float react) { int k = clamp(int(uv.x * 9.0), 0, 7); return base + vec3(float(k) * 0.02); }"
+            r = G.gate("wallpaper", code, "intclamp", "int clamp", 60)
+            check("integer clamp in a wallpaper shader is refused", not r["ok"] and "graphics driver would reject" in " ".join(r["problems"]), " | ".join(r["problems"]) or "PASS")
         # every Rich helper compiles in every kind that may call it
         call = {"hash2": "hash2(p).x", "gnoise": "gnoise(p)", "ridge": "ridge(p)", "warp": "warp(p, 1.0).x", "rot": "rot(p, 0.3).x",
                 "disc": "disc(p, 0.3, 0.1)", "ring": "ring(p, 0.3, 0.05, 0.05)", "seg": "seg(p, vec2(0.0), vec2(1.0), 0.05, 0.05)",
@@ -237,6 +242,8 @@ def run():
         wb = G.build("wallpaper", WALL_OK, "w", 60, "Test wall")
         wid = G.install("wallpaper", wb, "Test wall", "w")
         check("wallpaper .qsb built", os.path.isfile(os.path.join(G.GEN, "wall", wid + ".frag.qsb")))
+        import fxcheck
+        check("wallpaper .qsb is a fragment shader the shell accepts", fxcheck.check(os.path.join(G.GEN, "wall", wid + ".frag.qsb")) == "", fxcheck.check(os.path.join(G.GEN, "wall", wid + ".frag.qsb")))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("aigen selftest: %d ok, %d failed" % (OK, FAIL))

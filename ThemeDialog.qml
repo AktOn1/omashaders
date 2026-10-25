@@ -11,6 +11,8 @@ import qs.Ui
 //                  with Save / Discard / Change. While the draft is shown it is applied live; hiding the dialog puts the previous look back.
 //                  Every next message changes the same draft ("less fog", "make the windows red like the car"). Nothing is saved until
 //                  "Save as theme". Stopping a running job needs the explicit "Cancel job" button and a second click to confirm.
+//             With core.dlgOnly set ("Create with AI" in the left list of an effect menu) the same dialog makes ONE new effect of that kind instead of a theme
+//             (`ai-theme --only SLOT`, always Quick invent): it is previewed on top of the look you have, and "Keep effect" saves it as your own (unlocked) effect.
 //   mode "share"   pick which parts go into the OMS1: code (all on by default) of the saved theme `number`, or of the look on now (number 0); the button makes it, copies it, shows it
 //   mode "save"    a name field for saving the look on now as a theme
 //   mode "import"  paste a code, bin/theme-code checks it (unknown ids are reported and left out) and saves it as a theme
@@ -67,6 +69,13 @@ Item {
   readonly property var res: chatActive ? job.result : null
   readonly property string resultKey: chatActive ? job.id + ":" + job.result.turn : ""
   readonly property string jobSig: job ? job.id + ":" + job.state + ":" + job.turn : ""
+  readonly property string onlySlot: mode !== "ai" ? "" : (job !== null ? String((job.form && job.form.only) || "") : (core ? core.dlgOnly : ""))
+  readonly property bool onlyMode: onlySlot !== ""
+  readonly property bool useInvent: invent || onlyMode
+  readonly property bool useRich: rich && !onlyMode
+  readonly property var onlyWhat: ({ screen: "Screen effect", color: "Color grade", wallpaper: "Wallpaper effect", cursor: "Cursor effect", window: "Windows effect", window_color: "Windows colour", frame: "Windows frame" })
+  readonly property var onlyIndex: ({ screen: 0, wallpaper: 1, cursor: 2, color: 3, window: 5, window_color: 6, frame: 7 })
+  readonly property var onlyOpt: ({ screen: "fx", color: "col", wallpaper: "wall", cursor: "cur" })
   readonly property string chatLine: res ? res.line : ""
   readonly property string chatName: res ? res.name : ""
   readonly property int turnNo: res ? res.turn : 0
@@ -97,7 +106,8 @@ Item {
     if (!chatActive) return ""
     var r = j.result, u = r.usage || {}
     var line = u.tokens_in ? "Turn " + r.turn + ": used " + nfmt(u.tokens_in) + " tokens in, " + nfmt(u.tokens_out || 0) + " out" + money(u.cost_usd) + (u.calls > 1 ? " in " + u.calls + " calls" : "") + ". " : ""
-    var tail = "Applied: " + r.name + ". Not saved yet: keep talking to change it, or save it."
+    var tail = onlyMode ? "Applied on top of your look: " + r.name + ". Not kept yet: keep talking to change it, or keep it."
+                        : "Applied: " + r.name + ". Not saved yet: keep talking to change it, or save it."
     if (j.state === "interrupted") return "The last change was interrupted. Retry runs it again, or keep this draft. " + tail
     if (j.state === "failed") return "The last change did not work: " + (j.error || "the AI answer could not be used") + ". " + tail
     return line + tail + (j.error ? " (" + j.error + ")" : "")
@@ -155,7 +165,7 @@ Item {
     return rows
   }
   readonly property bool aiOk: core ? core.aiAvailable : false
-  readonly property string title: mode === "ai" ? "Create your own theme (AI)" : (mode === "share" ? "Share" : (mode === "save" ? "Save as a theme" : "Import a theme"))
+  readonly property string title: mode === "ai" ? (onlyMode ? "Create your own " + (onlyWhat[onlySlot] || "effect") + " (AI)" : "Create your own theme (AI)") : (mode === "share" ? "Share" : (mode === "save" ? "Save as a theme" : "Import a theme"))
 
   // share: the theme line being shared (a saved theme, or the look on now) and which of its parts go into the code
   property string srcLine: ""
@@ -213,7 +223,7 @@ Item {
       shareParts = { screen: true, color: true, wallpaper: true, cursor: true, windows: true }
     }
     else if (mode === "save") {
-      saveField.text = core.themeItem(core.themeNow).label
+      saveField.text = core.originLocked && !core.devSwitch ? "" : core.themeItem(core.themeNow).label
       focusTimer.restart()
     }
     else { codeField.text = ""; pasteProc.running = true }
@@ -222,8 +232,9 @@ Item {
   // ------------------------------------------------------------ the job this dialog shows
   // which job a reopened dialog attaches to: a running one first, then a finished draft, then one that stopped
   function bestJob() {
-    var l = core ? core.jobs : [], best = null, rank = -1
+    var l = core ? core.jobs : [], best = null, rank = -1, want = core ? core.dlgOnly : ""
     for (var i = 0; i < l.length; i++) {
+      if (String((l[i].form && l[i].form.only) || "") !== want) continue
       var r = l[i].alive ? 3 : (l[i].has_result ? 2 : 1)
       if (r > rank || (r === rank && (l[i].updated || 0) > (best.updated || 0))) { best = l[i]; rank = r }
     }
@@ -259,8 +270,21 @@ Item {
     m[jobId] = L
     core.jobLook = m
     if (job.form && job.form.wh && job.result.turn === 1) core.wallhavenUsed(job.form.wh)
-    var line = chatLine
+    var line = onlyMode ? onlyLook(L.prev, chatLine) : chatLine
     core.reloadList(function() { core.applyThemeLine(line) })
+  }
+  // a one-effect draft is shown on top of the look you had: only that slot of the previous look is replaced
+  function onlyLook(prev, made) {
+    var q = String(prev).split("|"), m = String(made).split("|"), ix = onlyIndex[onlySlot]
+    if (ix === undefined) return prev
+    var eff = m[ix] || ""
+    if (eff === "") return prev
+    q[ix] = eff
+    var o = core.parseOpts(q[8] || ""), mo = core.parseOpts(m[8] || ""), ok = onlyOpt[onlySlot]
+    if (ok !== undefined && mo[ok] !== undefined) o[ok] = mo[ok]
+    var os = []
+    for (var k in o) os.push(k + "=" + o[k])
+    return core.themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", "", q[5] || "", q[6] || "", q[7] || "", os.join(","))
   }
   function forgetLook(id) { var m = {}; for (var k in core.jobLook) if (k !== id) m[k] = core.jobLook[k]; core.jobLook = m }
   function leaveLook() {
@@ -281,7 +305,7 @@ Item {
   }
   function restoreForm(f) {
     f = f || ({})
-    promptField.text = whId !== "" ? "" : String(f.text || "")
+    promptField.text = whId !== "" || onlyMode ? "" : String(f.text || "")
     genreField.text = String(f.genre || "")
     if (f.rounds !== undefined) richRounds = Math.max(0, Math.min(3, Number(f.rounds) || 0))
     useCurrent = f.useCurrent === true; subtle = f.subtle === true; sprites = f.sprites === true
@@ -538,10 +562,10 @@ Item {
   function refreshEstimate() { if (mode === "ai") estTimer.restart() }
   function runEstimate() {
     if (estProc.running) { estTimer.restart(); return }
-    var c = ["python3", core.path("bin/ai-theme"), "estimate", promptField.text.trim()].concat(baseArgs())
-    if (invent) c = c.concat(partArgs())
-    if (rich) c = c.concat(["--rich", "--rounds", String(richRounds)])
-    if (invent && sprites) c.push("--sprites")
+    var c = ["python3", core.path("bin/ai-theme"), "estimate", promptField.text.trim()].concat(onlyMode ? ["--only", onlySlot] : baseArgs())
+    if (invent && !onlyMode) c = c.concat(partArgs())
+    if (useRich) c = c.concat(["--rich", "--rounds", String(richRounds)])
+    if (useInvent && sprites && (!onlyMode || onlySlot === "wallpaper")) c.push("--sprites")
     c.push("--json")
     estProc.command = c
     estProc.running = true
@@ -558,8 +582,8 @@ Item {
   function money(c) { return c ? ", about $" + (c < 0.1 ? Number(c).toFixed(3) : Number(c).toFixed(2)) : "" }
   readonly property string estText: {
     if (!est) return ""
-    if (rich) return "Before you start: " + est.summary + (est.note ? " (" + est.note + ")" : "") + ". " + (est.review ? "The renders of each piece are checked and weak ones are made again (up to " + richRounds + " round" + (richRounds === 1 ? "" : "s") + "). " : (richRounds > 0 && !provImage ? "This AI cannot look at pictures, so the renders are not checked. " : "")) + "Quick would use about " + nfmt(est.quick.tokens_in + est.quick.tokens_out) + " tokens. The real cost is shown when it is done."
-    if (invent) return "Before you start: about " + nfmt(est.tokens_in) + " tokens in and " + nfmt(est.tokens_out) + " out" + money(est.cost_usd) + (est.note ? " (" + est.note + ")" : "")
+    if (useRich) return "Before you start: " + est.summary + (est.note ? " (" + est.note + ")" : "") + ". " + (est.review ? "The renders of each piece are checked and weak ones are made again (up to " + richRounds + " round" + (richRounds === 1 ? "" : "s") + "). " : (richRounds > 0 && !provImage ? "This AI cannot look at pictures, so the renders are not checked. " : "")) + "Quick would use about " + nfmt(est.quick.tokens_in + est.quick.tokens_out) + " tokens. The real cost is shown when it is done."
+    if (useInvent) return "Before you start: about " + nfmt(est.tokens_in) + " tokens in and " + nfmt(est.tokens_out) + " out" + money(est.cost_usd) + (est.note ? " (" + est.note + ")" : "")
                        + ". Each repair try adds about " + nfmt(est.repair_tokens_in + est.repair_tokens_out) + " (at most 2 per part). Pick existing would send about " + nfmt(est.pick_tokens_in) + " tokens in."
     return "Before you start: about " + nfmt(est.pick_tokens_in) + " tokens in. Only a small copy of the picture and its colours are sent."
   }
@@ -573,6 +597,7 @@ Item {
     var text = promptField.text.trim()
     if (!aiOk) { say("AI needed. " + core.aiHint, true); return }
     var first = job === null
+    if (first && onlyMode && !inventReady) { say(inventHint, true); return }
     if (!first) {
       if (text === "") { saveChat(); return }
       starting = true
@@ -585,23 +610,25 @@ Item {
       })
       return
     }
-    var parts = invent ? partArgs() : []
-    var sur = rich && (surprise === true || (text === "" && whId === "" && !useCurrent))
+    var parts = useInvent && !onlyMode ? partArgs() : []
+    var sur = useRich && (surprise === true || (text === "" && whId === "" && !useCurrent))
     if (sur && surprise === true && text !== "" && genreField.text.trim() === "") genreField.text = text
     if (sur) text = ""
-    if (!sur && text === "" && whId === "" && !useCurrent && parts.length === 0) { say("Describe the theme you want, for example: a rainy neon night", true); return }
-    var c = ["start", text].concat(baseArgs())
-    if (rich) {
+    if (!sur && text === "" && whId === "" && !useCurrent && parts.length === 0) { say(onlyMode ? "Describe the effect you want, for example: a slow green pulse" : "Describe the theme you want, for example: a rainy neon night", true); return }
+    var c = ["start", text].concat(onlyMode ? [] : baseArgs())
+    if (onlyMode) { c.push("--invent"); c.push("--only"); c.push(onlySlot) }
+    else if (useRich) {
       c.push("--rich"); c.push("--rounds"); c.push(String(richRounds))
       if (genreField.text.trim() !== "") { c.push("--genre"); c.push(genreField.text.trim()) }
       if (sur) c.push("--surprise")
     }
     else if (invent) c.push("--invent")
     else if (subtle) c.push("--subtle")
-    if (invent && sprites) c.push("--sprites")
+    if (useInvent && sprites && (!onlyMode || onlySlot === "wallpaper")) c.push("--sprites")
     c = c.concat(parts)
     var form = formState()
     form.surprise = sur
+    if (onlyMode) form.only = onlySlot
     c.push("--form"); c.push(JSON.stringify(form))
     c.push("--est"); c.push(estText.replace(/^Before you start: /, "").substring(0, 190))
     starting = true
@@ -663,10 +690,11 @@ Item {
     actMsg = "Saving…"; actBad = false
     var id = job.id
     runJob(["save", id], function(d) {
-      if (!d.ok) { td.actMsg = d.error || "Could not save the theme."; td.actBad = true; return }
+      if (!d.ok) { td.actMsg = d.error || (td.onlyMode ? "Could not keep the effect." : "Could not save the theme."); td.actBad = true; return }
       td.forgetLook(id)
       td.jobId = ""; td.fresh = true; td.actMsg = ""
-      td.core.reloadList(function() { td.core.flash((d.existed ? "You already had this theme (#" : "Saved as theme #") + d.number + "): " + d.name) })
+      if (d.only) td.core.reloadList(function() { td.core.flash("Kept your new effect: " + d.name + " (it is yours, not locked)") })
+      else td.core.reloadList(function() { td.core.flash((d.existed ? "You already had this theme (#" : "Saved as theme #") + d.number + "): " + d.name) })
       td.core.dlgOpen = false
     })
   }
@@ -681,7 +709,7 @@ Item {
       td.core.reloadList()
       td.jobId = ""; td.fresh = true; td.settingsOpen = true; td.actMsg = ""
       td.restoreForm(td.core.jobsForm)
-      td.say("Discarded. Your previous look is back and the effects made for this theme are deleted.", false)
+      td.say("Discarded. Your previous look is back and " + (td.onlyMode ? "the new effect is deleted." : "the effects made for this theme are deleted."), false)
     })
   }
 
@@ -737,8 +765,16 @@ Item {
   }
   function saveNamed() {
     var nm = String(saveField.text).trim()
+    var problem = core.saveProblem(nm)
+    if (problem !== "") { say(problem, true); saveField.forceActiveFocus(); return }
+    if (!core.saveTheme(nm)) { say("Not saved: " + core.themeFlash, true); return }
     core.notify("OmaShaders", "Saved theme: " + (nm !== "" ? nm : core.themeItem(core.themeNow).label))
-    core.saveTheme(nm)
+    core.dlgOpen = false
+  }
+  function replaceBuiltin() {
+    var was = core.originName, builtin = core.originLocked
+    if (!core.replaceOrigin()) { say("Not replaced: " + core.themeFlash, true); return }
+    core.notify("OmaShaders", (builtin ? "Replaced built-in theme: " : "Updated theme: ") + was)
     core.dlgOpen = false
   }
   function copyAgain() { if (shareCode !== "") { Quickshell.execDetached(["wl-copy", shareCode]); say("Copied again.", false) } }
@@ -942,7 +978,7 @@ Item {
     open: td.open
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(760))
-    contentHeight: panel.fittedContentHeight(td.mode === "ai" ? (td.job !== null ? (td.chatActive ? (td.card ? Style.space(td.settingsOpen ? 980 : 860) : (td.settingsOpen ? Style.space(780) : Style.space(600))) : Style.space(td.settingsOpen ? 700 : 440)) : (td.rich ? Style.space(780 + td.spritesExtra) : td.invent ? Style.space(700 + td.spritesExtra) : Style.space(520 + td.spritesExtra))) : (td.mode === "save" ? Style.space(170) : Style.space(td.mode === "share" ? 400 : 380)))
+    contentHeight: panel.fittedContentHeight(td.mode === "ai" ? (td.job !== null ? (td.chatActive ? (td.card ? Style.space(td.settingsOpen ? 980 : 860) : (td.settingsOpen ? Style.space(780) : Style.space(600))) : Style.space(td.settingsOpen ? 700 : 440)) : (td.rich ? Style.space(780 + td.spritesExtra) : td.invent ? Style.space(700 + td.spritesExtra) : Style.space(520 + td.spritesExtra))) : (td.mode === "save" ? Style.space(core.originLine !== "" ? 220 : 170) : Style.space(td.mode === "share" ? 400 : 380)))
 
     PanelKeyCatcher {
       id: keys
@@ -961,12 +997,12 @@ Item {
       onTextKey: function(t) {
         if (t === "q") td.close()
         else if (t === "/" || t === "e" || t === "i") { if (td.mode === "ai") promptField.forceActiveFocus(); else if (td.mode === "import") codeField.forceActiveFocus() }
-        else if (t === "b" && td.mode === "ai" && td.whId === "" && td.formMode) td.useCurrent = !td.useCurrent
+        else if (t === "b" && td.mode === "ai" && td.whId === "" && td.formMode && !td.onlyMode) td.useCurrent = !td.useCurrent
         else if (t === "s" && td.mode === "ai" && td.chatActive) td.saveChat()
-        else if (t === "s" && td.mode === "ai" && td.formMode && !td.invent) td.subtle = !td.subtle
-        else if (t === "m" && td.mode === "ai" && td.formMode) td.nextMode()
+        else if (t === "s" && td.mode === "ai" && td.formMode && !td.invent && !td.onlyMode) td.subtle = !td.subtle
+        else if (t === "m" && td.mode === "ai" && td.formMode && !td.onlyMode) td.nextMode()
         else if (t === "r" && td.mode === "ai" && td.chatActive && td.sheetUrl !== "") td.showSheet = !td.showSheet
-        else if (t === "u" && td.mode === "ai" && td.formMode && td.rich) td.sendTurn(true)
+        else if (t === "u" && td.mode === "ai" && td.formMode && td.rich && !td.onlyMode) td.sendTurn(true)
         else if (t === "t" && td.mode === "ai") td.testConnection()
         else if (t === "o" && td.mode === "ai" && td.job !== null) td.settingsOpen = !td.settingsOpen
         else if (t === "d" && td.mode === "ai" && td.chatActive && !td.busy) td.discardChat(true)
@@ -1163,14 +1199,14 @@ Item {
             font.pixelSize: Style.font.body * 0.95
           }
           Row {
-            visible: td.formMode
+            visible: td.formMode && !td.onlyMode
             spacing: Style.space(8)
             Btn { toggle: true; checked: !td.invent; label: (!td.invent ? "󰄲 " : "󰄱 ") + "Pick existing effects"; onClicked: td.setMode("pick") }
             Btn { toggle: true; checked: td.invent && !td.rich; label: (td.invent && !td.rich ? "󰄲 " : "󰄱 ") + "Invent: Quick  (m)"; onClicked: td.setMode("invent") }
             Btn { toggle: true; checked: td.rich; label: (td.rich ? "󰄲 " : "󰄱 ") + "Invent: Rich"; onClicked: td.setMode("rich") }
           }
           Row {
-            visible: td.rich && td.formMode
+            visible: td.rich && td.formMode && !td.onlyMode
             spacing: Style.space(8)
             PlainField {
               id: genreField
@@ -1194,7 +1230,7 @@ Item {
           }
           // Painted sprites: off by default; the image model is the user's own (ComfyUI, an OpenAI-compatible images endpoint or a command)
           Column {
-            visible: td.formMode
+            visible: td.formMode && (!td.onlyMode || td.onlySlot === "wallpaper")
             width: col.width
             spacing: Style.space(6)
             Btn { toggle: true; checked: td.sprites; label: (td.sprites ? "󰄲 " : "󰄱 ") + "Painted sprites (uses your image model)"; onClicked: td.setSprites(!td.sprites) }
@@ -1388,7 +1424,7 @@ Item {
             font.bold: true
           }
           Text {
-            visible: td.invent && !td.provStrong && td.formMode
+            visible: td.useInvent && !td.provStrong && td.formMode
             width: col.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
@@ -1403,7 +1439,9 @@ Item {
             width: col.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: td.whId !== ""
+            text: td.onlyMode
+                  ? "Describe one new " + (td.onlyWhat[td.onlySlot] || "effect") + ". The AI writes it, it has to pass the safety check, and it is kept as your own effect (not locked). Nothing else of your look changes: the new effect is shown on top of what you have now until you keep or discard it."
+                  : td.whId !== ""
                   ? "Base picture: Wallhaven " + td.whId + ". It is set as your wallpaper first, then the AI builds a complete theme around it. The picture itself never changes. Add a wish if you like, or leave it empty."
                   : (td.rich
                      ? "Rich: first the AI plans a place (a biome, a time of day, a mood, a palette from your picture and one playful detail) and writes a brief for each part. Then each part is built on its own, every piece passes the same safety check with bigger limits, and the renders of the pieces over your picture are reviewed and weak ones sent back. Takes a few minutes and costs more than Quick. Leave the words empty, or press Surprise me, to let it choose. Your wallpaper stays the main picture."
@@ -1569,7 +1607,7 @@ Item {
             width: col.width
             height: visible ? Style.space(32) : 0
             verticalPadding: Style.space(3)
-            placeholderText: td.chatActive ? "Change something: less fog, make the windows red like the car, swap the cursor…  (⏎ on an empty line saves)" : td.rich ? "What do you imagine? Or leave empty to be surprised: a night market in monsoon rain, a glass greenhouse at dawn…" : td.invent ? "e.g. a great day, a fast ride, like the car in the picture" : "e.g. a rainy neon night, a warm cabin with snow outside, calm and readable"
+            placeholderText: td.onlyMode ? (td.chatActive ? "Change something: slower, less red, thinner…  (⏎ on an empty line keeps it)" : "What should it look like? For example: a slow green pulse") : td.chatActive ? "Change something: less fog, make the windows red like the car, swap the cursor…  (⏎ on an empty line saves)" : td.rich ? "What do you imagine? Or leave empty to be surprised: a night market in monsoon rain, a glass greenhouse at dawn…" : td.invent ? "e.g. a great day, a fast ride, like the car in the picture" : "e.g. a rainy neon night, a warm cabin with snow outside, calm and readable"
             foreground: td.fg
             font.family: td.font
             font.pixelSize: Style.font.body
@@ -1582,7 +1620,7 @@ Item {
           }
           // optional orders per part (Invent only)
           Grid {
-            visible: td.invent && td.formMode
+            visible: td.invent && td.formMode && !td.onlyMode
             width: col.width
             columns: 2
             columnSpacing: Style.space(8)
@@ -1612,14 +1650,14 @@ Item {
             visible: td.formMode
             spacing: Style.space(8)
             Btn {
-              visible: td.whId === ""
+              visible: td.whId === "" && !td.onlyMode
               toggle: true
               checked: td.useCurrent
               label: (td.useCurrent ? "󰄲 " : "󰄱 ") + "Use my current wallpaper as the base (b)"
               onClicked: { td.useCurrent = !td.useCurrent; td.refreshEstimate() }
             }
             Btn {
-              visible: !td.invent
+              visible: !td.invent && !td.onlyMode
               toggle: true
               checked: td.subtle
               label: (td.subtle ? "󰄲 " : "󰄱 ") + "Subtle: a quiet recolour, few effects (s)"
@@ -1725,7 +1763,11 @@ Item {
             width: col.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: "Name this theme. It keeps your Screen, Color, Wallpaper and Cursor as they are right now."
+            text: core.originLocked
+                  ? (core.devSwitch ? "This look came from the built-in theme \"" + core.originName + "\". Save it as a new theme, or replace the built-in one (you are the author)."
+                                    : "\"" + core.originName + "\" is a built-in theme and stays as it is. Give your own copy a new name; it keeps your Screen, Color, Wallpaper and Cursor as they are right now.")
+                  : (core.originLine !== "" ? "This look came from your theme \"" + core.originName + "\". Save it as a new theme, or replace \"" + core.originName + "\" with the look as it is right now."
+                                          : "Name this theme. It keeps your Screen, Color, Wallpaper and Cursor as they are right now.")
             opacity: 0.85
             color: td.fg
             font.family: td.font
@@ -1736,7 +1778,7 @@ Item {
             width: col.width
             height: Style.space(32)
             verticalPadding: Style.space(3)
-            placeholderText: "Theme name"
+            placeholderText: core.originLocked && !core.devSwitch ? "A new name (not \"" + core.originName + "\")" : "Theme name"
             foreground: td.fg
             font.family: td.font
             font.pixelSize: Style.font.body
@@ -1861,11 +1903,11 @@ Item {
           Btn {
             visible: td.mode === "ai" && (td.formMode || td.chatActive)
             dim: !td.aiOk || td.busy || td.starting || actProc.running
-            label: td.starting ? "Starting…" : (td.chatActive ? "Send  (⏎)" : (td.rich ? "Make Rich theme  (⏎)" : td.invent ? "Invent theme  (⏎)" : "Create theme  (⏎)"))
+            label: td.starting ? "Starting…" : (td.chatActive ? "Send  (⏎)" : (td.onlyMode ? "Create effect  (⏎)" : td.rich ? "Make Rich theme  (⏎)" : td.invent ? "Invent theme  (⏎)" : "Create theme  (⏎)"))
             onClicked: td.sendTurn()
           }
           Btn {
-            visible: td.mode === "ai" && td.rich && td.formMode
+            visible: td.mode === "ai" && td.rich && td.formMode && !td.onlyMode
             dim: !td.aiOk || td.starting || actProc.running
             label: "Surprise me  (u)"
             onClicked: td.sendTurn(true)
@@ -1902,7 +1944,7 @@ Item {
           Btn {
             visible: td.mode === "ai" && td.chatActive
             dim: td.busy || actProc.running
-            label: "Save as theme  (s)"
+            label: td.onlyMode ? "Keep effect  (s)" : "Save as theme  (s)"
             onClicked: td.saveChat()
           }
           Btn {
@@ -1964,7 +2006,8 @@ Item {
           Btn { visible: td.mode === "share" && !td.done; dim: shareProc.running || td.pickedParts.length === 0; label: shareProc.running ? "Making the code…" : "Create code  (⏎)"; onClicked: td.startShare() }
           Btn { visible: td.mode === "share" && td.done; label: "Copy again  (c)"; onClicked: td.copyAgain() }
           Btn { visible: td.mode === "share"; dim: gifProc.running || td.pickedParts.length === 0; label: gifProc.running ? "Making the code…" : "Record sharable GIF  (g)"; onClicked: td.startShareGif() }
-          Btn { visible: td.mode === "save"; label: "Save  (⏎)"; onClicked: td.saveNamed() }
+          Btn { visible: td.mode === "save"; label: core.originLine !== "" && (!core.originLocked || core.devSwitch) ? "Save as new  (⏎)" : "Save as…  (⏎)"; onClicked: td.saveNamed() }
+          Btn { visible: td.mode === "save" && core.originLine !== "" && (!core.originLocked || core.devSwitch); label: (core.originLocked ? "Replace built-in \"" : "Replace \"") + core.originName + "\""; onClicked: td.replaceBuiltin() }
           Btn { label: jobs.any || td.mode === "save" ? "Cancel  (esc)" : (td.mode === "ai" && td.busy ? "Hide, keep working  (esc)" : (td.mode === "ai" && td.chatActive ? "Close, keep the draft  (esc)" : "Close  (esc)")); onClicked: td.close() }
         }
       }

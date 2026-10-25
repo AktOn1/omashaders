@@ -14,7 +14,7 @@ import "palette.js" as Pal
 //   Cursor    small overlay effects drawn around the mouse pointer (MouseFx.qml), and Bend shaders that
 //             distort the real screen around it (bin/cursor-bend + BendMarker.qml)
 //   Windows   the Screen and Color lists drawn on chosen app windows only (needs the HyprWindowShade Hyprland plugin; bin/omashaders window)
-// hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (releasing Shift or leaving the item restores the saved setting) (keys preview as you move), a mouse click or Space keeps it and stays open, Enter keeps it and closes,
+// hjkl / arrows move, hovering highlights an effect and previews it only while Shift is held (releasing Shift or leaving the item restores the saved setting) (keys preview as you move), a mouse click, Space or Enter keeps it and stays open (Esc / q close),
 // Esc undoes previews.
 Item {
   id: root
@@ -58,6 +58,8 @@ Item {
   readonly property string themeFile: stateDir + "/themes"
   readonly property string sectionsFile: stateDir + "/sections"
   readonly property string shiftOnlyFile: stateDir + "/shift-only"
+  readonly property string keyHintsFile: stateDir + "/hotkey-hints"
+  readonly property string keyPreviewFile: stateDir + "/key-preview"
   readonly property string disabledFile: stateDir + "/disabled"
   readonly property string fsPauseFile: stateDir + "/pause-fullscreen"
   readonly property string mouseSizeFile: stateDir + "/mouse-size"
@@ -99,6 +101,53 @@ Item {
   readonly property string checkGlyph: "󰄬"
   readonly property string barGlyph: "󰍹"
   readonly property string favGlyph: "󰓎"
+  // the left list of each menu (SectionMenu): commands pinned first, a filter shows its matches directly. Kept in this file on purpose: Qt caches the
+  // folder listing, so a new .js file next to Core.qml cannot be loaded by a shell that was started before the update. bin/menulist_selftest.py tests this block.
+  // menulist:begin
+  readonly property string menuAllId: "@all"
+
+  function menuIsCommand(c) { return !!c && c.action === true }
+
+  function menuWords(query) {
+    var q = String(query || "").trim().toLowerCase()
+    return q === "" ? [] : q.split(/\s+/)
+  }
+
+  function menuItemMatches(it, catLabel, ts) {
+    var hay = (it.label + " " + (it.desc || "") + " " + (it.hint || "") + " " + catLabel).toLowerCase()
+    return ts.every(function(t) { return hay.indexOf(t) >= 0 })
+  }
+
+  // returns { cats, nCmd, total, allIdx, catOf }
+  //   cats: commands, then (filtering) the "All matches" row and the matching categories, or (not filtering) the categories as declared
+  //   nCmd: how many rows at the start of cats are commands
+  //   total: how many different items match (0 when not filtering)
+  //   allIdx: index of the "All matches" row in cats, -1 when there is none
+  //   catOf: item id -> label of the first category it was found in (for the label shown on a flat result row)
+  function menuBuild(rawCats, query) {
+    var cmds = [], groups = []
+    rawCats.forEach(function(c) { (menuIsCommand(c) ? cmds : groups).push(c) })
+    var ts = menuWords(query)
+    if (ts.length === 0) return { cats: cmds.concat(groups), nCmd: cmds.length, total: 0, allIdx: -1, catOf: {} }
+    var perCat = [], flat = [], seen = {}, catOf = {}
+    groups.forEach(function(c) {
+      if (c.id === "fav" || !c.items) return
+      var catText = String(c.label).toLowerCase()
+      var items = c.items.filter(function(it) { return it.id.charAt(0) !== "@" && menuItemMatches(it, catText, ts) })
+      if (items.length === 0) return
+      perCat.push({ id: c.id, label: c.label, items: items, note: "", badge: String(items.length) })
+      items.forEach(function(it) {
+        if (seen[it.id]) return
+        seen[it.id] = true
+        catOf[it.id] = c.label
+        flat.push(it)
+      })
+    })
+    if (flat.length === 0) return { cats: cmds, nCmd: cmds.length, total: 0, allIdx: -1, catOf: {} }
+    var all = { id: menuAllId, label: "All matches", items: flat, note: "", badge: String(flat.length) }
+    return { cats: cmds.concat([all], perCat), nCmd: cmds.length, total: flat.length, allIdx: cmds.length, catOf: catOf }
+  }
+  // menulist:end
   function rowGlyph(id) {
     if (id === "fav") return favGlyph
     if (id === "@random" || id === "surprise" || String(id).indexOf("@rand:") === 0) return "󰒟"
@@ -107,9 +156,18 @@ Item {
     if (id === "@share") return "󰒗"
     if (id === "@import") return "󰋺"
     if (id === "@ai") return "󰁨"
+    if (id === "@dup") return "󰆏"
+    if (id === "@newcat") return "󰉗"
+    if (id === "@move") return "󰉒"
+    if (String(id).indexOf("cat:") === 0) return "󰉋"
+    if (id === "@saveas") return "󰆓"
+    if (id === "@revert" || id === "@undo") return "󰕌"
+    if (String(id).indexOf("@ai:") === 0) return "󰁨"
     return ""
   }
 
+  // a row in the left list (next to Delete / Surprise me): starts the AI for just one new effect of that kind (slot as in `ai-theme --only`)
+  function aiAction(slot) { return { id: "@ai:" + slot, label: "Create with AI", key: "T", action: true } }
   function writeFile(file, content) {
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$(dirname "$1")" && printf %s "$2" > "$1"', "bash", file, content])
   }
@@ -128,7 +186,7 @@ Item {
   function secOf(k) { return k === "screen" ? screenSec : (k === "color" ? colorSec : (k === "wall" ? wallSec : (k === "mouse" ? mouseSec : (k === "win" ? winSec : themeSec)))) }
   function kindIcon(k) { return k === "screen" ? "󰍹" : (k === "color" ? "󰏘" : (k === "wall" ? "󰋩" : (k === "mouse" ? "󰍽" : (k === "win" ? "󰖲" : "󰽗")))) }
   function kindTitle(k) { return k === "screen" ? "Screen" : (k === "color" ? "Color" : (k === "wall" ? "Wallpaper" : (k === "mouse" ? "Cursor" : (k === "win" ? "Windows" : "Themes")))) }
-  function kindKey(k) { return k === "screen" ? "s" : (k === "color" ? "C" : (k === "wall" ? "w" : (k === "mouse" ? "c" : (k === "win" ? "W" : "m")))) }
+  function kindKey(k) { return k === "screen" ? "s" : (k === "color" ? "C" : (k === "wall" ? "w" : (k === "mouse" ? "c" : (k === "win" ? "W" : "")))) }
   function kindAbout(k) {
     return k === "screen" ? "The whole display gets an effect on top: old CRT look, glow, glitch, blur"
          : (k === "color" ? "Changes the colours of everything you see: warm, cold, black-and-white, neon"
@@ -231,6 +289,8 @@ Item {
     property string fontFamily: ""
     property real cellW: 100
     property real cellH: 28
+    property var keys: []
+    readonly property string capsShown: rlKeys.visible && rlKeys.width > 0 ? rl.keys.join("") : "-"
     signal moved(real v)
     function stopAt(i) {
       if (stops.length >= 7) return stops[i]
@@ -249,9 +309,18 @@ Item {
       font.family: rl.fontFamily
       font.pixelSize: Style.font.body * 0.85
     }
+    KeyCaps {
+      id: rlKeys
+      anchors.left: rlName.right
+      anchors.leftMargin: Style.space(5)
+      anchors.verticalCenter: parent.verticalCenter
+      small: true
+      spacing: Style.space(3)
+      groups: rl.keys.length > 0 ? [rl.keys] : []
+    }
     Rectangle {
       id: rlBar
-      anchors.left: rlName.right
+      anchors.left: rlKeys.visible ? rlKeys.right : rlName.right
       anchors.leftMargin: Style.space(6)
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
@@ -391,7 +460,42 @@ Item {
     else Quickshell.execDetached([root.script, "strength", kind, "reset"])
   }
   function setPower(mode) { Quickshell.execDetached([root.script, "power", mode]) }
-  property bool keysOpen: false
+  // F1 shows / hides every hotkey hint (slider caps and the strip under the menus); remembered in a state file, on until the user turns it off
+  property string keyHintsFlag: ""
+  readonly property bool keyHints: keyHintsFlag !== "off"
+  function toggleKeyHints() {
+    keyHintsFlag = keyHints ? "off" : "on"
+    writeFile(keyHintsFile, keyHintsFlag)
+  }
+  FileView {
+    path: root.keyHintsFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.keyHintsFlag = String(text() || "").trim()
+    onLoadFailed: root.keyHintsFlag = ""
+  }
+  // F2: live preview while moving with the keyboard. Off by default: the cursor only moves, Space / Enter apply. Shift+arrow previews one step either way.
+  property string keyPreviewFlag: ""
+  readonly property bool keyPreview: keyPreviewFlag === "on"
+  function toggleKeyPreview() {
+    keyPreviewFlag = keyPreview ? "off" : "on"
+    writeFile(keyPreviewFile, keyPreviewFlag)
+    if (!keyPreview) { hoverPreviewing = true; revertHoverPreview() }
+  }
+  FileView {
+    path: root.keyPreviewFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.keyPreviewFlag = String(text() || "").trim()
+    onLoadFailed: root.keyPreviewFlag = ""
+  }
+  // a keyboard move only moves the cursor; the item under it is previewed when F2 is on or Shift is held
+  function keyPointed(sec) {
+    if (keyPreview) { hoverPreviewing = false; sec.pointed(sec.selected) }
+    else if (keyShift) { hoverPreviewing = true; sec.pointed(sec.selected) }
+  }
   function togglePause() { setPower("toggle") }
   FileView {
     path: root.fxStrengthFile
@@ -505,7 +609,7 @@ Item {
     onLoaded: { var v = parseInt(String(text() || "").trim()); if (!winColSender.busy) root.winColStrength = isNaN(v) ? 100 : root.clamp(v, 0, 100) }
     onLoadFailed: root.winColStrength = 100
   }
-  // ---------------------------------------------------------------- mixing two effects of the same menu (Ctrl+Enter / Ctrl+click)
+  // ---------------------------------------------------------------- mixing two effects of the same menu (a / Ctrl+click)
   // Screen and Color can each hold a second item next to the first. bin/omashaders mix ... keeps it in effect2 / color2 and
   // mix-effect / mix-color ("stack|blend AMOUNT"). Stack: the second runs on the first's result, AMOUNT is its strength.
   // Blend: both run on the original picture, AMOUNT is the share of the second.
@@ -617,6 +721,11 @@ Item {
     if (focusKind === "wall") { wallMixSetMode(wallMixMode === "stack" ? "blend" : "stack"); return }
     Quickshell.execDetached(mixCmd(focusKind, ["mode", "toggle"]))
   }
+  function mixSelected() {
+    var s = activeSec
+    if (!s.hasMix || s.col !== 1 || !s.selected) return
+    s.mixChosen(s.selected, true)
+  }
   function clearMix() {
     if (mixSecondOf(focusKind) === "") return
     if (focusKind === "wall") { wallMixSet(""); return }
@@ -723,9 +832,10 @@ Item {
                  items: screenEntries.filter(function(e) { return e.cat === c }).map(screenItem),
                  note: "" })
     })
-    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
-    out.push({ id: "@random", label: "Surprise me", action: true })
-    out.push({ id: "@off", label: "Off", action: true })
+    out.push(aiAction("screen"))
+    out.push({ id: "@delete", label: "Delete selected  (Del)", key: "Del", action: true })
+    out.push({ id: "@random", label: "Surprise me", key: "r", action: true })
+    out.push({ id: "@off", label: "Off", key: "o", action: true })
     return out
   }
 
@@ -834,6 +944,17 @@ Item {
     customHex = hex2(c.r) + hex2(c.g) + hex2(c.b)
     customTimer.restart()
   }
+  // keyboard nudge of the custom colour on the Color tab (no click needed; with the custom colour off, the first key starts it from the colour shown on the rails): which 0 = hue (wraps round), 1 = saturation, 2 = brightness; dir -1 / +1
+  function nudgeCustom(which, dir) {
+    if (focusKind !== "color") return
+    var wasOff = !(customActive || customTimer.running)
+    var h = customH, sat = customS, v = customV
+    if (which === 0) h = (Math.round((h + dir * 0.025) * 1000) / 1000 + 1) % 1
+    else if (which === 1) sat = Math.round((sat + dir * 0.05) * 1000) / 1000
+    else v = Math.round((v + dir * 0.05) * 1000) / 1000
+    setCustomHsv(h, sat, v)
+    if (wasOff) { applyCustom(); flash("Custom colour on: #" + customHex) }
+  }
   function setCustomHex(t) {
     t = String(t).replace(/^#/, "").toLowerCase()
     if (!/^[0-9a-f]{6}$/.test(t)) return false
@@ -871,9 +992,10 @@ Item {
       out.push({ id: c, label: c, items: colorEntries.filter(function(e) { return e.cat === c }).map(colorItem), note: "" })
     })
     out.push({ id: "@palette", label: "Palette…  (make your own)", action: true })
-    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
-    out.push({ id: "@random", label: "Surprise me", action: true })
-    out.push({ id: "@off", label: "Off", action: true })
+    out.push(aiAction("color"))
+    out.push({ id: "@delete", label: "Delete selected  (Del)", key: "Del", action: true })
+    out.push({ id: "@random", label: "Surprise me", key: "r", action: true })
+    out.push({ id: "@off", label: "Off", key: "o", action: true })
     return out
   }
 
@@ -973,7 +1095,13 @@ Item {
     return { id: "f:" + c, label: "Frame · " + c, items: frameEntries.filter(function(e) { return e.cat === c }).map(winFrameItem), note: "" }
   })
   readonly property bool winAll: winTargets.indexOf("*") >= 0
-  readonly property string winPart: (winSec.curCat && String(winSec.curCat.id).indexOf("f:") === 0) ? "frame" : ((winSec.curCat && String(winSec.curCat.id).indexOf("c:") === 0) ? "color" : "effect")
+  // which part of a window the open list edits; the flat "All matches" list mixes parts, so it follows the row (ids start e: / c: / f:)
+  readonly property string winPart: {
+    var c = winSec.curCat
+    var id = c ? String(c.id) : ""
+    if (id === root.menuAllId && winSec.selected) id = String(winSec.selected.id)
+    return id.indexOf("f:") === 0 ? "frame" : (id.indexOf("c:") === 0 ? "color" : "effect")
+  }
   readonly property string installCmd: "hyprpm update && hyprpm add https://github.com/ManofJELLO/HyprWindowShade && hyprpm enable HyprWindowShade"
 
   function winFxItem(e) { return { id: "e:" + e.name, label: e.name, desc: e.desc, hint: e.section === "winfx" ? "window" : (e.animated ? "heavy" : "") } }
@@ -999,7 +1127,7 @@ Item {
     if (winPlugin === "missing") return [
       { id: "setup", label: "Setup needed", items: [], note: "Window shaders need the HyprWindowShade plugin, which is not installed. In a terminal run:\n\nhyprpm update\nhyprpm add https://github.com/ManofJELLO/HyprWindowShade\nhyprpm enable HyprWindowShade\n\nThen reopen this menu. Pick the next row to copy the commands." },
       { id: "@copy", label: "Copy install commands", action: true }
-    ].concat(winFrameCats).concat([{ id: "@off", label: "Off", action: true }])
+    ].concat(winFrameCats).concat([{ id: "@off", label: "Off", key: "o", action: true }])
     var out = []
     catList(winfxEntries, ["Glass", "Light", "Living"]).forEach(function(c) {
       var items = winfxEntries.filter(function(e) { return e.cat === c }).map(winFxItem)
@@ -1014,9 +1142,10 @@ Item {
     })
     if (winScope === "*") winFrameCats.forEach(function(c) { out.push(c) })
     else out.push({ id: "@inherit", label: "Follow All windows", action: true })
-    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
-    out.push({ id: "@random", label: "Surprise me", action: true })
-    out.push({ id: "@off", label: "Off", action: true })
+    out.push(aiAction("win"))
+    out.push({ id: "@delete", label: "Delete selected  (Del)", key: "Del", action: true })
+    out.push({ id: "@random", label: "Surprise me", key: "r", action: true })
+    out.push({ id: "@off", label: "Off", key: "o", action: true })
     return out
   }
   readonly property var winMarks: {
@@ -1190,9 +1319,10 @@ Item {
     catList(mouseEntries, ["Focus", "Glow", "Trail", "Bend"]).forEach(function(c) {
       out.push({ id: c, label: c, items: mouseEntries.filter(function(e) { return e.cat === c }).map(mouseItem), note: "" })
     })
-    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
-    out.push({ id: "@random", label: "Surprise me", action: true })
-    out.push({ id: "@off", label: "Off", action: true })
+    out.push(aiAction("cursor"))
+    out.push({ id: "@delete", label: "Delete selected  (Del)", key: "Del", action: true })
+    out.push({ id: "@random", label: "Surprise me", key: "r", action: true })
+    out.push({ id: "@off", label: "Off", key: "o", action: true })
     return out
   }
   readonly property bool mouseBend: {
@@ -1350,9 +1480,10 @@ Item {
   readonly property var wallCats: {
     var out = [wallBase[0], { id: "fav", label: "Favorites", items: favList(wallEffects, wallFavs), note: favNote }]
     for (var i = 1; i < wallAll.length; i++) out.push(wallAll[i])
-    out.push({ id: "@delete", label: "Delete selected  (Del)", action: true })
-    out.push({ id: "@random", label: "Surprise me", action: true })
-    out.push({ id: "@off", label: "Off", action: true })
+    out.push(aiAction("wallpaper"))
+    out.push({ id: "@delete", label: "Delete selected  (Del)", key: "Del", action: true })
+    out.push({ id: "@random", label: "Surprise me", key: "r", action: true })
+    out.push({ id: "@off", label: "Off", key: "o", action: true })
     return out
   }
   function wallLabel(id) {
@@ -1443,13 +1574,15 @@ Item {
   property string dlgWh: ""
   property int dlgNum: 0
   property string dlgJob: ""
-  function openDialog(mode, whId, num, jobId) {
+  property string dlgOnly: ""   // "": a whole theme; else the one kind of effect the AI makes (`ai-theme --only SLOT`)
+  function openDialog(mode, whId, num, jobId, only) {
     popupOpen = false
     whOpen = false
     dlgMode = mode
     dlgWh = whId
     dlgNum = num
     dlgJob = jobId || ""
+    dlgOnly = only || ""
     refreshJobs()
     dlgLoaded = true
     Qt.callLater(function() { root.dlgOpen = true })
@@ -1464,7 +1597,7 @@ Item {
   // Save: a small window asks for the name (F)
   function startSave() {
     if (themeNow === "|||") { flash("Nothing to save: every effect is off"); return }
-    var dup = themes.filter(function(c) { return themeMatchesNow(c) })
+    var dup = themes.filter(themeSameNow)
     if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return }
     openDialog("save", "", 0)
   }
@@ -1791,10 +1924,49 @@ Item {
     onRunningChanged: if (!running) { root.audioLevel = 0; root.audioBass = 0; root.audioMid = 0; root.audioTreble = 0 }
   }
 
+  // ---------------------------------------------------------------- broken effects (FxSafety.qml, bin/fxcheck.py, bin/fx-guard)
+  // An effect is handed to the renderer only after FxSafety checked its compiled shader; a broken one is switched off with one notice.
+  readonly property string wantWall: root.fxHost && !root.effectsOff ? root.wallShown : ""
+  readonly property string wantWall2: root.fxHost && !root.effectsOff && root.wallPreview === "" ? root.mixSecondOf("wall") : ""
+  readonly property string wantMouse: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : ""
+  readonly property var safe: safetyHost.item
+  function fxSwitchOff(kind, name) {
+    if (kind === "mouse") {
+      if (mouseCurrent === name) applyMouse("")
+    } else if (kind === "wall2") {
+      if (wall2 === name) { wall2 = ""; writeFile(wall2File, "") }
+    } else {
+      if (wallPreview === name) { wallPreviewed = false; wallPreview = ""; writeFile(wallPreviewFile, "") }
+      if (wallSaved === name) setWall("", true)
+    }
+  }
+  function fxTripped(why) {
+    var list = [["wall", wallPreview], ["wall", wallSaved], ["wall2", wall2], ["mouse", mouseBend ? "" : mouseCurrent]].filter(function(e) { return e[1] !== "" })
+    list.forEach(function(e) { fxSwitchOff(e[0], e[1]) })
+    return list.length > 0
+  }
+  function fxFailed(kind, name, why, driver) { Qt.callLater(function() { if (safe) safe.report(kind, name, why, driver) }) } // later: report() changes the settings the caller is being evaluated from
+  FxHost {
+    id: safetyHost
+    source: root.sub("FxSafety.qml")
+    props: ({
+      pluginDir: root.script.replace(/bin\/omashaders$/, ""),
+      stateDir: root.stateDir,
+      host: root.fxHost,
+      wall: root.wantWall,
+      wall2: root.wantWall2,
+      mouse: root.wantMouse,
+      switchOff: root.fxSwitchOff,
+      trip: root.fxTripped,
+      notice: function(text) { Quickshell.execDetached(["notify-send", "-a", "OmaShaders", "-t", "8000", "-i", "dialog-warning", "Effect switched off", text]) }
+    })
+  }
+
   FxHost {
     source: root.sub("WallpaperFx.qml")
     props: ({
       genDir: "file://" + root.stateDir + "/generated",
+      report: root.fxFailed,
       strength: root.wallStrength / 100,
       react: root.wallReact / 100,
       speed: root.wallSpeed / 100,
@@ -1806,8 +1978,8 @@ Item {
       range: root.wallRange / 100,
       targetColor: "#" + root.wallTarget,
       offScreens: root.fsOffScreens,
-      effect: root.fxHost && !root.effectsOff ? root.wallShown : "",
-      effect2: root.fxHost && !root.effectsOff && root.wallPreview === "" ? root.mixSecondOf("wall") : "",
+      effect: root.safe && root.safe.wallOkName === root.wantWall ? root.wantWall : "",
+      effect2: root.safe && root.safe.wall2OkName === root.wantWall2 ? root.wantWall2 : "",
       mixMode: root.wallMixMode,
       mixAmount: root.wallMixAmt / 100,
       wallpaper: root.wallpaperPath,
@@ -1885,6 +2057,7 @@ Item {
     if (screenPreviewed) { applyScreen(screenOrigin); screenPreviewed = false }
     if (colorPreviewed) { applyColor(colorOrigin); colorPreviewed = false }
     if (mousePreviewed) { applyMouse(mouseOrigin); mousePreviewed = false }
+    revertWinPreview()
     clearWallPreview()
   }
   Timer { id: hoverLeaveTimer; interval: 220; onTriggered: root.revertHoverPreview() }
@@ -1893,9 +2066,10 @@ Item {
     source: root.sub("MouseFx.qml")
     props: ({
       genDir: "file://" + root.stateDir + "/generated",
+      report: root.fxFailed,
       strength: root.mouseStrength / 100,
       offScreens: root.fsOffScreens,
-      effect: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : "",
+      effect: root.safe && root.safe.mouseOkName === root.wantMouse ? root.wantMouse : "",
       motion: root.mouseMotion,
       size: root.mouseSize / 100,
       speed: root.mouseSpeed / 100,
@@ -2023,13 +2197,55 @@ Item {
     return { id: line, screen: s, wall: w, mouse: m, color: c, name: name, hasWin: hasWin, winFx: wf, winCol: wc, winFrame: wr, opts: opts, pieces: pieces,
              label: name !== "" ? name : names.join(" + "), desc: parts }
   }
-  readonly property var themeItems: themes.map(themeItem)
+  // built-in marker: the lines and effect names shipped with the plugin (bin/oms-delete builtin); only the author (dev-export switch) changes those
+  readonly property string builtinGlyph: "󰈻"
+  property bool devSwitch: false
+  property var builtinThemes: []
+  property var builtinFx: ({ shader: [], color: [], wall: [], mouse: [], frame: [] })
+  function isLocked(kind, id) {
+    var i = String(id)
+    if (kind === "theme") return builtinThemes.indexOf(i) >= 0
+    if (kind === "win") {
+      var pre = i.substring(0, 2), nm = i.substring(2)
+      if (pre === "e:") return builtinFx.shader.indexOf(nm) >= 0
+      if (pre === "c:") return builtinFx.color.indexOf(nm) >= 0
+      if (pre === "f:") return builtinFx.frame.indexOf(nm) >= 0
+      return false
+    }
+    var list = builtinFx[kind === "screen" ? "shader" : (kind === "color" ? "color" : (kind === "wall" ? "wall" : (kind === "mouse" ? "mouse" : "")))]
+    return list !== undefined && list.indexOf(i) >= 0
+  }
+  Process {
+    id: builtinProc
+    command: ["python3", root.path("bin/oms-delete"), "builtin", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var d = JSON.parse(String(text).trim())
+          if (d.ok !== true) return
+          root.devSwitch = d.dev === true
+          root.builtinThemes = d.themes
+          root.builtinFx = d.elements
+        } catch (e) {}
+      }
+    }
+  }
+  Timer { id: builtinTimer; interval: 600; onTriggered: { root.adoptOrigin(); if (!builtinProc.running) builtinProc.running = true } }
+  onThemesChanged: { builtinTimer.restart(); adoptOrigin() }
+  onAllEntriesChanged: builtinTimer.restart()
+  readonly property var themeItems: themes.map(function(l) {
+    var it = themeItem(l)
+    if (lookChanged && l === originLine) it.label = it.label + " (changed)"
+    return it
+  })
   readonly property string themeNow: themeKey(current, wallShown, mouseCurrent, colorCurrent, winEffect, winColor, winFrame)
   readonly property string themeNowId: {
     for (var i = 0; i < themes.length; i++) if (themeMatchesNow(themes[i])) return themes[i]
     return themeNow
   }
   property bool renaming: false
+  onRenamingChanged: if (!renaming) catMode = ""
   property string renameId: ""
   // "Surprise me" lives here instead of in the header: pick what should be shuffled
   readonly property var surpriseItems: {
@@ -2052,14 +2268,201 @@ Item {
     } else if (w === "all") { randomAll(); flash("Surprise: everything shuffled") }
     else { randomIn(w); flash("Surprise: " + kindTitle(w) + " shuffled") }
   }
+  // ---- theme categories: built-in ones come from starter-theme-categories (theme name -> category), your own live in the state file theme-categories
+  // (lines "cat<TAB>Name" for a category you made, "set<TAB>Name<TAB>theme base" for a theme you moved; the base is the look, so a rename keeps the place)
+  readonly property string themeCatFile: stateDir + "/theme-categories"
+  readonly property string myThemesCat: "My themes"
+  readonly property string moreCat: "More"
+  property var userCats: []
+  property var catOfBase: ({})
+  property var starterCatOf: ({})
+  property var starterCatOrder: []
+  FileView {
+    path: root.path("starter-theme-categories")
+    printErrors: false
+    onLoaded: {
+      var of = {}, order = []
+      String(text() || "").split("\n").forEach(function(l) {
+        var i = l.indexOf("|")
+        if (l.charAt(0) === "#" || i <= 0) return
+        var c = l.substring(0, i), n = l.substring(i + 1)
+        of[n] = c
+        if (order.indexOf(c) < 0) order.push(c)
+      })
+      root.starterCatOf = of
+      root.starterCatOrder = order
+    }
+  }
+  FileView {
+    path: root.themeCatFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var cats = [], of = {}
+      String(text() || "").split("\n").forEach(function(l) {
+        var f = l.split("\t")
+        if (f[0] === "cat" && f.length === 2 && f[1] !== "") cats.push(f[1])
+        else if (f[0] === "set" && f.length === 3 && f[1] !== "" && f[2] !== "") of[f[2]] = f[1]
+      })
+      root.userCats = cats
+      root.catOfBase = of
+    }
+  }
+  function writeThemeCats() {
+    var lines = userCats.map(function(n) { return "cat\t" + n })
+    Object.keys(catOfBase).forEach(function(b) { lines.push("set\t" + catOfBase[b] + "\t" + b) })
+    writeFile(themeCatFile, lines.join("\n"))
+  }
+  function cleanCatName(s) { return String(s || "").replace(/[|\t\r\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 30) }
+  function defaultThemeCat(line) {
+    var nm = line.split("|")[4] || ""
+    if (nm !== "" && starterCatOf[nm] !== undefined) return starterCatOf[nm]
+    return builtinThemes.indexOf(line) >= 0 ? moreCat : myThemesCat
+  }
+  function themeCategory(line) {
+    var own = catOfBase[themeBase(line)]
+    return own !== undefined ? own : defaultThemeCat(line)
+  }
+  readonly property var themeCatNames: {
+    var seen = {}, out = []
+    function add(n) { if (n !== "" && !seen[n]) { seen[n] = true; out.push(n) } }
+    userCats.forEach(add)
+    add(myThemesCat)
+    starterCatOrder.forEach(add)
+    add(moreCat)
+    themes.forEach(function(l) { add(themeCategory(l)) })
+    return out
+  }
+  readonly property var themeCatGroups: {
+    var by = {}
+    themeItems.forEach(function(it) { var c = themeCategory(it.id); (by[c] = by[c] || []).push(it) })
+    var out = []
+    themeCatNames.forEach(function(n) {
+      var items = by[n] || [], mine = userCats.indexOf(n) >= 0
+      if (items.length === 0 && !mine) return
+      out.push({ id: "cat:" + n, label: n, items: items, badge: String(items.length), userCat: mine,
+                 note: mine ? "Empty category. Pick a theme in All themes and press M to move it here. Delete removes this category." : "" })
+    })
+    return out
+  }
+  // names the Move prompt cycles through: every category that exists
+  readonly property var catChoices: themeCatGroups.map(function(g) { return g.label })
+  function catExists(name) {
+    var n = name.toLowerCase()
+    return catChoices.concat(starterCatOrder).some(function(c) { return c.toLowerCase() === n }) || userCats.some(function(c) { return c.toLowerCase() === n })
+  }
+  function canonCat(name) {
+    var n = name.toLowerCase(), all = userCats.concat(catChoices).concat(starterCatOrder)
+    for (var i = 0; i < all.length; i++) if (all[i].toLowerCase() === n) return all[i]
+    return name
+  }
+  function createCategory(name) {
+    var n = cleanCatName(name)
+    if (n === "") { flash("Give the category a name"); return false }
+    if (catExists(n)) { flash("There is already a category named " + canonCat(n)); return false }
+    userCats = userCats.concat([n])
+    writeThemeCats()
+    flash("Created category: " + n + ". Pick a theme and press M to move it in.")
+    Qt.callLater(function() { gotoThemeCat(n) })
+    return true
+  }
+  function moveTheme(id, name) {
+    var base = themeBase(id), label = themeItem(id).label
+    var n = name.trim() === "" ? "" : canonCat(cleanCatName(name))
+    var next = {}
+    Object.keys(catOfBase).forEach(function(b) { next[b] = catOfBase[b] })
+    if (n === "" || n === defaultThemeCat(id)) {
+      delete next[base]
+      n = defaultThemeCat(id)
+    } else {
+      next[base] = n
+      if (!catExists(n)) userCats = userCats.concat([n])
+    }
+    catOfBase = next
+    writeThemeCats()
+    flash("Moved " + label + " to " + n)
+    var ts = themeSec
+    Qt.callLater(function() {
+      if (ts.curItems.length === 0) ts.col = 0
+      else ts.itemIdx = clamp(ts.itemIdx, 0, ts.curItems.length - 1)
+    })
+  }
+  function deleteCategory(name) {
+    if (userCats.indexOf(name) < 0) return
+    userCats = userCats.filter(function(c) { return c !== name })
+    var next = {}
+    Object.keys(catOfBase).forEach(function(b) { if (catOfBase[b] !== name) next[b] = catOfBase[b] })
+    catOfBase = next
+    writeThemeCats()
+    flash("Deleted category " + name + ". Its themes are back in their usual place.")
+    Qt.callLater(function() { themeSec.catIdx = clamp(themeSec.catIdx, 0, themeSec.cats.length - 1) })
+  }
+  function gotoThemeCat(name) {
+    var cs = themeSec.cats
+    for (var i = 0; i < cs.length; i++) if (cs[i].id === "cat:" + name) { themeSec.col = 0; themeSec.catIdx = i; return }
+  }
+  property string catMode: ""   // "new" or "move" while the name field below asks for a category name
+  function startNewCat() {
+    if (focusKind !== "theme") activeKind = "theme"
+    renameId = ""
+    renameDup = false
+    catMode = "new"
+    renameField.text = ""
+    renaming = true
+    renameField.forceActiveFocus()
+  }
+  function startMove(fromMenu) {
+    if (focusKind !== "theme") return
+    var it = themeSec.selected || (fromMenu ? themeSec.lastItem : null)
+    if (!it || it.id.charAt(0) === "@") { flash("Pick a theme first, then press M to move it to a category"); return }
+    renameId = it.id
+    renameDup = false
+    catMode = "move"
+    renameField.text = themeCategory(it.id)
+    renaming = true
+    renameField.forceActiveFocus()
+    renameField.selectAll()
+  }
+  function cycleCatField(dir) {
+    var names = catChoices
+    if (names.length === 0) return
+    var i = names.indexOf(renameField.text)
+    var j = i < 0 ? (dir > 0 ? 0 : names.length - 1) : (i + dir + names.length) % names.length
+    renameField.text = names[j]
+    renameField.selectAll()
+  }
+  function finishCat(save) {
+    var mode = catMode, id = renameId, name = renameField.text
+    if (save && mode === "new" && !createCategory(name)) return
+    renaming = false
+    renameId = ""
+    leaveSearch()
+    if (save && mode === "move") moveTheme(id, name)
+  }
+  function deleteCategoryAsk(name) {
+    var key = "cat:" + name
+    if (delAsk === key) { delAsk = ""; deleteCategory(name); return }
+    delAsk = key
+    delAskTimer.restart()
+    flash("Delete the category " + name + "? Its themes go back to their usual place. (Delete again = yes)", 7000)
+  }
   readonly property var themeCats: [
     { id: "themes", label: "All themes", items: themeItems,
       note: "No themes yet. Set up Screen, Color, Wallpaper and Cursor the way you like, then press F." },
-    { id: "surprise", label: "Surprise me  (R)", items: surpriseItems, note: "" }
-  ].concat(jobCats()).concat([
-    { id: "@share", label: "Share  (S)", action: true },
-    { id: "@import", label: "Import theme  (i)", action: true },
-    { id: "@ai", label: "Create with AI (T)", action: true }
+    { id: "surprise", label: "Surprise me", key: "R", items: surpriseItems, note: "" }
+  ].concat(themeCatGroups).concat(jobCats()).concat(lookChanged ? [
+    { id: "@saveas", label: "Save as new", key: "F", action: true },
+    { id: "@revert", label: "Revert", key: "b", action: true }
+  ] : []).concat(undoLine !== "" ? [
+    { id: "@undo", label: "Undo", key: "y", action: true }
+  ] : []).concat([
+    { id: "@share", label: "Share", key: "S", action: true },
+    { id: "@import", label: "Import theme", key: "i", action: true },
+    { id: "@dup", label: "Duplicate", key: "N", action: true },
+    { id: "@newcat", label: "New category", key: "K", action: true },
+    { id: "@move", label: "Move to category", key: "M", action: true },
+    { id: "@ai", label: "Create with AI", key: "T", action: true }
   ])
   function flash(msg, ms) { themeFlash = msg; themeFlashTimer.interval = ms || 3000; themeFlashTimer.restart() }
   Timer { id: themeFlashTimer; interval: 3000; onTriggered: root.themeFlash = "" }
@@ -2069,40 +2472,134 @@ Item {
     Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1" && printf %s "$2" > "$3" && [ -e "$1/dev-export" ] && printf %s "$2" > "$4"; true', "bash",
                              stateDir, themes.join("\n"), themeFile, path("starter-themes")])
   }
+  // the theme the look on now came from: when it is a built-in one, only the author may save into it; everyone else saves under a new name
+  property string themeOrigin: ""
+  readonly property bool originLocked: themeOrigin !== "" && isLocked("theme", themeOrigin)
+  readonly property string originName: themeOrigin !== "" ? themeItem(themeOrigin).label : ""
+  // the saved theme the look came from, and whether the look on screen has drifted from it (a label only: nothing is copied until Save as)
+  readonly property string originLine: themeOrigin !== "" && themes.indexOf(themeOrigin) >= 0 ? themeOrigin : ""
+  function optsDiffer(line) {
+    var o = parseOpts(String(line).split("|")[8] || "")
+    delete o.wh
+    if (Object.keys(o).length === 0) return false
+    var n = parseOpts(currentOpts())
+    var keys = ["fx", "col", "wall", "cur", "wspeed", "wzoom"]
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i], dflt = (k === "wspeed" || k === "wzoom") ? 100 : undefined
+      var a = o[k] !== undefined ? o[k] : dflt, b = n[k] !== undefined ? n[k] : dflt
+      if (a !== undefined && b !== undefined && a !== b) return true
+    }
+    return false
+  }
+  function themeSameNow(line) { return themeMatchesNow(line) && !optsDiffer(line) }
+  readonly property bool lookChanged: originLine !== "" && !optsTimer.running && !applyGuard.running && !themeSameNow(originLine) && !themes.some(themeSameNow)
+  property string undoLine: ""
+  property string undoOrigin: ""
+  Timer { id: undoTimer; interval: 180000; onTriggered: root.undoLine = "" }
+  function adoptOrigin() {
+    if (themeOrigin !== "" || optsTimer.running) return
+    for (var i = 0; i < themes.length; i++) if (themeSameNow(themes[i])) { themeOrigin = themes[i]; return }
+  }
+  // put the look back to the saved theme it came from; the edits stay available with Undo
+  function revertLook() {
+    if (!lookChanged) { flash("Nothing to revert: the look is as the theme"); return }
+    applyTheme(themeItem(originLine), true)
+  }
+  function undoDrop() {
+    if (undoLine === "") { flash("Nothing to undo"); return }
+    var line = undoLine, org = undoOrigin
+    applyTheme(themeItem(line), true)
+    if (themes.indexOf(org) >= 0) themeOrigin = org
+    undoLine = ""
+    flash("Changes are back")
+  }
+  function saveProblem(name) {
+    if (!originLocked || devSwitch) return ""
+    var nm = String(name || "").replace(/[|\r\n]/g, " ").trim()
+    if (nm === "") return "\"" + originName + "\" is built in and stays as it is. Type a new name for your own theme."
+    if (nm === originName) return "That is the built-in name. Pick a different name for your own theme."
+    return ""
+  }
   function saveTheme(name) {
     var key = themeNow
-    if (key === "|||") { flash("Nothing to save: every effect is off"); return }
+    if (key === "|||") { flash("Nothing to save: every effect is off"); return false }
+    var problem = saveProblem(name)
+    if (problem !== "") { flash(problem); return false }
     var nm = String(name || "").replace(/[|\r\n]/g, " ").trim().slice(0, 40)
-    var dup = themes.filter(function(c) { return themeMatchesNow(c) })
-    if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return }
+    var dup = themes.filter(themeSameNow)
+    if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return false }
     var opts = currentOpts()
     var q = key.split("|")
     if (opts !== "" || nm !== "") key = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", nm, q[5] || "", q[6] || "", q[7] || "", opts)
     themes = themes.concat([key])
     writeThemes()
+    themeOrigin = key
     flash("Saved theme: " + themeItem(key).label)
+    return true
+  }
+  // save the look on now over the theme it came from, keeping its name and place in the list; a built-in theme only with the dev-export switch (the author)
+  function replaceOrigin() {
+    var i = themes.indexOf(themeOrigin)
+    if (i < 0) { flash("This look did not come from a saved theme. Save it under a name instead."); return false }
+    if (originLocked && !devSwitch) { flash("Built-in themes are changed by the author only. Save under a new name instead."); return false }
+    if (themeNow === "|||") { flash("Nothing to save: every effect is off"); return false }
+    var q = themeNow.split("|"), o = themeOrigin.split("|")
+    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", o[4] || "", q[5] || "", q[6] || "", q[7] || "", currentOpts())
+    if (line === themeOrigin) { flash("Already saved: " + themeItem(line).label); return false }
+    if (themes.indexOf(line) >= 0) { flash("That look is already another theme"); return false }
+    var next = themes.slice()
+    next[i] = line
+    themes = next
+    writeThemes()
+    themeOrigin = line
+    flash((originLocked ? "Replaced built-in theme: " : "Updated theme: ") + themeItem(line).label)
+    return true
   }
   // delete a theme: bin/oms-delete refuses the built-in ones ("Built-in theme, cannot be deleted") unless the developer switch is on
   function deleteTheme(id) {
     if (themes.indexOf(id) < 0) return
     delRun.start(["rm", "theme", "--line", id, "--yes"], "theme:" + id)
   }
-  function startRename() {
+  property bool renameDup: false
+  function startRename(dup) {
     if (focusKind !== "theme") return
     var it = themeSec.selected
-    if (!it || it.id.charAt(0) === "@") return
+    if (!it || it.id.charAt(0) === "@") { if (dup) flash("Pick a theme first, then press N to duplicate it"); return }
     renameId = it.id
-    renameField.text = it.name
+    catMode = ""
+    renameDup = dup === true
+    renameField.text = renameDup ? (it.name !== "" ? it.name : it.label.replace(/ \(changed\)$/, "")) + " copy" : it.name
     renaming = true
     renameField.forceActiveFocus()
     renameField.selectAll()
   }
   function finishRename(save) {
+    if (catMode !== "") { finishCat(save); return }
     var id = renameId
+    if (save && renameDup && !duplicateTheme(id, renameField.text)) return
+    var dup = renameDup
     renaming = false
+    renameDup = false
     renameId = ""
     leaveSearch()
-    if (save) renameTheme(id, renameField.text)
+    if (save && !dup) renameTheme(id, renameField.text)
+  }
+  // a copy of any theme under a new name (the original stays as it is, the copy is the user's own)
+  function duplicateTheme(id, name) {
+    var i = themes.indexOf(id)
+    if (i < 0) return true
+    var n = String(name).replace(/[|\r\n]/g, " ").trim().slice(0, 40)
+    var q = id.split("|")
+    if (n === "") { flash("Give the copy a name"); return false }
+    if (n === (q[4] || "")) { flash("Pick a name different from the original"); return false }
+    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", n, q[5] || "", q[6] || "", q[7] || "", q[8] || "")
+    if (themes.indexOf(line) >= 0) { flash("There is already a theme named " + n); return false }
+    var next = themes.slice()
+    next.splice(i + 1, 0, line)
+    themes = next
+    writeThemes()
+    flash("Duplicated as " + n + (isLocked("theme", id) && !devSwitch ? " (yours to change)" : ""))
+    return true
   }
   function renameTheme(id, name) {
     if (themes.indexOf(id) < 0) return
@@ -2153,8 +2650,17 @@ Item {
     previewMouse({ id: it.mouse })
     if (it.wall !== "") previewWall({ id: it.wall })
   }
+  // the parts of a theme land one after the other; until the last one is in, the look differs from the theme and must not show as "changed"
+  Timer { id: applyGuard; interval: 2000 }
   function applyTheme(it, keep) {
     if (!it || it.id.charAt(0) === "@") return
+    if (lookChanged) {
+      undoLine = themeCompose(current, wallShown, mouseCurrent, colorCurrent, "", winEffect, winColor, winFrame, currentOpts())
+      undoOrigin = themeOrigin
+      undoTimer.restart()
+      flash("Changes to \"" + originName + "\" dropped. Press y to undo", 6000)
+    }
+    if (themes.indexOf(it.id) >= 0) { themeOrigin = it.id; applyGuard.restart() }
     chooseScreen({ id: it.screen }, true)
     chooseColor({ id: it.color }, true)
     chooseMouse({ id: it.mouse }, true)
@@ -2296,53 +2802,57 @@ Item {
   function applyPauseKey() { if (fxHost && !pauseBindProc.running) pauseBindProc.running = true }
   Timer { id: pauseBindTimer; interval: 2500; onTriggered: root.applyPauseKey() }
   onPauseKeySettingChanged: if (ready) pauseBindTimer.restart()
-  readonly property var hotkeyGroups: [
-    { name: "MOVE", keys: [
-      { k: ["↑", "↓", "←", "→"], t: "move (or h j k l)" },
-      { k: ["Tab"], t: "next pane (from the filter: to the results)" },
-      { k: ["g", "G"], t: "first / last" },
-      { k: ["1-9"], t: "jump to category" },
-      { k: ["/"], t: "filter" },
-      { k: ["m"], t: "back to Themes" },
-      { k: ["Esc", "q"], t: "close" },
-      { k: ["?"], t: "show / hide this list" } ] },
-    { name: "OPEN", keys: [
-      { k: ["s"], t: "Screen" }, { k: ["C"], t: "Color" }, { k: ["w"], t: "Wallpaper" },
-      { k: ["c"], t: "Cursor" }, { k: ["W"], t: "Windows" }, { k: ["A"], t: "pick the app (Windows)" } ] },
-    { name: "CHANGE", keys: [
-      { k: ["⏎"], t: "apply and close" },
-      { k: ["Space"], t: "apply, stay open" },
-      { k: ["[", "]"], t: "strength -5 / +5" },
-      { k: ["{", "}"], t: "-1 / +1" },
-      { k: ["d"], t: "default strength" },
-      { k: ["Ctrl+⏎"], t: "mix a second one" },
-      { k: ["t"], t: "stack / blend" },
-      { k: [",", "."], t: "mix amount" },
-      { k: ["⌫"], t: "remove mix" },
-      { k: ["v", "V"], t: "speed" },
-      { k: ["z", "Z"], t: "zoom / size" },
-      { k: ["(", ")"], t: "mouse reaction" },
-      { k: ["u", "U"], t: "custom colour / favorite it" },
-      { k: ["f"], t: "favorite" },
-      { k: ["Del"], t: "delete" } ] },
-    { name: "THEMES", keys: [
-      { k: ["r"], t: "surprise this part" },
-      { k: ["R"], t: "surprise everything" },
-      { k: ["o"], t: "clear this part" },
-      { k: ["O"], t: "clear everything" },
-      { k: ["F"], t: "save as theme" },
-      { k: ["n"], t: "rename" },
-      { k: ["T"], t: "AI theme" },
-      { k: ["S"], t: "share" },
-      { k: ["i"], t: "import" } ] },
-    { name: "ALWAYS", keys: [
-      { k: ["p"], t: "PAUSE / RESUME EVERYTHING", strong: true },
-      { k: ["e"], t: "pause in fullscreen" },
-      { k: ["U"], t: "what's new / update" },
-      { k: ["x"], t: "cursor only with Shift" },
-      { k: ["Right-click bar icon"], t: "pause from the desktop", strong: true },
-      panicKey !== "" ? { k: [panicKey], t: "pause without the menu", strong: true } : { k: ["no key set"], t: "pick one in the plugin settings (Pause key)" } ] }
-  ]
+  // the hint strip under the menus: one row of keys that work everywhere, one row for the menu that has the cursor (it changes when the cursor moves to another menu); head = a caption without caps
+  readonly property var everywhereHints: [
+    { head: true, k: [], t: "Everywhere", strong: true },
+    { k: ["↑↓←→", "hjkl"], t: "move" },
+    { k: ["Space"], t: "apply" },
+    { k: ["⏎"], t: "apply" },
+    { k: ["Shift+↑↓"], t: "preview a step" },
+    { k: ["Tab"], t: "next menu" },
+    { k: ["Esc"], t: "close" },
+    { k: ["p"], t: "pause" } ]
+  // on a small screen the Everywhere row shrinks to one line
+  readonly property var everywhereShort: [
+    { head: true, k: [], t: "Everywhere", strong: true },
+    { k: ["↑↓←→", "hjkl"], t: "move" },
+    { k: ["Space"], t: "apply" },
+    { k: ["⏎"], t: "apply" },
+    { k: ["Tab"], t: "next menu" },
+    { k: ["Esc"], t: "close" } ]
+  // the legend for the flag that marks built-in rows (same wording as the status line under the lists); shown after the keys of every list that has such rows
+  readonly property var flagLegend: ({ legend: true, k: [builtinGlyph], t: "built in (" + (devSwitch ? "yours to edit" : "Duplicate to change") + ")" })
+  readonly property var focusHints: {
+    var k = focusKind
+    if (k === "theme") {
+      return [{ head: true, k: [], t: "Themes list", strong: true },
+              { k: ["Del", "f"], t: "delete" },
+              { k: ["n"], t: "rename" },
+              { k: ["M"], t: "move to category" },
+              { k: ["S"], t: "share" },
+              { k: ["O"], t: "clear all" },
+              { k: ["r"], t: "random theme" },
+              { k: ["R"], t: "random everything" },
+              { k: ["1-9"], t: "category" },
+              { k: ["g", "G"], t: "first / last" } ].concat(lookChanged ? [] : [{ k: ["F"], t: "save as theme" }], [flagLegend])
+    }
+    var out = [{ head: true, k: [], t: kindTitle(k), strong: true },
+               { k: ["o"], t: "off" },
+               { k: ["r"], t: "random" },
+               { k: ["R"], t: "random everything" },
+               { k: ["f"], t: "favorite" }]
+    if (activeSec.hasMix) {
+      out.push({ k: ["a"], t: "add a second effect" })
+      if (mixSecondOf(k) !== "") out.push({ k: ["t"], t: "flip stack/blend" }, { k: ["⌫"], t: "remove mix" })
+    }
+    if (k === "win" && winPlugin !== "missing") out.push({ k: ["A"], t: "choose app" })
+    if (k === "color") out.push({ k: ["u"], t: "type a colour" }, { k: ["B"], t: "star it" }, { k: ["z", "Z"], t: "hue" }, { k: ["v", "V"], t: "saturation" }, { k: ["m", "M"], t: "brightness" })
+    if (k === "wall") out.push({ k: ["u"], t: "type a colour" })
+    if (k === "mouse") out.push({ k: ["x"], t: "only with Shift" })
+    out.push({ k: ["g", "G"], t: "first / last" })
+    if (activeSec.lockKind !== "") out.push(flagLegend)
+    return out
+  }
   // one tab of the right-hand pane: the open one is joined to the content below it, the others sit behind the line
   component PartTab: Item {
     id: pt
@@ -2381,22 +2891,27 @@ Item {
       font.pixelSize: Style.font.body
       font.bold: pt.opened
     }
-    Text {
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
-      y: tabTitle.y + Style.space(19)
-      horizontalAlignment: Text.AlignHCenter
-      elide: Text.ElideRight
-      textFormat: Text.PlainText
-      text: pt.missing ? "needs a plugin"
-            : (root.query.trim() !== "" ? pt.found + " found"
-               : (pt.chipList.length > 0 ? "\u25CF on  \u00B7  " : "\u25CB off  \u00B7  ") + root.kindKey(pt.kind))
-      color: root.fg
-      opacity: pt.chipList.length > 0 ? 0.9 : 0.5
-      font.family: root.bar.fontFamily
-      font.pixelSize: Style.font.body * 0.75
+    Row {
+      id: tabState
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: tabTitle.y + Style.space(root.keyHints ? 17 : 19)
+      spacing: Style.space(5)
+      Text {
+        id: tabStateText
+        height: Style.space(16)
+        width: Math.min(implicitWidth, pt.width - Style.space(12) - (tabKey.visible ? tabKey.width + tabState.spacing : 0))
+        verticalAlignment: Text.AlignVCenter
+        elide: Text.ElideRight
+        textFormat: Text.PlainText
+        text: pt.missing ? "needs a plugin"
+              : (root.query.trim() !== "" ? pt.found + " found"
+                 : (pt.chipList.length > 0 ? "\u25CF on" : "\u25CB off"))
+        color: root.fg
+        opacity: pt.chipList.length > 0 ? 0.9 : 0.5
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body * 0.75
+      }
+      HotKey { id: tabKey; visible: root.keyHints; small: true; keys: [root.kindKey(pt.kind)] }
     }
     MouseArea {
       id: tabMouse
@@ -2412,18 +2927,20 @@ Item {
     property var keys: []
     property string label: ""
     property bool strong: false
+    property bool small: false
+    property bool plain: false   // a legend mark, not a key: the glyph without the cap around it
     spacing: Style.space(4)
-    height: Style.space(22)
+    height: Style.space(small ? 16 : 22)
     Repeater {
       model: hk.keys
       delegate: Rectangle {
         required property var modelData
         y: Style.space(1)
-        height: Style.space(20)
-        width: Math.max(Style.space(20), capText.implicitWidth + Style.space(10))
+        height: hk.height - Style.space(2)
+        width: Math.max(hk.height - Style.space(2), capText.implicitWidth + Style.space(hk.small ? 7 : 10))
         radius: Style.space(4)
-        color: root.fgA(hk.strong ? 0.28 : 0.13)
-        border.width: 1
+        color: hk.plain ? "transparent" : root.fgA(hk.strong ? 0.28 : 0.13)
+        border.width: hk.plain ? 0 : 1
         border.color: root.fgA(hk.strong ? 0.85 : 0.4)
         Text {
           id: capText
@@ -2432,12 +2949,13 @@ Item {
           text: parent.modelData
           color: root.fg
           font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.body * 0.9
+          font.pixelSize: Style.font.body * (hk.small ? 0.75 : 0.9)
           font.bold: true
         }
       }
     }
     Text {
+      visible: hk.label !== ""
       height: hk.height
       leftPadding: Style.space(2)
       verticalAlignment: Text.AlignVCenter
@@ -2450,24 +2968,94 @@ Item {
     }
   }
 
+  // a key cap that stays in the menu header and can be clicked; dimmed while its setting is off
+  component HeaderCap: Item {
+    id: hc
+    property string cap: ""
+    property string label: ""
+    property bool lit: true
+    signal clicked()
+    width: capRow.width
+    height: Style.space(22)
+    opacity: lit ? 1 : 0.5
+    HotKey { id: capRow; keys: [hc.cap]; label: hc.label; strong: hc.lit }
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: hc.clicked()
+    }
+  }
+
+  component HintFlow: Flow {
+    id: hf
+    property var hints: []
+    leftPadding: Style.space(10)
+    topPadding: Style.space(2)
+    bottomPadding: Style.space(2)
+    Repeater {
+      model: hf.hints
+      delegate: Item {
+        required property var modelData
+        width: hint.width + Style.space(12)
+        height: hint.height
+        HotKey {
+          id: hint
+          keys: parent.modelData.k
+          label: parent.modelData.t
+          strong: parent.modelData.strong === true
+          plain: parent.modelData.legend === true
+        }
+      }
+    }
+  }
+
+  // key caps beside a slider's label: groups is a list of key lists, e.g. [["v", "V"]]
+  component KeyCaps: Row {
+    id: kc
+    property var groups: []
+    property bool small: false
+    visible: root.keyHints && groups.length > 0
+    spacing: Style.space(8)
+    Repeater {
+      model: kc.groups
+      delegate: HotKey {
+        required property var modelData
+        small: kc.small
+        keys: modelData
+      }
+    }
+  }
+
   // list rows shrink on small screens so the whole menu, hotkeys included, stays on screen
-  readonly property real chromeBase: header.height + searchRow.height + stepRow.height + loadBox.implicitHeight + detailText.height + 6 * 1 + 10 * Style.space(4) + Style.space(30)
+  // "What is using my GPU" never gets shorter or taller than this while the menu is open (a theme brings more or fewer chips, a longer or shorter
+  // verdict): the room for the list rows is taken from it, so the rows, and with them the scroll position, stay put when a theme is chosen.
+  // It starts at two lines of verdict plus two lines of chips and only grows if a look needs more.
+  property real loadHold: 0
+  // on a screen under 700 px high the reserve would push the menu off the screen, so there it only holds what has been seen
+  readonly property real loadFloor: popup.screenH > 0 && popup.screenH < Style.space(700) ? 0 : Style.space(26) + 2 * verdictMeasure.implicitHeight + 2 * Style.space(24) + Style.space(5) + Style.space(18) + 3 * Style.space(3)
+  readonly property real loadH: Math.max(loadBox.implicitHeight, loadFloor, loadHold)
+  onLoadHChanged: if (popupOpen && loadH > loadHold) Qt.callLater(function() { if (root.popupOpen && root.loadH > root.loadHold) root.loadHold = root.loadH })
+  Text {
+    id: verdictMeasure
+    visible: false
+    text: "x\nx"
+    font.family: root.bar.fontFamily
+    font.pixelSize: Style.font.body * 0.95
+  }
+  readonly property real chromeBase: header.height + searchRow.height + stepRow.height + loadH + detailText.height + 6 * 1 + 10 * Style.space(4) + Style.space(30)
   readonly property real rowStep: Style.space(28) + Style.space(2)
   readonly property real cardRoom: popup.availableCardHeight > 0 ? popup.availableCardHeight - popup.verticalContentInset : 100000
-  readonly property bool denseKeys: chromeBase + Style.space(32) + keyBox.implicitHeight + maxExtra + Math.max(4 * rowStep, Style.space(300)) > cardRoom
-  readonly property real chromeH: chromeBase + keyArea.implicitHeight
+  // on a small screen the strip shrinks to the few keys you need first, so the lists keep their rows
+  readonly property bool denseHints: chromeBase + Style.space(5) + hintMeasure.height + maxExtra + 7 * rowStep > cardRoom
+  readonly property bool tinyScreen: keyHints && chromeBase - Style.space(30) + hintStrip.height + Style.space(5) + 5 * rowStep + maxExtra > cardRoom
+  readonly property bool stripShown: keyHints && !tinyScreen
+  readonly property real hintH: stripShown ? hintStrip.height + Style.space(5) : 0
+  readonly property real chromeH: chromeBase + hintH
   readonly property real rowSpace: cardRoom - chromeH
-  readonly property var denseKeyList: {
-    var out = []
-    hotkeyGroups.forEach(function(g) {
-      out.push({ k: [], t: g.name.toLowerCase() + ":", head: true })
-      g.keys.forEach(function(e) { out.push(e) })
-    })
-    return out
-  }
   readonly property real maxExtra: themeSec.extraH + Style.space(34)
   readonly property int rowsFit: Math.max(3, Math.min(40, Math.floor((rowSpace - maxExtra) / rowStep)))
-  readonly property int secH: Math.max(themeSec.implicitHeight, Style.space(300))
+  // on a screen that is only just tall enough, the one-line Everywhere strip takes a little of the lists' minimum height
+  readonly property int secH: Math.max(themeSec.implicitHeight, Style.space(stripShown && cardRoom < Style.space(560) ? 280 : 300))
   // the right-hand pane: a fixed row of tabs, one line saying what the open tab changes, then its list
   readonly property real tabH: Style.space(42)
   readonly property real aboutH: Style.space(24)
@@ -2520,8 +3108,7 @@ Item {
 
   // ---------------------------------------------------------------- menu actions
   property bool popupOpen: false
-  property bool viaEnter: false
-  property bool ctrlDown: false
+  property bool keyShift: false
   // "/" filter: one query narrows every column at once (label, description, hint and category name; all words must match)
   property string query: ""
   function focusSearch() { searchField.forceActiveFocus(); searchField.selectAll() }
@@ -2530,10 +3117,10 @@ Item {
   function applyQuery() {
     Qt.callLater(function() {
       ["screen", "color", "wall", "mouse", "win", "theme"].forEach(function(k) { secOf(k).resetForQuery() })
-      if (query.trim() !== "" && secOf(focusKind).cats.length === 0) {
+      if (query.trim() !== "" && !secOf(focusKind).hasMatches) {
         var order = ["theme"].concat(partKinds)
         for (var i = 0; i < order.length; i++) {
-          if (secOf(order[i]).cats.length === 0 || (order[i] === "win" && winPlugin === "missing")) continue
+          if (!secOf(order[i]).hasMatches || (order[i] === "win" && winPlugin === "missing")) continue
           if (order[i] !== "theme" && !isShown(order[i])) openOnly(order[i], false)
           activeKind = order[i]
           break
@@ -2564,6 +3151,8 @@ Item {
   }
   onPopupOpenChanged: {
     if (!popupOpen) renaming = false
+    loadHold = 0
+    if (popupOpen) loadHold = loadH
     if (!popupOpen) wn.close()
     if (popupOpen) {
       wn.refresh()
@@ -2624,19 +3213,42 @@ Item {
     else chooseIn(k, { id: "" }, true)
   }
   function randomIn(k) {
-    if (k === "theme") { randomAll(); return }
+    if (k === "theme") { randomTheme(); return }
     var cur = k === "wall" ? wallShown : savedOf(k)
     var pool = itemsOf(k).filter(function(e) { return e.id !== cur })
     if (pool.length > 0) chooseIn(k, pool[Math.floor(Math.random() * pool.length)], true)
   }
   function randomAll() { effectKinds.forEach(randomIn) }
+  // a random complete theme from the open category (or the filter result), never the one that is on now
+  function randomTheme() {
+    var c = themeSec.curCat, items = null
+    if (c && c.items && !c.action && c.id !== "surprise") items = c.items
+    else for (var i = 0; i < themeSec.cats.length; i++) if (themeSec.cats[i].id === "themes") items = themeSec.cats[i].items
+    var pool = (items || []).filter(function(t) { return t.id.charAt(0) !== "@" && !themeMatchesNow(t.id) })
+    if (pool.length === 0) { flash("No other theme to pick here"); return }
+    var t = pool[Math.floor(Math.random() * pool.length)]
+    applyTheme(t, true)
+    flash("Random theme: " + t.label)
+  }
   function offAll() { effectKinds.forEach(offIn) }
   function runAction(k, id) {
     if (k === "theme") {
       if (id === "@share") startShare()
       else if (id === "@import") openDialog("import", "", 0)
+      else if (id === "@dup") startRename(true)
+      else if (id === "@newcat") startNewCat()
+      else if (id === "@move") startMove(true)
+      else if (id === "@saveas") startSave()
+      else if (id === "@revert") revertLook()
+      else if (id === "@undo") undoDrop()
       else if (id === "@ai") openDialog("ai", "", 0)
       else if (id.indexOf("@job:") === 0) openDialog("ai", "", 0, id.substring(5))
+      return
+    }
+    if (id.indexOf("@ai:") === 0) {
+      var slot = id.substring(4)
+      if (slot === "win") slot = winPart === "frame" ? "frame" : (winPart === "color" ? "window_color" : "window")
+      openDialog("ai", "", 0, "", slot)
       return
     }
     if (k === "win" && id === "@copy") { Quickshell.execDetached(["wl-copy", installCmd]); flash("Copied: " + installCmd); return }
@@ -2662,6 +3274,7 @@ Item {
   }
   function deleteSelected(fromMenu) {
     var k = focusKind, s = secOf(k)
+    if (k === "theme" && s.col === 0 && s.curCat && s.curCat.userCat) { deleteCategoryAsk(s.curCat.label); return }
     var it = s ? (s.selected ? s.selected : (fromMenu ? s.lastItem : null)) : null
     if (!it || it.id.charAt(0) === "@") { flash("Pick one first, then press Delete to delete it"); return }
     var key = k + ":" + it.id
@@ -2733,7 +3346,7 @@ Item {
     return true
   }
   function moveKeys(dx, dy) {
-    hoverPreviewing = false
+    if (!keyPreview && !keyShift) revertHoverPreview()
     if (wn.open) { if (dy !== 0) wn.scrollBy(dy * Style.space(60)); return }
     if (winPickOpen) {
       if (dy !== 0) winSec.pickerIdx = clamp(winSec.pickerIdx + dy, 0, winAppItems.length - 1)
@@ -2745,7 +3358,6 @@ Item {
     var r = s.move(dx, dy)
     if (r === 1) {
       if (shiftFocus(1)) secOf(focusKind).col = 0
-      else s.activate(false)
     } else if (r === -1) {
       if (shiftFocus(-1)) { var p = secOf(focusKind); if (p.curItems.length > 0) p.col = 1 }
     }
@@ -2757,7 +3369,6 @@ Item {
     else if (t === "/") focusSearch()
     else if (t === "q") close()
     else if (t === "U") wn.toggle()
-    else if (t === "?") keysOpen = !keysOpen
     else if (t === "o" || t === "0") offIn(k)
     else if (t === "O") offAll()
     else if (t === "r") randomIn(k)
@@ -2766,8 +3377,13 @@ Item {
     else if (t === "G") s.jump(true)
     else if (t === "f") toggleFav(k)
     else if (t === "F") startSave()
-    else if (t === "n") startRename()
-    else if (t === "m") activeKind = "theme"
+    else if (t === "b") revertLook()
+    else if (t === "y") undoDrop()
+    else if (t === "n") startRename(false)
+    else if (t === "N") startRename(true)
+    else if (t === "K") startNewCat()
+    else if (t === "M") { if (k === "color") nudgeCustom(2, 1); else startMove(false) }
+    else if (t === "m") nudgeCustom(2, -1)
     else if (t === "s") toggleSection("screen")
     else if (t === "S") startShare()
     else if (t === "i") openDialog("import", "", 0)
@@ -2779,22 +3395,23 @@ Item {
     else if (t === "c") toggleSection("mouse")
     else if (t === "x") setShiftOnly(!shiftOnly)
     else if (t === "p") togglePause()
-    else if (t === "]" || t === "=" || t === "+") nudgeStrength(5)
-    else if (t === "[" || t === "-") nudgeStrength(-5)
+    else if (t === "]" || t === "=" || t === "+") nudgeStrength(keyShift ? 1 : 5)
+    else if (t === "[" || t === "-") nudgeStrength(keyShift ? -1 : -5)
     else if (t === "}") nudgeStrength(1)
     else if (t === "{") nudgeStrength(-1)
     else if (t === "d") resetStrength()
     else if (t === ")") { if (focusKind === "wall" && wallOn) setWallReact(wallReact + 10) }
     else if (t === "(") { if (focusKind === "wall" && wallOn) setWallReact(wallReact - 10) }
-    else if (t === "v") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed - 10); else if (focusKind === "mouse" && mouseOn) setMouseSpeed(mouseSpeed - 10) }
-    else if (t === "V") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed + 10); else if (focusKind === "mouse" && mouseOn) setMouseSpeed(mouseSpeed + 10) }
-    else if (t === "z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom - 10); else if (focusKind === "mouse" && mouseOn) setMouseSize(mouseSize - 10) }
-    else if (t === "Z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom + 10); else if (focusKind === "mouse" && mouseOn) setMouseSize(mouseSize + 10) }
+    else if (t === "v") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed - 10); else if (focusKind === "mouse" && mouseOn) setMouseSpeed(mouseSpeed - 10); else nudgeCustom(1, -1) }
+    else if (t === "V") { if (focusKind === "wall" && wallOn) setWallSpeed(wallSpeed + 10); else if (focusKind === "mouse" && mouseOn) setMouseSpeed(mouseSpeed + 10); else nudgeCustom(1, 1) }
+    else if (t === "z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom - 10); else if (focusKind === "mouse" && mouseOn) setMouseSize(mouseSize - 10); else nudgeCustom(0, -1) }
+    else if (t === "Z") { if (focusKind === "wall" && wallOn) setWallZoom(wallZoom + 10); else if (focusKind === "mouse" && mouseOn) setMouseSize(mouseSize + 10); else nudgeCustom(0, 1) }
     else if (t === "e") setFsPause(!fsPauseOn)
-    else if (t === ".") nudgeMix(5)
-    else if (t === ",") nudgeMix(-5)
+    else if (t === ".") nudgeMix(keyShift ? 1 : 5)
+    else if (t === ",") nudgeMix(keyShift ? -1 : -5)
     else if (t === ">") nudgeMix(1)
     else if (t === "<") nudgeMix(-1)
+    else if (t === "a") mixSelected()
     else if (t === "t") toggleMixMode()
     else if (t === "D") resetMix()
     else if (t === "\b") clearMix()
@@ -2802,7 +3419,7 @@ Item {
       if (focusKind === "wall" && wallReactorOn) wallSec.focusTarget()
       else { activeKind = "color"; colorSec.focusHex() }
     }
-    else if (t === "U") toggleCustomFav()
+    else if (t === "B") { if (k === "color") toggleCustomFav() }
     else if (t >= "1" && t <= "9") s.gotoCat(parseInt(t) - 1)
   }
 
@@ -2825,6 +3442,10 @@ Item {
     function wallpaper(name: string): void { root.setWall(name === "off" ? "" : name, true) }
     function sections(mode: string): void { root.setSections(mode) }
     function windows(args: string): void { root.winRun(args.split(" ").filter(function(a) { return a !== "" })) }
+    function themeMenu(): string { var s = themeSec; return "open=" + root.popupOpen + " cat=" + (s.curCat ? s.curCat.id : "") + " catIdx=" + s.catIdx + " nCmd=" + s.nCmd + " item=" + s.itemIdx + " items=" + s.curItems.length + " col=" + s.col + " scroll=" + Math.round(s.listY) + " catscroll=" + Math.round(s.catY) + " jumps=" + s.topJumps + " rows=" + s.visibleRows + " chrome=" + Math.round(root.chromeH) + " load=" + Math.round(loadBox.implicitHeight) + " loadH=" + Math.round(root.loadH) + " sel=" + (s.selected ? s.selected.label : "") }
+    function hints(): string { return (root.keyHints ? "on" : "off") + " strip=" + Math.round(root.stripShown ? hintStrip.height : 0) + " tiny=" + root.tinyScreen + " rows=" + root.rowsFit + " dense=" + root.denseHints + " need=" + Math.round(body.implicitHeight) + " room=" + Math.round(root.cardRoom) + " preview=" + (root.keyPreview ? "on" : "off") + " slashcap=" + (slashCap.visible && slashCap.width > 0) + " f1cap=" + (f1Cap.visible && f1Cap.width > 0) + " f1dim=" + (f1Cap.opacity < 1) + " focus=" + root.focusKind + " row2=" + (root.stripShown && focusFlow.visible) + " chrome=" + Math.round(root.chromeBase) + " extra=" + Math.round(root.maxExtra) + " measure=" + Math.round(hintMeasure.height) + " open=" + root.popupOpen + " legend=" + (root.stripShown && focusFlow.visible && root.focusHints.some(function(h) { return h.legend === true })) + " legendtext=" + root.flagLegend.t.replace(/ /g, "_") + " fkeys=" + root.focusHints.filter(function(h) { return h.legend !== true }).map(function(h) { return h.k.join("+") }).join(",") + " ekeys=" + root.everywhereHints.map(function(h) { return h.k.join("+") }).join(",") }
+    function custom(): string { return "hex=" + root.customHex + " h=" + root.customH.toFixed(3) + " s=" + root.customS.toFixed(3) + " v=" + root.customV.toFixed(3) + " on=" + root.customActive + " railcaps=" + colorSec.railCaps }
+    function look(): string { return root.originLine === "" ? "none" : (root.lookChanged ? "changed|" : "same|") + root.originName }
     function theme(which: string): void { if (which === "save") root.saveTheme(); else root.applyTheme(root.themeAt(which), true) }
     function themeRename(which: string, name: string): void { var it = root.themeAt(which); if (it) root.renameTheme(it.id, name) }
     // old names, kept so existing key bindings keep working
@@ -2842,6 +3463,7 @@ Item {
 
   Component.onCompleted: {
     refreshAi()
+    builtinTimer.restart()
     Quickshell.execDetached(["python3", root.path("bin/perf-log"), "run"])
     lister.running = true
     resolver.running = true
@@ -2872,6 +3494,7 @@ Item {
     text: root.barGlyph
     active: !root.paused && (root.shaderOn || root.colorOn || root.wallOn || root.mouseOn || root.winAnyOn)
     tooltipText: "OmaShaders" + (root.paused ? " (paused)" : "") + "\nScreen: " + (root.shaderOn ? root.current + " " + root.fxStrength + "%" : "off")
+                 + (root.originLine !== "" ? "\nTheme: " + root.originName + (root.lookChanged ? " (changed)" : "") : "")
                  + "\nColor: " + (root.colorOn ? root.colorName(root.colorCurrent) + " " + root.colStrength + "%" : "off")
                  + "\nWallpaper effect: " + (root.wallOn ? root.wallLabel(root.wallShown) : "off")
                  + "\nWindows: " + (root.winAnyOn ? root.winOwnText() + [root.winEffect, root.winColor, root.winFrame].filter(function(x) { return x !== "" }).join(" + ") : "off")
@@ -2920,6 +3543,7 @@ Item {
     // toggles (menu filters) are outlined and fill in when on; actions are solid, bold and centred
     property bool toggle: false
     property bool checked: false
+    property var keys: []
     signal clicked()
     width: parent ? parent.width : 0
     height: Style.space(28)
@@ -2933,7 +3557,7 @@ Item {
     Text {
       anchors.left: parent.left
       anchors.leftMargin: Style.space(10)
-      anchors.right: parent.right
+      anchors.right: rowKeys.visible ? rowKeys.left : parent.right
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       horizontalAlignment: row.toggle ? Text.AlignLeft : Text.AlignHCenter
@@ -2945,6 +3569,14 @@ Item {
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.body
       font.bold: !row.toggle
+    }
+    HotKey {
+      id: rowKeys
+      visible: root.keyHints && row.keys.length > 0
+      keys: row.keys
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
     }
     MouseArea {
       id: mouse
@@ -2967,6 +3599,7 @@ Item {
     property int defaultValue: 100
     property bool live: true
     property bool lit: false
+    property var keyGroups: []
     property bool dragging: false
     property int dragValue: 0
     readonly property int shown: (dragging || prHold.running) ? dragValue : value
@@ -2999,9 +3632,16 @@ Item {
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.body
     }
+    KeyCaps {
+      id: prKeys
+      anchors.left: prLabel.right
+      anchors.leftMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      groups: pr.keyGroups
+    }
     Item {
       id: prTrack
-      anchors.left: prLabel.right
+      anchors.left: prKeys.visible ? prKeys.right : prLabel.right
       anchors.leftMargin: Style.space(14)
       anchors.right: prValue.left
       anchors.rightMargin: Style.space(10)
@@ -3068,29 +3708,38 @@ Item {
     property bool special: false     // the Themes column: accent panel, bigger rows, parts as chips
     property bool inPane: false      // inside the right-hand pane: the open tab above is the title, rows fill the room left
     property string subtitle: ""
+    property string lockKind: ""   // which kind of built-in this column lists (see isLocked): its built-in rows get a lock
+    function lockMark(id) { return lockKind !== "" && root.isLocked(lockKind, id) ? root.builtinGlyph + " " : "" }
     property var rawCats: []
     readonly property bool filtering: root.query.trim() !== ""
-    readonly property var cats: {
-      if (!filtering) return rawCats
-      var terms = root.query.trim().toLowerCase().split(/\s+/)
-      var out = []
-      rawCats.forEach(function(c) {
-        if (c.action || c.id === "fav" || !c.items) return
-        var catText = String(c.label).toLowerCase()
-        var items = c.items.filter(function(it) {
-          if (it.id.charAt(0) === "@") return false
-          var hay = (it.label + " " + (it.desc || "") + " " + (it.hint || "") + " " + catText).toLowerCase()
-          return terms.every(function(t) { return hay.indexOf(t) >= 0 })
-        })
-        if (items.length > 0) out.push({ id: c.id, label: c.label, items: items, note: "" })
-      })
-      return out
+    // commands (Off, Create with AI, ...) first as one fixed block, then the categories; with a filter: "All matches" (flat) and the categories that match
+    readonly property var view: root.menuBuild(rawCats, root.query)
+    readonly property var cats: view.cats
+    readonly property int nCmd: view.nCmd
+    readonly property int matchCount: view.total
+    readonly property bool hasMatches: !filtering || view.total > 0
+    // both slices come from the one `view` object: taken from `cats` and `nCmd` separately, one of them is briefly the old value, the list of categories
+    // shrinks for a moment and the scroll position is lost
+    readonly property var cmdCats: view.cats.slice(0, view.nCmd)
+    readonly property var groupCats: view.cats.slice(view.nCmd)
+    // Themes: Save as new / Revert / Undo come and go with the look; they keep three fixed slots so nothing below them ever moves
+    readonly property var stateCmdIds: ["@saveas", "@revert", "@undo"]
+    readonly property var restCmds: special ? cmdCats.filter(function(c) { return stateCmdIds.indexOf(c.id) < 0 }) : cmdCats
+    readonly property var emptyRow: ({ id: "", label: "" })
+    function catPos(id) { for (var i = 0; i < cats.length; i++) if (cats[i].id === id) return i; return -1 }
+    // the right-hand list and the category rows are built once and only refilled: a new array of rows (the look changed, a command came or went)
+    // must not rebuild them, or the list jumps back to its top while the choice is made
+    property var shownItems: []
+    property string shownCatId: ""
+    function settleList() {
+      var id = curCat ? String(curCat.id) : ""
+      var fresh = id !== shownCatId
+      shownCatId = id
+      shownItems = curItems
+      if (fresh) list.positionViewAtBeginning()
+      showSelected()
     }
-    readonly property int matchCount: {
-      var n = 0
-      cats.forEach(function(c) { n += (c.items || []).length })
-      return n
-    }
+    readonly property bool flatList: curCat !== null && curCat.id === root.menuAllId && !special
     property string saved: ""
     property var favs: []
     property bool focused: false
@@ -3123,6 +3772,7 @@ Item {
     signal mixModeToggled()
     signal mixChosen(var item, bool keep)
     property bool hasCustom: false
+    readonly property string railCaps: hasCustom ? [railH, railS, railV].map(function(r) { return r.capsShown }).join(",") : ""
     property string customHex: ""
     property real customH: 0
     property real customS: 1
@@ -3153,8 +3803,22 @@ Item {
     function focusTarget() { targetField.forceActiveFocus(); targetField.selectAll() }
     property int col: 0
     property int catIdx: 0
-    readonly property bool hasCatIcons: { for (var i = 0; i < cats.length; i++) if (root.rowGlyph(cats[i].id) !== "") return true; return false }
+    readonly property bool hasCatIcons: { for (var i = 0; i < groupCats.length; i++) if (root.rowGlyph(groupCats[i].id) !== "") return true; return false }
     property int itemIdx: 0
+    readonly property real listY: list.contentY
+    readonly property real catY: catFlick.contentY
+    // test readout: how often a list was thrown back to its top while it was scrolled down (the menu must never do that by itself)
+    property int topJumps: 0
+    property real lastListY: 0
+    property real lastCatY: 0
+    Connections {
+      target: list
+      function onContentYChanged() { if (list.contentY < 1 && sec.lastListY > 60) sec.topJumps++; sec.lastListY = list.contentY }
+    }
+    Connections {
+      target: catFlick
+      function onContentYChanged() { if (catFlick.contentY < 1 && sec.lastCatY > 30) sec.topJumps++; sec.lastCatY = catFlick.contentY }
+    }
     property point lastPt: Qt.point(-100, -100)
     readonly property int rowH: Style.space(special ? 38 : 28)
     readonly property int rowGap: Style.space(special ? 3 : 2)
@@ -3271,16 +3935,18 @@ Item {
     function sync() {
       var ci = catOfSaved()
       if (ci >= 0) { catIdx = ci; itemIdx = indexOfSaved(ci); col = 1 }
-      else { catIdx = Math.min(defaultCat, Math.max(0, cats.length - 1)); itemIdx = 0; col = 0 }
+      else { catIdx = Math.min(nCmd + defaultCat, Math.max(0, cats.length - 1)); itemIdx = 0; col = 0 }
     }
     function resetForQuery() {
       if (!filtering) { sync(); return }
-      catIdx = 0
+      catIdx = view.allIdx >= 0 ? view.allIdx : 0
       itemIdx = 0
-      col = cats.length > 0 ? 1 : 0
+      col = view.total > 0 ? 1 : 0
     }
+    // n counts the categories only (key 1 = the first category below the commands)
     function gotoCat(n) {
-      if (n < 0 || n >= cats.length) return
+      n += nCmd
+      if (n < nCmd || n >= cats.length) return
       col = 0
       catIdx = n
       itemIdx = Math.max(0, indexOfSaved(n))
@@ -3294,12 +3960,11 @@ Item {
           itemIdx = Math.max(0, indexOfSaved(catIdx))
         } else if (curItems.length > 0) {
           itemIdx = root.clamp(itemIdx + dy, 0, curItems.length - 1)
-          pointed(selected)
+          root.keyPointed(sec)
         }
       } else if (dx > 0) {
         if (col === 0) {
-          if (curCat && curCat.action) acted(curCat.id)
-          else if (curItems.length > 0) { col = 1; itemIdx = root.clamp(itemIdx, 0, curItems.length - 1); pointed(selected) }
+          if (!(curCat && curCat.action) && curItems.length > 0) { col = 1; itemIdx = root.clamp(itemIdx, 0, curItems.length - 1); root.keyPointed(sec) }
         } else {
           return 1
         }
@@ -3311,16 +3976,13 @@ Item {
     }
     function jump(last) {
       if (col === 0) { catIdx = last ? cats.length - 1 : 0; itemIdx = Math.max(0, indexOfSaved(catIdx)) }
-      else if (curItems.length > 0) { itemIdx = last ? curItems.length - 1 : 0; pointed(selected) }
+      else if (curItems.length > 0) { itemIdx = last ? curItems.length - 1 : 0; root.keyPointed(sec) }
     }
-    function activate(keep, mix) {
+    function activate() {
       if (col === 0) {
         if (curCat && curCat.action) acted(curCat.id)
-        else if (curItems.length > 0) { col = 1; itemIdx = root.clamp(itemIdx, 0, curItems.length - 1); pointed(selected) }
-      } else if (selected) {
-        if (mix && hasMix) mixChosen(selected, keep)
-        else chosen(selected, keep)
-      }
+        else if (curItems.length > 0) { col = 1; itemIdx = root.clamp(itemIdx, 0, curItems.length - 1); root.keyPointed(sec) }
+      } else if (selected) chosen(selected, true)
     }
     // pointer events also arrive when a list scrolls under a resting mouse; only real movement counts
     function realMove(area, m) {
@@ -3332,14 +3994,30 @@ Item {
     function showSelected() {
       if (curItems.length > 0) list.positionViewAtIndex(root.clamp(itemIdx, 0, curItems.length - 1), ListView.Contain)
     }
+    // set while the selection follows its category to a new index: the categories themselves did not move, so the left scroll must not either
+    property bool followingCat: false
     function showCat() {
-      var y = catIdx * (rowH + rowGap)
+      if (followingCat || catIdx < nCmd) return
+      var y = (catIdx - nCmd) * (rowH + rowGap)
       if (y < catFlick.contentY) catFlick.contentY = y
       else if (y + rowH > catFlick.contentY + catFlick.height) catFlick.contentY = y + rowH - catFlick.height
     }
-    onCatIdxChanged: showCat()
+    onCatIdxChanged: { showCat(); var c = cats.length > 0 ? cats[root.clamp(catIdx, 0, cats.length - 1)] : null; if (c && c.id !== undefined) followCat = String(c.id) }
     onItemIdxChanged: showSelected()
-    onCurItemsChanged: Qt.callLater(showSelected)
+    // commands (Undo, Save as new, Revert, Made by AI) come and go while a theme is previewed or chosen; they sit before the categories, so every index
+    // shifts. Follow the category by its id, or the selection lands on another category and the list under it changes.
+    property string followCat: ""
+    onCatsChanged: {
+      if (followCat === "") return
+      for (var i = 0; i < cats.length; i++) {
+        if (cats[i].id !== followCat) continue
+        if (i !== catIdx) { followingCat = true; catIdx = i; followingCat = false }
+        return
+      }
+    }
+    onCurItemsChanged: Qt.callLater(settleList)
+    onCurCatChanged: Qt.callLater(settleList)
+    Component.onCompleted: settleList()
 
     Text {
       id: titleText
@@ -3489,6 +4167,124 @@ Item {
       anchors.right: parent.right
       spacing: Style.space(8)
 
+      Item {
+        id: leftPane
+        width: Math.round(sec.width * (sec.special ? 0.30 : 0.34))
+        height: sec.visibleRows * (sec.rowH + sec.rowGap)
+
+      // commands (Off, Create with AI, Surprise me, ...): one fixed block above the categories
+      Row {
+        id: stateRow
+        visible: sec.special
+        width: leftPane.width
+        height: visible ? Math.round(sec.rowH * 0.86) : 0
+        spacing: Style.space(3)
+        Repeater {
+          model: sec.stateCmdIds
+
+          Rectangle {
+            id: stBtn
+            required property string modelData
+            readonly property int gi: sec.catPos(modelData)
+            readonly property bool present: gi >= 0
+            readonly property bool selected: present && gi === sec.catIdx && sec.col === 0 && sec.focused
+            width: Math.floor((leftPane.width - 2 * stateRow.spacing) / 3)
+            height: stateRow.height
+            radius: Style.space(6)
+            opacity: present ? 1 : 0
+            color: root.fgA(stMouse.containsMouse ? 0.32 : 0.2)
+            border.width: selected ? 2 : 0
+            border.color: root.fgA(0.85)
+            readonly property string stLabel: modelData === "@saveas" ? "Save" : (modelData === "@revert" ? "Revert" : "Undo")
+            // next to a key cap the word no longer fits this narrow slot: the icon and the cap say it
+            readonly property bool stLabelFits: !stKey.visible || stFit.implicitWidth + stKey.width + Style.space(4) <= width - Style.space(8)
+            Text { id: stFit; visible: false; font.family: root.bar.fontFamily; font.pixelSize: Style.font.body * 0.9; text: root.rowGlyph(stBtn.modelData) + " " + stBtn.stLabel }
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(4)
+              Text {
+                height: Style.space(16)
+                width: Math.min(implicitWidth, stBtn.width - Style.space(8) - (stKey.visible ? stKey.width + parent.spacing : 0))
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: root.rowGlyph(stBtn.modelData) + (stLabelFits ? " " + stLabel : "")
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.9
+              }
+              HotKey { id: stKey; visible: root.keyHints && stBtn.present; small: true; keys: [stBtn.modelData === "@saveas" ? "F" : (stBtn.modelData === "@revert" ? "b" : "y")] }
+            }
+            MouseArea {
+              id: stMouse
+              anchors.fill: parent
+              enabled: stBtn.present
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                sec.focusRequested()
+                sec.catIdx = stBtn.gi
+                sec.acted(stBtn.modelData)
+              }
+            }
+          }
+        }
+      }
+
+      Flow {
+        id: cmdFlow
+        y: stateRow.visible ? stateRow.height + Style.space(3) : 0
+        width: leftPane.width
+        spacing: Style.space(3)
+        Repeater {
+          model: sec.restCmds.length
+
+          Rectangle {
+            id: cmdBtn
+            required property int index
+            readonly property var modelData: sec.restCmds[index] !== undefined ? sec.restCmds[index] : sec.emptyRow
+            readonly property int gi: sec.catPos(modelData.id)
+            readonly property bool selected: gi >= 0 && gi === sec.catIdx && sec.col === 0 && sec.focused
+            readonly property string glyph: root.rowGlyph(modelData.id)
+            width: Math.min(leftPane.width, cmdRow.implicitWidth + Style.space(20))
+            height: Math.round(sec.rowH * 0.86)
+            radius: Style.space(6)
+            color: root.fgA(cmdMouse.containsMouse ? 0.32 : 0.2)
+            border.width: selected ? 2 : 0
+            border.color: root.fgA(0.85)
+            Row {
+              id: cmdRow
+              anchors.centerIn: parent
+              spacing: Style.space(5)
+              Text {
+                id: cmdText
+                height: Style.space(16)
+                width: Math.min(implicitWidth, leftPane.width - Style.space(20) - (cmdKey.visible ? cmdKey.width + parent.spacing : 0))
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: (cmdBtn.glyph !== "" ? cmdBtn.glyph + " " : "") + String(cmdBtn.modelData.label).replace(/\s+\([^)]*\)$/, "")
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.9
+              }
+              HotKey { id: cmdKey; visible: root.keyHints && cmdBtn.modelData.key !== undefined; small: true; keys: cmdBtn.modelData.key !== undefined ? [cmdBtn.modelData.key] : [] }
+            }
+            MouseArea {
+              id: cmdMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                sec.focusRequested()
+                sec.catIdx = cmdBtn.gi
+                sec.acted(cmdBtn.modelData.id)
+              }
+            }
+          }
+        }
+      }
+
       Flickable {
         id: catFlick
         // Qt's own wheel step is tiny (~70 px a notch): move ~150 px a notch like a browser.
@@ -3500,8 +4296,9 @@ Item {
             catFlick.contentY = Math.max(catFlick.originY, Math.min(Math.max(catFlick.originY, catFlick.originY + catFlick.contentHeight - catFlick.height), catFlick.contentY - d))
           }
         }
-        width: Math.round(sec.width * (sec.special ? 0.30 : 0.34))
-        height: sec.visibleRows * (sec.rowH + sec.rowGap)
+        y: sec.nCmd > 0 ? cmdFlow.y + cmdFlow.height + Style.space(6) : 0
+        width: leftPane.width
+        height: leftPane.height - y
         contentHeight: catCol.height
         clip: true
         interactive: contentHeight > height
@@ -3513,14 +4310,15 @@ Item {
         spacing: sec.rowGap
 
         Repeater {
-          model: sec.cats
+          model: sec.groupCats.length
 
           Rectangle {
             id: catRow
-            required property var modelData
             required property int index
-            readonly property bool selected: index === sec.catIdx
-            readonly property bool hasSaved: modelData.id !== "fav" && (sec.indexOfSaved(index) >= 0 || sec.catHasMark(index))
+            readonly property var modelData: sec.groupCats[index] !== undefined ? sec.groupCats[index] : sec.emptyRow
+            readonly property int ci: index + sec.nCmd
+            readonly property bool selected: ci === sec.catIdx
+            readonly property bool hasSaved: modelData.id !== "fav" && (sec.indexOfSaved(ci) >= 0 || sec.catHasMark(ci))
             width: catCol.width
             height: sec.rowH
             radius: Style.space(6)
@@ -3544,7 +4342,8 @@ Item {
             Text {
               anchors.left: sec.hasCatIcons ? catIcon.right : parent.left
               anchors.leftMargin: sec.hasCatIcons ? Style.space(5) : Style.space(10)
-              anchors.right: marker.left
+              anchors.right: catKey.visible ? catKey.left : marker.left
+              anchors.rightMargin: catKey.visible ? Style.space(6) : 0
               anchors.verticalCenter: parent.verticalCenter
               elide: Text.ElideRight
               textFormat: Text.PlainText
@@ -3553,13 +4352,22 @@ Item {
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
             }
+            HotKey {
+              id: catKey
+              visible: root.keyHints && catRow.modelData.key !== undefined
+              small: true
+              keys: catRow.modelData.key !== undefined ? [catRow.modelData.key] : []
+              anchors.right: marker.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+            }
             Text {
               id: marker
               anchors.right: parent.right
               anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
-              text: catRow.hasSaved ? "●" : (catRow.modelData.action ? "" : "›")
+              text: (catRow.hasSaved ? "● " : "") + (catRow.modelData.badge !== undefined ? catRow.modelData.badge : (catRow.hasSaved ? "" : "›"))
               opacity: catRow.hasSaved ? 1 : 0.45
               color: root.fg
               font.family: root.bar.fontFamily
@@ -3572,13 +4380,14 @@ Item {
               cursorShape: Qt.PointingHandCursor
               onClicked: {
                 sec.focusRequested()
-                sec.catIdx = catRow.index
-                if (catRow.modelData.action) sec.acted(catRow.modelData.id)
-                else { sec.itemIdx = Math.max(0, sec.indexOfSaved(catRow.index)); sec.col = 1 }
+                sec.catIdx = catRow.ci
+                sec.itemIdx = Math.max(0, sec.indexOfSaved(catRow.ci))
+                sec.col = 1
               }
             }
           }
         }
+      }
       }
       }
 
@@ -3601,12 +4410,12 @@ Item {
         spacing: sec.rowGap
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        model: sec.curItems
+        model: sec.shownItems.length
 
         delegate: Rectangle {
           id: itemRow
-          required property var modelData
           required property int index
+          readonly property var modelData: sec.shownItems[index] !== undefined ? sec.shownItems[index] : sec.emptyRow
           readonly property bool isSecond: sec.mixLive && modelData.id === sec.mixName
           readonly property bool isSaved: modelData.id === sec.saved || sec.alsoSaved.indexOf(modelData.id) >= 0 || isSecond
           readonly property bool selected: index === sec.itemIdx
@@ -3639,7 +4448,7 @@ Item {
               verticalAlignment: Text.AlignVCenter
               elide: Text.ElideRight
               textFormat: Text.PlainText
-              text: (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? root.favGlyph + " " : (root.rowGlyph(itemRow.modelData.id) !== "" ? root.rowGlyph(itemRow.modelData.id) + " " : "")) + itemRow.modelData.label
+              text: sec.lockMark(itemRow.modelData.id) + (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? root.favGlyph + " " : (root.rowGlyph(itemRow.modelData.id) !== "" ? root.rowGlyph(itemRow.modelData.id) + " " : "")) + itemRow.modelData.label
               color: root.fg
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body * 1.05
@@ -3718,7 +4527,7 @@ Item {
             width: Math.min(implicitWidth, parent.width - Style.space(60))
             elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? root.favGlyph + " " : "") + itemRow.modelData.label
+            text: sec.lockMark(itemRow.modelData.id) + (sec.favs.indexOf(itemRow.modelData.id) >= 0 ? root.favGlyph + " " : (root.rowGlyph(itemRow.modelData.id) !== "" ? root.rowGlyph(itemRow.modelData.id) + " " : "")) + itemRow.modelData.label
             color: root.fg
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -3733,11 +4542,16 @@ Item {
             horizontalAlignment: Text.AlignRight
             elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: itemRow.isSecond ? "+ " + sec.mixMode : (itemRow.isSaved ? root.checkGlyph : (itemRow.modelData.hint || ""))
+            text: {
+              if (itemRow.isSecond) return "+ " + sec.mixMode
+              var where = sec.flatList ? (sec.view.catOf[itemRow.modelData.id] || "") : ""
+              if (where === "") return itemRow.isSaved ? root.checkGlyph : (itemRow.modelData.hint || "")
+              return (itemRow.isSaved ? root.checkGlyph + "  " : "") + where + (itemRow.modelData.hint ? "  ·  " + itemRow.modelData.hint : "")
+            }
             opacity: itemRow.isSaved ? 1 : 0.5
             color: root.fg
             font.family: root.bar.fontFamily
-            font.pixelSize: (itemRow.isSaved && !itemRow.isSecond) ? Style.font.body : Style.font.body * 0.8
+            font.pixelSize: (itemRow.isSaved && !itemRow.isSecond && !sec.flatList) ? Style.font.body : Style.font.body * 0.8
           }
           MouseArea {
             id: itemMouse
@@ -3766,7 +4580,7 @@ Item {
       }
     }
 
-    // strength slider: drag, wheel, or [ ] (5) { } (1) d (default) while this menu has focus; right-click = default
+    // strength slider: drag, wheel, or [ ] (5, with Shift 1) d (default) while this menu has focus; right-click = default
     Item {
       id: strengthRow
       visible: sec.hasStrength
@@ -3804,9 +4618,16 @@ Item {
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body
       }
+      KeyCaps {
+        id: strengthKeys
+        anchors.left: strengthLabel.right
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        groups: [["[", "]"], ["d"]]
+      }
       Item {
         id: track
-        anchors.left: strengthLabel.right
+        anchors.left: strengthKeys.visible ? strengthKeys.right : strengthLabel.right
         anchors.leftMargin: Style.space(14)
         anchors.right: strengthValue.left
         anchors.rightMargin: Style.space(10)
@@ -3868,7 +4689,7 @@ Item {
       }
     }
 
-    // mix row (Screen and Color): the second item picked with Ctrl+Enter / Ctrl+click; click the mode to flip stack / blend, t flips it from the keys, , . (< >) move the amount, D resets it, backspace removes the second
+    // mix row (Screen and Color): the second item picked with a / Ctrl+click; click the mode to flip stack / blend, t flips it from the keys, , . (< >) move the amount, D resets it, backspace removes the second
     Item {
       id: mixRow
       visible: sec.hasMix
@@ -3922,15 +4743,22 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         elide: Text.ElideRight
         textFormat: Text.PlainText
-        text: "Ctrl+⏎ or Ctrl+click adds a second " + sec.mixNoun
+        text: "a or Ctrl+click adds a second " + sec.mixNoun
         color: root.fg
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body * 0.85
       }
+      KeyCaps {
+        id: mixKeys
+        anchors.left: mixLabel.right
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        groups: sec.mixLive ? [[",", "."]] : []
+      }
       Item {
         id: mixTrack
         visible: sec.mixLive
-        anchors.left: mixLabel.right
+        anchors.left: mixKeys.visible ? mixKeys.right : mixLabel.right
         anchors.leftMargin: Style.space(14)
         anchors.right: mixValueText.left
         anchors.rightMargin: Style.space(10)
@@ -4002,6 +4830,7 @@ Item {
       width: sec.width
       height: sec.rowH
       label: "Speed"
+      keyGroups: [["v", "V"]]
       value: sec.speedValue
       maxValue: 300
       defaultValue: 100
@@ -4017,6 +4846,7 @@ Item {
       width: sec.width
       height: sec.rowH
       label: sec.hasMouseOpts ? "Size" : "Zoom"
+      keyGroups: [["z", "Z"]]
       value: sec.zoomValue
       minValue: 25
       maxValue: 300
@@ -4033,6 +4863,7 @@ Item {
       width: sec.width
       height: sec.rowH
       label: "Mouse reaction"
+      keyGroups: [["(", ")"]]
       value: sec.reactValue
       maxValue: 200
       defaultValue: 100
@@ -4207,21 +5038,27 @@ Item {
         rightPadding: Style.space(10)
         spacing: Style.space(10)
         Rail {
+          id: railH
           name: "H"
+          keys: ["z", "Z"]
           fg: root.fg; fontFamily: root.bar.fontFamily; cellW: (customRow.width - 4 * Style.space(10)) / 3; cellH: sec.rowH
           value: sec.customH
           stops: ["#ff0000", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#ff00ff", "#ff0000"]
           onMoved: function(v) { sec.focusRequested(); sec.customHsv(v, sec.customS, sec.customV) }
         }
         Rail {
+          id: railS
           name: "S"
+          keys: ["v", "V"]
           fg: root.fg; fontFamily: root.bar.fontFamily; cellW: (customRow.width - 4 * Style.space(10)) / 3; cellH: sec.rowH
           value: sec.customS
           stops: ["#ffffff", Qt.hsva(sec.customH, 1, 1, 1)]
           onMoved: function(v) { sec.focusRequested(); sec.customHsv(sec.customH, v, sec.customV) }
         }
         Rail {
+          id: railV
           name: "V"
+          keys: ["m", "M"]
           fg: root.fg; fontFamily: root.bar.fontFamily; cellW: (customRow.width - 4 * Style.space(10)) / 3; cellH: sec.rowH
           value: sec.customV
           stops: ["#000000", Qt.hsva(sec.customH, sec.customS, 1, 1)]
@@ -4231,8 +5068,8 @@ Item {
     }
 
     Text {
-      visible: sec.filtering && sec.cats.length === 0
-      x: Style.space(10)
+      visible: sec.filtering && sec.matchCount === 0
+      x: catCol.width + panes.spacing + Style.space(10)
       y: titleText.height + Style.space(8)
       textFormat: Text.PlainText
       text: "No matches"
@@ -4275,11 +5112,9 @@ Item {
       blocked: searchField.activeFocus || colorSec.editing || wallSec.editing
       onTabRequested: function(dir) { root.cycleKind(dir) }
       onDeleteRequested: root.handleText("x")
-      onReturnRequested: root.viaEnter = true
       onActivateRequested: {
         if (root.winPickOpen) root.pickWinApp(root.winAppItems[winSec.pickerIdx])
-        else root.activeSec.activate(!root.viaEnter, root.ctrlDown)
-        root.viaEnter = false
+        else root.activeSec.activate()
       }
       onCloseRequested: { if (wn.open) wn.close(); else if (root.winPickOpen) root.winPickOpen = false; else if (root.query !== "") root.clearSearch(); else root.close() }
       onTextKey: function(t) { root.handleText(t) }
@@ -4287,11 +5122,13 @@ Item {
       Item {
         id: shiftWatcher
         Keys.onPressed: function(event) {
-          root.ctrlDown = (event.modifiers & Qt.ControlModifier) !== 0
-          if (event.key === Qt.Key_Shift) root.setMenuShift(true)
+          root.keyShift = (event.modifiers & Qt.ShiftModifier) !== 0
+          if (event.key === Qt.Key_F1) { root.toggleKeyHints(); event.accepted = true }
+          else if (event.key === Qt.Key_F2) { root.toggleKeyPreview(); event.accepted = true }
+          else if (event.key === Qt.Key_Shift) root.setMenuShift(true)
         }
         Keys.onReleased: function(event) {
-          root.ctrlDown = (event.modifiers & Qt.ControlModifier) !== 0
+          root.keyShift = (event.modifiers & Qt.ShiftModifier) !== 0
           if (event.key === Qt.Key_Shift) root.setMenuShift(false)
         }
       }
@@ -4318,7 +5155,8 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: Style.space(4)
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(implicitWidth, header.width - pauseBtn.width - fsBtn.width - wn.width - 4 * Style.space(8))
+            visible: width > Style.space(60)
+            width: Math.max(0, Math.min(implicitWidth, header.width - pauseBtn.width - fsBtn.width - wn.width - (wnKey.visible ? wnKey.width + Style.space(8) : 0) - capRow.width - Style.space(14) - 4 * Style.space(8)))
             elide: Text.ElideRight
             textFormat: Text.PlainText
             text: root.paused ? "Effects are off. Press p" + (root.panicKey !== "" ? " or " + root.panicKey : "") + " to bring them back."
@@ -4332,21 +5170,28 @@ Item {
             id: pauseBtn
             anchors.left: pauseHint.right
             anchors.leftMargin: Style.space(10)
-            width: pauseLabel.implicitWidth + Style.space(32)
+            width: pauseRow.implicitWidth + Style.space(32)
             height: header.height
             radius: Style.space(6)
             color: root.fgA(root.paused ? (pauseMouse.containsMouse ? 0.4 : 0.32) : (pauseMouse.containsMouse ? 0.3 : 0.2))
             border.width: 1
             border.color: root.fgA(root.paused ? 0.9 : 0.45)
-            Text {
-              id: pauseLabel
+            Row {
+              id: pauseRow
               anchors.centerIn: parent
-              textFormat: Text.PlainText
-              text: root.paused ? "󰐊  PAUSED  ·  resume (p)" : "󰏤  Pause all effects  (p)"
-              color: root.fg
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
+              spacing: Style.space(8)
+              Text {
+                id: pauseLabel
+                height: Style.space(22)
+                verticalAlignment: Text.AlignVCenter
+                textFormat: Text.PlainText
+                text: root.paused ? "󰐊  PAUSED  ·  resume" : "󰏤  Pause all effects"
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+              HotKey { visible: root.keyHints; keys: ["p"]; strong: true }
             }
             MouseArea {
               id: pauseMouse
@@ -4360,12 +5205,30 @@ Item {
             id: fsBtn
             anchors.left: pauseBtn.right
             anchors.leftMargin: Style.space(8)
-            width: Style.space(250)
+            width: Math.max(Style.space(150), Math.min(Style.space(250), capRow.x - pauseBtn.width - Style.space(32)))
             height: header.height
             toggle: true
             checked: root.fsPauseOn
-            label: (root.fsPauseOn ? root.boxOn : root.boxOff) + " 󰊓 Pause in fullscreen (e)"
+            label: (root.fsPauseOn ? root.boxOn : root.boxOff) + " 󰊓 Pause in fullscreen"
+            keys: ["e"]
             onClicked: root.setFsPause(!root.fsPauseOn)
+          }
+          Row {
+            id: capRow
+            anchors.right: wnKey.visible ? wnKey.left : wn.left
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(10)
+            HeaderCap { id: f1Cap; cap: "F1"; label: "hotkeys"; lit: root.keyHints; onClicked: root.toggleKeyHints() }
+            HeaderCap { id: f2Cap; cap: "F2"; label: "live preview"; lit: root.keyPreview; onClicked: root.toggleKeyPreview() }
+          }
+          HotKey {
+            id: wnKey
+            visible: root.keyHints
+            keys: ["Shift+U"]
+            anchors.right: wn.left
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
           }
           WhatsNewButton {
             id: wn
@@ -4391,7 +5254,9 @@ Item {
             width: searchRow.width - matchText.width - searchRow.spacing
             height: searchRow.height
             verticalPadding: Style.space(2)
-            placeholderText: "name this theme, ⏎ keeps it, empty = automatic name, esc cancels"
+            placeholderText: root.catMode === "new" ? "name the new category, ⏎ creates it, esc cancels"
+                           : (root.catMode === "move" ? "category for this theme: type a name, Tab or ↑ ↓ picks one, ⏎ moves it, empty = usual place, esc cancels"
+                           : (root.renameDup ? "name for the copy, ⏎ makes it, esc cancels" : "name this theme, ⏎ keeps it, empty = automatic name, esc cancels"))
             foreground: root.fg
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -4399,15 +5264,24 @@ Item {
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Escape) { root.finishRename(false); event.accepted = true }
               else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.finishRename(true); event.accepted = true }
+              else if (root.catMode === "move" && (event.key === Qt.Key_Tab || event.key === Qt.Key_Down)) { root.cycleCatField(1); event.accepted = true }
+              else if (root.catMode === "move" && (event.key === Qt.Key_Backtab || event.key === Qt.Key_Up)) { root.cycleCatField(-1); event.accepted = true }
             }
+          }
+          Item {
+            id: slashCap
+            visible: !root.renaming && root.keyHints
+            width: slashKey.width
+            height: searchRow.height
+            HotKey { id: slashKey; keys: ["/"]; anchors.verticalCenter: parent.verticalCenter }
           }
           PlainField {
             id: searchField
             visible: !root.renaming
-            width: searchRow.width - matchText.width - searchRow.spacing
+            width: Math.min(Style.space(300), searchRow.width - clearBtn.width - matchText.width - (slashCap.visible ? slashCap.width + searchRow.spacing : 0) - 2 * searchRow.spacing)
             height: searchRow.height
             verticalPadding: Style.space(2)
-            placeholderText: "/  filter themes and effects   (Tab or ⏎ = go to the results, then j k ⏎)"
+            placeholderText: root.keyHints ? "filter themes and effects" : "/  filter themes and effects"
             foreground: root.fg
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -4420,12 +5294,36 @@ Item {
               else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) { root.leaveSearch(); event.accepted = true }
             }
           }
+          Rectangle {
+            id: clearBtn
+            visible: !root.renaming
+            width: Style.space(76)
+            height: searchRow.height
+            radius: Style.space(6)
+            color: root.fgA(clearMouse.containsMouse && root.query !== "" ? 0.32 : 0.2)
+            opacity: root.query !== "" ? 1 : 0.4
+            Text {
+              anchors.centerIn: parent
+              textFormat: Text.PlainText
+              text: "✕  Clear"
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body * 0.9
+            }
+            MouseArea {
+              id: clearMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: root.query !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: if (root.query !== "") root.clearSearch()
+            }
+          }
           Text {
             id: matchText
             width: Style.space(90)
             height: searchRow.height
             verticalAlignment: Text.AlignVCenter
-            horizontalAlignment: Text.AlignRight
+            horizontalAlignment: Text.AlignLeft
             textFormat: Text.PlainText
             text: root.query.trim() === "" ? "" : root.matchTotal() + " found"
             opacity: 0.6
@@ -4479,13 +5377,14 @@ Item {
 
           SectionMenu {
             id: themeSec
+            lockKind: "theme"
             width: body.themeW
             title: "Themes"
             icon: root.kindIcon("theme")
             special: true
-            subtitle: root.themeItems.length + " looks"
+            subtitle: root.lookChanged ? root.originName + " (changed)" : root.themeItems.length + " looks"
             rawCats: root.themeCats
-            saved: root.themeNowId
+            saved: (root.lookChanged || applyGuard.running) ? root.originLine : root.themeNowId
             favs: []
             focused: root.focusKind === "theme"
             defaultCat: 0
@@ -4585,6 +5484,7 @@ Item {
                 spacing: root.paneGap
               SectionMenu {
                 id: screenSec
+                lockKind: "screen"
                 inPane: true
                 visible: root.showScreen
                 chips: root.chipsOf("screen")
@@ -4620,6 +5520,7 @@ Item {
 
               SectionMenu {
                 id: colorSec
+                lockKind: "color"
                 inPane: true
                 visible: root.showColor
                 chips: root.chipsOf("color")
@@ -4665,6 +5566,7 @@ Item {
 
               SectionMenu {
                 id: wallSec
+                lockKind: "wall"
                 inPane: true
                 visible: root.showWall
                 chips: root.chipsOf("wall")
@@ -4714,6 +5616,7 @@ Item {
 
               SectionMenu {
                 id: mouseSec
+                lockKind: "mouse"
                 inPane: true
                 visible: root.showMouse
                 chips: root.chipsOf("mouse")
@@ -4744,6 +5647,7 @@ Item {
 
               SectionMenu {
                 id: winSec
+                lockKind: "win"
                 inPane: true
                 visible: root.showWin
                 chips: root.chipsOf("win")
@@ -4805,12 +5709,32 @@ Item {
           }
         }
 
+        Rectangle { visible: root.stripShown; width: body.width; height: 1; color: root.fgA(0.2) }
+
+        // hotkey hints (F1 hides them): keys are drawn as caps so they stand out from their descriptions
+        Column {
+          id: hintStrip
+          visible: root.stripShown
+          width: body.width
+          HintFlow { id: everywhereFlow; width: body.width; hints: root.denseHints ? root.everywhereShort : root.everywhereHints }
+          HintFlow { id: focusFlow; width: body.width; visible: !root.denseHints; hints: root.focusHints }
+        }
+        // never shown: measures the full strip so a small screen can drop the second row
+        Column {
+          id: hintMeasure
+          visible: false
+          width: body.width
+          HintFlow { width: body.width; hints: root.everywhereHints }
+          HintFlow { width: body.width; hints: root.focusHints }
+        }
+
         Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
 
         // what is on and what it costs: the answer to "why is my system slow?"
         Column {
           id: loadBox
           width: body.width
+          height: root.loadH
           spacing: Style.space(3)
 
           Row {
@@ -4919,7 +5843,7 @@ Item {
             var cc = root.focusKind === "theme" ? root.activeSec.curCat : null
             if (cc && cc.job !== undefined) return root.jobTip(cc.job)
             var it = root.activeSec.selected
-            if (it) return root.kindTitle(root.focusKind) + " · " + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
+            if (it) return root.kindTitle(root.focusKind) + " · " + (root.activeSec.lockMark(it.id) !== "" ? root.builtinGlyph + " Built in, " + (root.devSwitch ? "yours to edit" : "locked (Duplicate to change)") + " · " : "") + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
             return "Move to an item for details"
           }
           color: root.fg
@@ -4927,117 +5851,6 @@ Item {
           font.pixelSize: Style.font.body
         }
 
-        Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
-
-        // hotkeys: folded away behind one button (or the ? key); keys are drawn as caps so they stand out from their descriptions
-        Column {
-          id: keyArea
-          width: body.width
-          spacing: Style.space(3)
-
-        Row {
-          id: keyToggleRow
-          width: keyArea.width
-          height: Style.space(28)
-          spacing: Style.space(10)
-          MenuRow {
-            id: keyToggle
-            width: Style.space(230)
-            toggle: true
-            checked: root.keysOpen
-            label: (root.keysOpen ? "▾ " : "▸ ") + "Hotkeys  (?)"
-            onClicked: root.keysOpen = !root.keysOpen
-          }
-          Text {
-            height: keyToggleRow.height
-            verticalAlignment: Text.AlignVCenter
-            textFormat: Text.PlainText
-            text: "Move: arrows · Open: s C w c W · Pause everything: p" + (root.panicKey !== "" ? " or " + root.panicKey + " anywhere" : "") + " · Close: Esc"
-            opacity: 0.8
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 0.9
-          }
-        }
-
-        Item {
-          id: keySheet
-          visible: root.keysOpen
-          width: body.width
-          implicitHeight: root.denseKeys ? denseFlow.implicitHeight : keyBox.implicitHeight
-          height: implicitHeight
-
-        Flow {
-          id: denseFlow
-          visible: root.denseKeys
-          width: body.width
-          leftPadding: Style.space(10)
-          Repeater {
-            model: root.denseKeys ? root.denseKeyList : []
-            delegate: Item {
-              required property var modelData
-              width: denseKey.width + Style.space(modelData.head === true ? 6 : 12)
-              height: denseKey.height
-              HotKey {
-                id: denseKey
-                keys: parent.modelData.k
-                label: parent.modelData.t
-                strong: parent.modelData.strong === true || parent.modelData.head === true
-              }
-            }
-          }
-        }
-
-        Column {
-          id: keyBox
-          visible: !root.denseKeys
-          width: body.width
-          spacing: Style.space(3)
-
-          Repeater {
-            model: root.hotkeyGroups
-            delegate: Row {
-              id: keyGroup
-              required property var modelData
-              width: keyBox.width
-              spacing: Style.space(6)
-              Text {
-                id: groupName
-                width: Style.space(120)
-                height: Style.space(24)
-                leftPadding: Style.space(10)
-                verticalAlignment: Text.AlignVCenter
-                textFormat: Text.PlainText
-                text: keyGroup.modelData.name
-                color: root.fg
-                opacity: 0.8
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.body * 0.85
-                font.bold: true
-              }
-              Flow {
-                width: keyGroup.width - groupName.width - keyGroup.spacing
-                spacing: 0
-                Repeater {
-                  model: keyGroup.modelData.keys
-                  delegate: Item {
-                    required property var modelData
-                    width: hotKey.width + Style.space(16)
-                    height: hotKey.height
-                    HotKey {
-                      id: hotKey
-                      keys: parent.modelData.k
-                      label: parent.modelData.t
-                      strong: parent.modelData.strong === true
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        }
-        }
       }
     }
   }

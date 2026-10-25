@@ -53,6 +53,27 @@ def main():
     rc, t = run([sys.executable, os.path.join(plug, "bin", "oms-delete"), "rm", "theme", "--line", abyss, "--yes", "--json"], env)
     check(rc == 1 and json.loads(t)["refused"] and open(themes).read() == before, "built-in theme refused by line (the menu's call)")
 
+    # the menu's lock markers come from `oms-delete builtin`
+    od = os.path.join(plug, "bin", "oms-delete")
+    rc, t = run([sys.executable, od, "builtin", "--json"], env)
+    d = json.loads(t)
+    check(rc == 0 and d["ok"] and d["dev"] is False and sorted(d["themes"]) == sorted(lines), "builtin: every shipped theme line is listed, no dev switch")
+    check(all(d["elements"][k] for k in ("shader", "color", "wall", "mouse", "frame")), "builtin: shipped effects of every kind are listed")
+    open(themes, "a").write(own + "\n")
+    rc, t = run([sys.executable, od, "builtin", "--json"], env)
+    check(own not in json.loads(t)["themes"], "builtin: my own theme is not marked")
+    open(themes, "w").write("\n".join(lines + [own]) + "\n")
+    open(os.path.join(state, "dev-export"), "w").close()
+    rc, t = run([sys.executable, od, "builtin", "--json"], env)
+    check(json.loads(t)["dev"] is True, "builtin: the author's dev-export switch is reported")
+    os.remove(os.path.join(state, "dev-export"))
+    gen = os.path.join(state, "generated")
+    os.makedirs(gen, exist_ok=True)
+    open(os.path.join(gen, "ai-mine.glsl"), "w").write("// mine\n")
+    rc, t = run([sys.executable, od, "builtin", "--json"], env)
+    check("ai-mine" not in json.loads(t)["elements"]["shader"], "builtin: an effect the AI made for me is not marked")
+    shutil.rmtree(gen, ignore_errors=True)
+
     # themes: my own
     rc, t = run([om, "theme", "rm", str(n_own)], env)
     check(rc == 2 and "Delete theme My look?" in t and "--yes" in t and open(themes).read() == before, "own theme without --yes only prompts")

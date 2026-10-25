@@ -83,12 +83,16 @@ def pick_turn(request, s, path, wh, ch, cat):
             "usage": u, "new": [], "fell_back": []}
 
 
-def turn(message, invent=False, wh="", current=False, progress=lambda m: None, new=False, subtle=False, parts=None, rich=False, rounds=None, genre="", surprise=False, sprites=False):
+def turn(message, invent=False, wh="", current=False, progress=lambda m: None, new=False, subtle=False, parts=None, rich=False, rounds=None, genre="", surprise=False, sprites=False, only=""):
     """one chat turn -> result dict (line, changes, reply, ...); raises L.Bad for a plain-language failure"""
     message = " ".join(str(message or "").split())[:400]
     if new:
         discard()
     s = load()
+    if s is None and only:
+        rich, invent = False, True
+        if not message:
+            raise L.Bad("Describe the effect you want, for example: a slow green pulse")
     if s is None:
         if not message and not wh and not current and not (rich and surprise):
             raise L.Bad("Describe the theme you want, for example: a rainy neon night")
@@ -105,7 +109,7 @@ def turn(message, invent=False, wh="", current=False, progress=lambda m: None, n
             if m:
                 wh = m.group(1)
         s = {"v": 1, "mode": "rich" if rich else ("invent" if invent else "pick"), "wh": wh, "path": path, "theme": None, "history": [], "made": [], "turns": 0,
-             "usage": {"tokens_in": 0, "tokens_out": 0, "cost_usd": None, "calls": 0}, "subtle": bool(subtle), "parts": parts or {}, "rich": None}
+             "usage": {"tokens_in": 0, "tokens_out": 0, "cost_usd": None, "calls": 0}, "subtle": bool(subtle), "parts": parts or {}, "rich": None, "only": only or ""}
     elif not message:
         raise L.Bad("Say what to change, for example: less fog")
     if s["turns"] >= MAX_TURNS:
@@ -130,7 +134,8 @@ def turn(message, invent=False, wh="", current=False, progress=lambda m: None, n
     elif s["mode"] == "invent":  # only the first turn paints sprites; a follow-up never sends anything to the image model
         import aiinvent
         chat = None if first else {"theme": s["theme"], "history": s["history"], "desc_of": desc_of}
-        res = aiinvent.run(request, (s.get("parts") or {}) if first else {}, s["path"], s["wh"], ch, progress=progress, chat=chat, save=False, sprites=sprites and first)
+        res = aiinvent.run(request, (s.get("parts") or {}) if first else {}, s["path"], s["wh"], ch, progress=progress, chat=chat, save=False, sprites=sprites and first,
+                           only=s.get("only", ""))
     else:
         progress("Asking the AI…")
         res = pick_turn(request, s, s["path"], s["wh"], ch, cat)
@@ -153,10 +158,20 @@ def turn(message, invent=False, wh="", current=False, progress=lambda m: None, n
     out = {"ok": True, "turn": s["turns"], "mode": s["mode"], "name": clean["n"], "line": L.theme_line(clean), "changes": changes, "reply": reply,
            "note": res.get("note", ""), "notes": res.get("notes", []), "new": res.get("new", []), "fell_back": res.get("fell_back", []),
            "usage": res["usage"], "total": s["usage"], "wh": s["wh"], "provider": ch["provider"], "model": ch.get("model", "")}
+    if s.get("only"):
+        key = next(k for sl, k, _ in T.CHAT_SLOTS if sl == s["only"])
+        out.update(only=s["only"], effect=clean.get(key, ""), name=effect_name(clean.get(key, "")) or clean["n"])
     if s["mode"] == "rich":
         out.update(concept=s["rich"]["concept"], sheet=res.get("sheet", ""), steps=res.get("steps", []), scores=res.get("scores", {}), review=res.get("review", ""),
                    rounds_done=res.get("rounds_done", 0))
     return out
+
+
+def effect_name(eid):
+    try:
+        return json.load(open(G.meta_path(eid))).get("name", "")
+    except (OSError, ValueError):
+        return ""
 
 
 def used_ids(clean):
@@ -169,6 +184,8 @@ def keep(name=""):
     if not s or not s.get("theme"):
         raise L.Bad("There is no theme in this chat yet")
     clean = dict(s["theme"])
+    if s.get("only"):
+        return keep_effect(s, clean)
     if name:
         clean["n"] = L.clean_name(name) or clean["n"]
     use = used_ids(clean)
@@ -183,6 +200,25 @@ def keep(name=""):
     line, num, existed = L.save_theme(clean)
     clear()
     return {"ok": True, "name": clean["n"], "line": line, "number": num, "existed": existed, "kept": sorted(e for e in s["made"] if e in use)}
+
+
+def keep_effect(s, clean):
+    """a "Create with AI" chat for one effect: the effect is kept as the user's own, no theme is added to the list"""
+    key = next(k for sl, k, _ in T.CHAT_SLOTS if sl == s["only"])
+    eid = clean.get(key, "")
+    if not eid:
+        raise L.Bad("There is no effect in this chat yet")
+    for made in s["made"]:
+        if made == eid:
+            G.keep(made)
+        else:
+            try:
+                G.delete(made)
+            except L.Bad:
+                pass
+    clear()
+    return {"ok": True, "only": s["only"], "effect": eid, "name": effect_name(eid) or eid, "line": "", "number": 0, "existed": False,
+            "strength": (clean.get("o") or {}), "new": eid in s["made"]}
 
 
 def discard():

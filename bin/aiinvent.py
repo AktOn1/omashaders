@@ -129,7 +129,12 @@ def directions_text(directions):
     return ("# DIRECTIONS FOR PARTS (orders from the user)\n" + "\n".join(rows)) if rows else ""
 
 
-def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None, sprites=False):
+def only_rule(only):
+    return ("ONE EFFECT ONLY: the user asked for a single %s effect, not a theme. Answer with the key \"%s\" (and \"name\", \"idea\", \"note\", \"strength\" for it) "
+            "and leave out every other part. Write it as a NEW effect (shader code) unless an existing one already is exactly what was asked." % (TITLE[only].lower(), only))
+
+
+def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None, sprites=False, only=""):
     p = [names_text(cat), "# MODE"]
     if chat:
         p += ["INVENT. " + T.FOLLOWUP_RULES + " Write a new effect only for a part the request needs something that does not exist yet for; "
@@ -139,6 +144,8 @@ def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None
         p += ["INVENT. Write new effects for the parts where the idea needs something that does not exist yet; "
               "reuse an existing id where it is already right. Full theme: fill every part that helps the idea, visible at first glance, text readable.",
               "# REQUEST", request.strip() or "(no words; design from the picture)"]
+    if only:
+        p.append(only_rule(only))
     d = directions_text(directions)
     if d:
         p.append(d)
@@ -293,16 +300,16 @@ def closest_existing(slot, p, cat):
 
 
 # ------------------------------------------------------------------ estimate
-def estimate(request, directions, path, ch=None, cat=None, sprites=False):
+def estimate(request, directions, path, ch=None, cat=None, sprites=False, only=""):
     ch = ch or P.choice()
     cat = cat or L.catalog()
     pal = palette(path) if path else {"main": [], "accents": []}
-    prompt = user_prompt(cat, request, directions, pal, "", [], bool(path), None, sprites)
+    prompt = user_prompt(cat, request, directions, pal, "", [], bool(path), None, sprites, only)
     system = T.invent_text()
     img = IMAGE_TOKENS if (path and P.can_see(ch)) else 0
     t_in = (len(system) + len(prompt)) // 4 + img
     wanted = sum(1 for k in DIRECTION_KEYS if (directions or {}).get(k)) or 4
-    t_out = 400 + OUT_TOKENS_PER_PART * max(wanted, 4)
+    t_out = 400 + OUT_TOKENS_PER_PART * (1 if only else max(wanted, 4))
     est = {"tokens_in": t_in, "tokens_out": t_out, "repair_tokens_in": 900 + OUT_TOKENS_PER_PART * 2, "repair_tokens_out": OUT_TOKENS_PER_PART * 2,
            "image_tokens": img, "cost_usd": None, "note": ""}
     pr = PRICES.get(ch.get("model")) if ch["provider"] == "claude" else None
@@ -327,7 +334,7 @@ def add_usage(total, u):
     total["estimated"] = total["estimated"] or bool(u.get("estimated"))
 
 
-def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="", chat=None, save=True, sprites=False):
+def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="", chat=None, save=True, sprites=False, only=""):
     """-> result dict (see the keys at the end); raises L.Bad for a plain-language failure.
     chat = {"theme": cleaned current theme, "history": [...], "desc_of": fn} makes this a follow-up turn: only what the answer names changes,
     the theme is not saved (the chat does that on Keep) and the picture is not sent again (its palette still is).
@@ -343,6 +350,10 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
     notes = []
     if sprites and chat:
         sprites = False
+    if only and only not in SLOTS:
+        raise L.Bad("Unknown part " + only)
+    if only and only != "wallpaper":
+        sprites = False
     if not P.is_strong(ch):
         notes.append("This is a small local model. Writing new effects usually fails the safety check with these; Pick existing works better for it.")
     jpg, facts = T.picture_facts(path) if path else (None, "")
@@ -351,7 +362,7 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
     system = T.invent_text()
     if chat:
         jpg = None
-    prompt = user_prompt(cat, request, directions, pal, facts, tags, bool(jpg) and P.can_see(ch), chat, sprites)
+    prompt = user_prompt(cat, request, directions, pal, facts, tags, bool(jpg) and P.can_see(ch), chat, sprites, only)
     usage = {"tokens_in": 0, "tokens_out": 0, "cost_usd": None, "calls": 0, "estimated": False}
 
     progress("Asking the AI to invent the theme…")
@@ -369,6 +380,9 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
             ask = prompt + "\n\n# PREVIOUS ANSWER WAS REFUSED\n%s. Answer with one JSON object and nothing else." % e
     parts, bad = {}, []
     for slot in SLOTS:
+        if only and slot != only:
+            parts[slot] = ("none", "")
+            continue
         if chat and slot not in answer:
             cur = chat["theme"].get(SLOTS[slot][1], "")
             parts[slot] = ("id", cur) if cur else ("none", "")
@@ -381,7 +395,7 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
     notes += ["The AI's answer for %s was not usable and was left out." % b.split(":")[0] for b in bad]
 
     # a theme that only recolours the picture gets one round to add something that moves and answers the pointer
-    if not chat:
+    if not chat and not only:
         gaps = life_gaps(parts)
         if gaps:
             progress("The theme has nothing that moves or answers the pointer; asking the AI to add it…")
@@ -500,7 +514,7 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
     cat = L.catalog()
     if chat:
         d = dict(T.merge_answer(T.theme_as_answer(chat["theme"]), d), idea=d["idea"], note=d["note"])
-    clean, vnotes = T.finish(d, cat, wh, "follow" if chat else "full")
+    clean, vnotes = T.finish(d, cat, wh, "follow" if chat else "full", bool(only))
     notes += vnotes
     for m in made:  # a generated part must survive the cleaning, or its files would be orphans
         key = SLOTS[m["slot"]][1]

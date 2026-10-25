@@ -376,7 +376,10 @@ def run(jid):
         update(jid, state="done", finished=now(), result=res, history=hist, turn=res.get("turn", cur.get("turn", 0) + 1), progress="Done", error="", step=max(step, 1),
                steps_total=max(cur.get("steps_total", 0), step))
         name = res.get("name") or "Your theme"
-        notify("OmaShaders: your theme is ready", "“%s” is ready. Open OmaShaders, Themes, to save, change or discard it." % name)
+        if res.get("only"):
+            notify("OmaShaders: your effect is ready", "“%s” is ready. Open OmaShaders to keep, change or discard it." % name)
+        else:
+            notify("OmaShaders: your theme is ready", "“%s” is ready. Open OmaShaders, Themes, to save, change or discard it." % name)
     else:
         msg = (res.get("error") or " ".join(tail) or "The AI run failed").strip()[:400]
         update(jid, state="failed", finished=now(), error=msg, progress="Failed")

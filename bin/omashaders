@@ -539,6 +539,8 @@ case "${1:-}" in
   listall) # NAME<TAB>static|animated<TAB>Category<TAB>description
     declare -A PN # measured cost (bin/perf-log report) appended to the description of effects that are not light
     while IFS=$'\t' read -r pk pn pr pc _; do [ "$pr" = light ] || PN["$pk:$pn"]=" [measured: $pr, +$pc% GPU]"; done < "$STATE_DIR/perf-summary.tsv" 2>/dev/null
+    declare -A BADFX # generated wallpaper / cursor effects whose compiled shader is unusable (bin/fxcheck.py); they stay listed, marked, so they can still be deleted
+    while read -r b; do [ -n "$b" ] && BADFX["$b"]=" [cannot run on this computer]"; done < <(python3 "$ROOT/bin/fxcheck.py" bad "$GDIR" "$STATE_DIR" 2>/dev/null)
     for f in "$DIR"/*.frag "$GDIR"/screen/*.frag; do
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; is_animated "$f" && kind=animated
@@ -562,14 +564,14 @@ case "${1:-}" in
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag); kind=static; [ "$(sed -n 's|^// motion: *||p' "$f" | head -1)" = yes ] && kind=motion
       cat=$(sed -n 's|^// category: *||p' "$f" | head -1); desc=$(sed -n 's|^// desc: *||p' "$f" | head -1)
-      printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[cursor:$n]}"
+      printf '%s\t%s\t%s\t%s\tmouse\n' "$n" "$kind" "${cat:-Other}" "$desc${PN[cursor:$n]}${BADFX[$n]:-}"
     done
     for f in "$ROOT"/wallpaper-effects/*.frag "$GDIR"/wall/*.frag; do # wallpaper effects; the menu lists ones it does not know yet (// label:, // hint: and // category: header lines; the category is the 7th column)
       [ -e "$f" ] || continue
       n=$(basename "$f" .frag)
       lab=$(sed -n 's|^// label: *||p' "$f" | head -1); hint=$(sed -n 's|^// hint: *||p' "$f" | head -1)
       wcat=$(sed -n 's|^// category: *||p' "$f" | head -1)
-      printf '%s\tstatic\t%s\t%s\twall\t\t%s\n' "$n" "${lab:-$n}" "$hint${PN[wall:$n]}" "$wcat"
+      printf '%s\tstatic\t%s\t%s\twall\t\t%s\n' "$n" "${lab:-$n}" "$hint${PN[wall:$n]}${BADFX[$n]:-}" "$wcat"
     done
     for f in "$BDIR"/*.frag; do # cursor-bend shaders: they bend the real screen (bin/cursor-bend)
       [ -e "$f" ] || continue

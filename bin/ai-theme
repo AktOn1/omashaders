@@ -17,6 +17,8 @@
                                           INVENT NEW: the AI may write new effects (screen, color, wallpaper, cursor, window, window_color,
                                           frame); each one must pass the safety gate (bin/aigen.py) with your picture or it is repaired,
                                           then replaced by the closest existing effect. Passed effects wait as "pending" (Keep / Discard)
+  ai-theme chat turn "..." --only SLOT   ONE NEW EFFECT instead of a theme (SLOT = screen color wallpaper cursor window window_color frame; Quick Invent):
+                                          the "Create with AI" row of each effect list. Keep saves just that effect (no theme line), see aichat.keep.
   ai-theme make ["..."] --rich [--rounds N] [--genre TEXT] [--surprise] [--wallhaven ID | --current | --picture FILE] [--keep-out DIR]
                                           RICH: a Planner writes the concept and a brief per part, a Builder builds each part (gated, with the
                                           Rich limits), a Reviewer looks at offscreen renders over your picture and weak parts are revised (N
@@ -68,7 +70,7 @@ def availability():
 
 
 def parse_args(a):
-    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "sprites": False, "keep_out": "", "picture": "", "words": [], "rest": []}
+    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "only": "", "sprites": False, "keep_out": "", "picture": "", "words": [], "rest": []}
     it = iter(a)
     for x in it:
         if x == "--json":
@@ -100,6 +102,12 @@ def parse_args(a):
             o["genre"] = re.sub(r"[\x00-\x1f]+", " ", next(it, ""))[:80].strip()
         elif x == "--keep-out":
             o["keep_out"] = next(it, "")
+        elif x == "--only":
+            k = next(it, "").strip().lower().replace("-", "_")
+            if k not in ("screen", "color", "wallpaper", "cursor", "window", "window_color", "frame"):
+                raise L.Bad("--only needs one of screen color wallpaper cursor window window_color frame")
+            o["only"] = k
+            o["invent"] = True
         elif x == "--part":
             k, _, v = next(it, "").partition("=")
             k = k.strip().lower().replace("-", "_")
@@ -309,7 +317,7 @@ def cmd_estimate(a):
         else:
             print(e["summary"] + (" (" + e["note"] + ")" if e["note"] else ""))
         return 0
-    e = aiinvent.estimate(o["request"], o["parts"], path, ch, cat, o["sprites"])
+    e = aiinvent.estimate(o["request"], o["parts"], path, ch, cat, o["sprites"], o["only"])
     if "--json" in a:
         print(json.dumps(e))
     else:
@@ -352,7 +360,7 @@ def cmd_chat(a):
     if sub == "turn":
         o = parse_args(rest)
         res = aichat.turn(o["request"], invent=o["invent"], wh=o["wh"], current=o["current"], new="--new" in rest, subtle=o["subtle"], parts=o["parts"],
-                          rich=o["rich"], rounds=o["rounds"], genre=o["genre"], surprise=o["surprise"], sprites=o["sprites"],
+                          rich=o["rich"], rounds=o["rounds"], genre=o["genre"], surprise=o["surprise"], sprites=o["sprites"], only=o["only"],
                           progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True))
     elif sub == "keep":
         name = rest[rest.index("--name") + 1] if "--name" in rest and rest.index("--name") + 1 < len(rest) else ""

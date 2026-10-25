@@ -253,7 +253,7 @@ def raise_weak(clean, cat):
         o.pop("cur", None)
 
 
-def finish(d, cat, wh="", mode="full"):
+def finish(d, cat, wh="", mode="full", only=False):
     """mode: full (first theme, weak strengths raised), subtle (quiet), follow (a chat follow-up: the user's words win, nothing is raised)"""
     notes = []
     full = mode == "full"
@@ -274,7 +274,7 @@ def finish(d, cat, wh="", mode="full"):
         clean["o"].pop("wall", None)
     if full:
         raise_weak(clean, cat)
-        if not clean["w"] and not clean["m"]:
+        if not clean["w"] and not clean["m"] and not only:
             notes.append("This theme has nothing that moves or answers the pointer (no wallpaper overlay and no cursor), so it is mostly a tint. Ask for beams, ripples or particles to bring it to life.")
     elif follow:
         for key, slot in (("fx", "s"), ("col", "c"), ("cur", "m")):

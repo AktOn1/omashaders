@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""fx-guard: last safety net for a shell that draws effects. Standard library only.
+
+  fx-guard SHELL_PID SHELL_LOG STATE_DIR       runs until the shell is gone; prints one line per event on stdout
+
+Watches the shell's log file and memory. A shader the GPU driver rejects is retried on every frame and writes the whole
+shader into the log each time, which fills the disk (the log lives in a RAM disk) and grows the shell's memory.
+Events (read by the plugin, which then switches its effects off and shows one notice):
+  trip WHY            first sign of trouble: a shader error in the log, a fast-growing log, or fast-growing memory
+If the log or memory keeps growing after that, this tool clears the effect settings itself, and as a last resort restarts
+the shell. It never deletes anything but the effect settings, and it keeps its own log (STATE_DIR/guard.log) under 64 KB."""
+import sys
+sys.dont_write_bytecode = True
+import os
+import shutil
+import signal
+import subprocess
+import time
+
+POLL = 0.5
+WINDOW = 60.0
+LOG_GROWTH = 20 * 1024 * 1024        # bytes of log per window that counts as a flood
+LOG_ABSOLUTE = 1024 * 1024 * 1024
+RSS_GROWTH = 1536 * 1024 * 1024      # bytes of memory per window that counts as a leak
+RSS_FAST_WINDOW = 30.0
+RSS_FAST = 600 * 1024 * 1024         # a leak of this size within RSS_FAST_WINDOW (the real incident leaked 36 MB/s)
+STILL_LOG = 2 * 1024 * 1024          # growth after a trip that means switching off in the shell did not help
+STILL_RSS = 300 * 1024 * 1024
+STAGE2_AFTER = 8.0
+STAGE3_AFTER = 16.0
+QUIET_RESET = 30.0
+PATTERNS = (b"Failed to compile shader", b"Failed to build graphics pipeline", b"Failed to create shader")
+TAIL = 262144
+EFFECT_FILES = ("wp-effect", "wp-effect2", "wp-preview", "mouse")
+
+
+def rss(pid):
+    try:
+        with open("/proc/%d/statm" % pid) as f:
+            parts = f.read().split()
+        return int(parts[1]) * os.sysconf("SC_PAGE_SIZE") if int(parts[0]) > 0 else -1  # a zombie has no memory: the shell is gone
+    except (OSError, ValueError, IndexError):
+        return -1
+
+
+def size_of(path):
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return 0
+
+
+def log_line(state_dir, text):
+    p = os.path.join(state_dir, "guard.log")
+    try:
+        if size_of(p) > 65536:
+            with open(p, "rb") as f:
+                f.seek(-32768, 2)
+                keep = f.read()
+            with open(p, "wb") as f:
+                f.write(keep)
+        with open(p, "a") as f:
+            f.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    except OSError:
+        pass
+
+
+def emit(text):
+    try:
+        print(text, flush=True)
+    except (OSError, ValueError):
+        sys.exit(0)
+
+
+def scan_new(path, offset):
+    """(has_pattern, new_offset): looks only at the newest bytes, so a runaway log costs nothing to read"""
+    size = size_of(path)
+    if size < offset:
+        offset = 0
+    if size == offset:
+        return False, size
+    start = max(offset, size - TAIL)
+    try:
+        with open(path, "rb") as f:
+            f.seek(start)
+            data = f.read(TAIL)
+    except OSError:
+        return False, size
+    return any(p in data for p in PATTERNS), size
+
+
+def clear_effects(state_dir):
+    for n in EFFECT_FILES:
+        try:
+            with open(os.path.join(state_dir, n), "w"):
+                pass
+        except OSError:
+            pass
+
+
+def restart_shell(pid):
+    override = os.environ.get("FX_GUARD_RESTART")  # a test replaces the real restart with a harmless command
+    exe = shutil.which("omarchy-restart-shell")
+    if override:
+        subprocess.Popen(["sh", "-c", override], start_new_session=True)
+    elif exe:
+        subprocess.Popen([exe], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def main(argv):
+    if len(argv) != 4:
+        print(__doc__)
+        return 2
+    pid, log, state = int(argv[1]), argv[2], argv[3]
+    samples = []          # (time, log size, rss)
+    offset = size_of(log)
+    tripped_at = None
+    base = None           # (log size, rss) at the trip
+    stage = 0
+    last_growth = time.time()
+    prev = (offset, rss(pid))
+    while True:
+        now = time.time()
+        r = rss(pid)
+        if r < 0:
+            return 0
+        found, size = scan_new(log, offset)
+        offset = size
+        size += size_of(os.path.splitext(log)[0] + ".qslog")  # the shell keeps a second, binary copy of its log
+        samples.append((now, size, r))
+        while samples and now - samples[0][0] > WINDOW:
+            samples.pop(0)
+        if size > prev[0] + 65536 or r > prev[1] + 20 * 1024 * 1024:
+            last_growth = now
+        prev = (size, r)
+
+        why = ""
+        if found:
+            why = "the graphics driver reported a shader error"
+        elif size - samples[0][1] > LOG_GROWTH or size > LOG_ABSOLUTE:
+            why = "the shell log is growing very fast"
+        elif r - min(s[2] for s in samples) > RSS_GROWTH or r - min(s[2] for s in samples if now - s[0] <= RSS_FAST_WINDOW) > RSS_FAST:
+            why = "the shell memory is growing very fast"
+
+        if why and tripped_at is None:
+            tripped_at, base, stage = now, (size, r), 1
+            log_line(state, "trip: %s (log %d MB, memory %d MB)" % (why, size >> 20, r >> 20))
+            emit("trip " + why)
+        elif tripped_at is not None:
+            grew = size - base[0] > STILL_LOG or r - base[1] > STILL_RSS
+            if stage == 1 and now - tripped_at >= STAGE2_AFTER and grew:
+                stage, base = 2, (size, r)
+                clear_effects(state)
+                log_line(state, "still growing %ds after the trip: effect settings cleared" % STAGE2_AFTER)
+            elif stage == 2 and now - tripped_at >= STAGE3_AFTER and grew:
+                stage = 3
+                log_line(state, "still growing after clearing the settings: restarting the shell (log %d MB, memory %d MB)" % (size >> 20, r >> 20))
+                restart_shell(pid)
+            if now - last_growth > QUIET_RESET:
+                tripped_at, stage = None, 0
+                samples = [(now, size, r)]
+        time.sleep(POLL)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except KeyboardInterrupt:
+        sys.exit(0)

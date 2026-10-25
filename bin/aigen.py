@@ -254,7 +254,7 @@ vec3 wall(vec2 uv) { return texture(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.
 # painted sprites: the template owns the sampler and the only function that reads it (cell 0..7 of a 4 x 2 atlas, q = -1..1 inside the cell, 0.453 as pumpkin-night)
 SPRITE_BINDING = "layout(binding = 2) uniform sampler2D sprites;\n"
 SPRITE_FUNC = """vec4 sprite(int cell, vec2 q) {
-  int k = clamp(cell, 0, 7);
+  int k = int(clamp(float(cell), 0.0, 7.0));
   vec2 o = vec2(float(k - 4 * (k / 4)), float(k / 4));
   float inside = step(abs(q.x), 1.0) * step(abs(q.y), 1.0);
   return texture(sprites, (o + 0.5 + clamp(q, -1.0, 1.0) * 0.453) / vec2(4.0, 2.0)) * inside;
@@ -665,6 +665,11 @@ def compile_gate(kind, built, tmp):
             g = run([qsb, "-x", "glsl,100es", "-o", "/dev/stdout", out])
             if re.search(r"^(const )?[a-z0-9]+ _[0-9]+\[[0-9]+\] *=", g.stdout, re.M):
                 probs.append("the shader contains an array after compiling; avoid constant arrays")
+            else:
+                import fxcheck
+                why = fxcheck.driver_problem(out)  # the old GLSL variant is what many GL ES drivers compile, and they are stricter
+                if why:
+                    probs.append("GLSL compile error in the old GLSL variant (%s). Use float maths only: no clamp/min/max/mod on integers, no integer-to-float casts without float()" % why)
     return probs
 
 
@@ -1112,12 +1117,11 @@ def _install(kind, built, name, desc, prompt, fallback, kept, uses, extra=None, 
     with open(target + ".tmp", "w") as f:
         f.write(built["frag"])
     if kind in ("wallpaper", "cursor"):
-        qsb = shutil.which("qsb") or "/usr/lib/qt6/bin/qsb"
-        r = run([qsb, "--qt6", "-o", target + ".qsb.tmp", target + ".tmp"])
-        if r.returncode != 0:
+        import fxcheck
+        why = fxcheck.build_qsb(built["frag"], target + ".qsb") or fxcheck.qsb_problem(target + ".qsb")
+        if why:
             os.remove(target + ".tmp")
-            raise GateFail("qsb failed: " + clean_log(r.stderr, 300))
-        os.replace(target + ".qsb.tmp", target + ".qsb")
+            raise GateFail("qsb failed: " + clean_log(why, 300))
     os.replace(target + ".tmp", target)
     if sprites:
         shutil.copyfile(atlas, target[:-5] + ".png.tmp")

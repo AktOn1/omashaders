@@ -1507,9 +1507,48 @@ Item {
     onRunningChanged: if (!running) { root.audioLevel = 0; root.audioBass = 0; root.audioMid = 0; root.audioTreble = 0 }
   }
 
+  // ---------------------------------------------------------------- broken effects (FxSafety.qml, bin/fxcheck.py, bin/fx-guard)
+  // An effect is handed to the renderer only after FxSafety checked its compiled shader; a broken one is switched off with one notice.
+  readonly property string wantWall: root.fxHost && !root.effectsOff ? root.wallShown : ""
+  readonly property string wantWall2: root.fxHost && !root.effectsOff && root.wallPreview === "" ? root.mixSecondOf("wall") : ""
+  readonly property string wantMouse: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : ""
+  readonly property var safe: safetyHost.item
+  function fxSwitchOff(kind, name) {
+    if (kind === "mouse") {
+      if (mouseCurrent === name) applyMouse("")
+    } else if (kind === "wall2") {
+      if (wall2 === name) { wall2 = ""; writeFile(wall2File, "") }
+    } else {
+      if (wallPreview === name) { wallPreviewed = false; wallPreview = ""; writeFile(wallPreviewFile, "") }
+      if (wallSaved === name) setWall("", true)
+    }
+  }
+  function fxTripped(why) {
+    var list = [["wall", wallPreview], ["wall", wallSaved], ["wall2", wall2], ["mouse", mouseBend ? "" : mouseCurrent]].filter(function(e) { return e[1] !== "" })
+    list.forEach(function(e) { fxSwitchOff(e[0], e[1]) })
+    return list.length > 0
+  }
+  function fxFailed(kind, name, why, driver) { Qt.callLater(function() { if (safe) safe.report(kind, name, why, driver) }) } // later: report() changes the settings the caller is being evaluated from
+  FxHost {
+    id: safetyHost
+    source: root.sub("FxSafety.qml")
+    props: ({
+      pluginDir: root.script.replace(/bin\/omashaders$/, ""),
+      stateDir: root.stateDir,
+      host: root.fxHost,
+      wall: root.wantWall,
+      wall2: root.wantWall2,
+      mouse: root.wantMouse,
+      switchOff: root.fxSwitchOff,
+      trip: root.fxTripped,
+      notice: function(text) { Quickshell.execDetached(["notify-send", "-a", "OmaShaders", "-t", "8000", "-i", "dialog-warning", "Effect switched off", text]) }
+    })
+  }
+
   FxHost {
     source: root.sub("WallpaperFx.qml")
     props: ({
+      report: root.fxFailed,
       strength: root.wallStrength / 100,
       react: root.wallReact / 100,
       speed: root.wallSpeed / 100,
@@ -1521,8 +1560,8 @@ Item {
       range: root.wallRange / 100,
       targetColor: "#" + root.wallTarget,
       offScreens: root.fsOffScreens,
-      effect: root.fxHost && !root.effectsOff ? root.wallShown : "",
-      effect2: root.fxHost && !root.effectsOff && root.wallPreview === "" ? root.mixSecondOf("wall") : "",
+      effect: root.safe && root.safe.wallOkName === root.wantWall ? root.wantWall : "",
+      effect2: root.safe && root.safe.wall2OkName === root.wantWall2 ? root.wantWall2 : "",
       mixMode: root.wallMixMode,
       mixAmount: root.wallMixAmt / 100,
       wallpaper: root.wallpaperPath,
@@ -1603,9 +1642,10 @@ Item {
   FxHost {
     source: root.sub("MouseFx.qml")
     props: ({
+      report: root.fxFailed,
       strength: root.mouseStrength / 100,
       offScreens: root.fsOffScreens,
-      effect: root.fxHost && !root.effectsOff && root.mouseOn && !root.mouseBend && root.cursorLive ? root.mouseCurrent : "",
+      effect: root.safe && root.safe.mouseOkName === root.wantMouse ? root.wantMouse : "",
       motion: root.mouseMotion,
       size: root.mouseSize / 100,
       speed: root.mouseSpeed / 100,

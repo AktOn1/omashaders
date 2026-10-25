@@ -7,6 +7,7 @@ effect's `// tail: N` seconds). The effect and colour layers are merged in. Exit
 when the mouse state is no longer a bend effect, and then puts the normal screen shader back.
 """
 import glob, importlib.machinery, importlib.util, json, os, re, signal, socket, subprocess, sys, time
+sys.dont_write_bytecode = True  # a __pycache__ in the plugin folder would make the shell reload the plugin (and close the open menu)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy", "io.github.akton1.omashaders")

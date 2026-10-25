@@ -11,7 +11,7 @@ starts upward from the bottom left, runs flat through the centre, then climbs to
 opens (and types) and the pointer climbs through its right part, so a window effect reacts to it. Then everything is put back exactly (workspace, focused window, bar, pointer). The recording is
 encoded to a GIF in ~/Pictures/OmaShaders, the GIF itself is copied to the clipboard and a notification is shown.
 With --share the theme code (raw bytes from `theme-code share --format bytes`) is drawn as a data border above and
-below every frame (bin/omsborder.py), the GIF stays 960 px wide (only the frame rate is lowered to fit 5 MB) and the
+below every frame (bin/omsborder.py), the picture and border are scaled down together (not below 560 px, the code still reads) to fit 5 MB and the
 picture itself, not its path, is copied so it can be pasted into a post.
 Nothing else may be on the picture: just before and all through the recording, any other window or layer-shell surface on the
 monitor (a notification, another plugin's overlay) stops the recording with a message that names it, and no GIF is made.
@@ -34,8 +34,10 @@ DEMO_CLASS = "omashaders-demo"
 OWN_LAYERS = ("omarchy-background", "scratchpad-frame", "omarchy-bar", "wallpaper-fx", "omashaders-mouse")
 LEAD, TAIL = 0.30, 0.30  # seconds of still pointer recorded before and after the S
 MAX_BYTES = 5 * 1024 * 1024
-LADDER = [(960, 15), (800, 15), (800, 12), (640, 12), (640, 10), (480, 10)]  # (width, fps), first that fits wins
-SHARE_LADDER = [(960, 15), (960, 12), (960, 10), (960, 8), (960, 6)]  # the data border needs the full width
+# (width, fps, palette colours), first that fits wins. The frame rate stays at 12 or more as long as possible: a smooth
+# sweep at 640 px reads better than a slideshow at 960 px, and every halving of the pixels roughly halves the size.
+LADDER = [(960, 15, 128), (800, 15, 96), (800, 12, 64), (640, 12, 64), (640, 10, 48), (480, 10, 48)]
+SHARE_LADDER = [(960, 12, 64), (800, 12, 48), (720, 12, 40), (640, 12, 32), (640, 10, 32), (560, 10, 32)]
 
 
 def log(*a):
@@ -578,8 +580,8 @@ def encode(rec, out, head, share=None):
     """mp4 (or frames) -> GIF: palettegen/paletteuse, loop forever, smaller steps until it fits 5 MB.
     share = (top.png, bottom.png): stack the data border around the picture first."""
     used = None
-    for width, fps in (SHARE_LADDER if share else LADDER):
-        pal = "palettegen=max_colors=64:stats_mode=full[p]" if share else "palettegen=stats_mode=diff[p]"
+    for width, fps, colors in (SHARE_LADDER if share else LADDER):
+        pal = "palettegen=max_colors=%d:stats_mode=%s[p]" % (colors, "full" if share else "diff")
         tail = "split[a][b];[a]%s;[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" % pal
         if rec.kind == "grim":
             real_fps = max(1.0, rec.frames / max(0.1, rec.t_end - rec.t0))
@@ -588,7 +590,8 @@ def encode(rec, out, head, share=None):
             cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", "%.2f" % head, "-i", rec.file]
         if share:
             cmd += ["-loop", "1", "-framerate", str(fps), "-i", share[0], "-loop", "1", "-framerate", str(fps), "-i", share[1],
-                    "-filter_complex", "[0:v]fps=%d,scale=%d:-1:flags=lanczos[v];[1:v][v][2:v]vstack=inputs=3:shortest=1,%s" % (fps, width, tail)]
+                    "-filter_complex", "[0:v]fps=%d,scale=%d:-1:flags=lanczos[v];[1:v]scale=%d:-1:flags=area[t];[2:v]scale=%d:-1:flags=area[b];"
+                    "[t][v][b]vstack=inputs=3:shortest=1,%s" % (fps, width, width, width, tail)]
         else:
             cmd += ["-vf", "fps=%d,scale=%d:-1:flags=lanczos,%s" % (fps, width, tail)]
         cmd += ["-loop", "0", out]
@@ -935,7 +938,7 @@ def cmd_gif(a):
         out, size, used = result
         copy_gif(out)
         if share:
-            note = "%.1f MB, %d fps. The picture is copied: paste it into your post. Whoever copies it from the post can use Import theme." % (size / 1048576, used[1])
+            note = "%.1f MB, %d px wide, %d fps. The picture is copied: paste it into your post. Whoever copies it from the post can use Import theme." % (size / 1048576, used[0], used[1])
         else:
             note = "%.1f MB, %d px wide, %d fps. The GIF is copied to the clipboard: paste it into a post or chat." % (size / 1048576, used[0], used[1])
         if notes:

@@ -48,7 +48,7 @@ printf '{"id":"ai-vmdel","name":"VM Del"}\n' > "$st/generated/meta/ai-vmdel.json
 { cat "$dest/starter-themes"; printf '\nvignette||||My Own\nai-vmdel||||Uses Gone\n'; } > "$st/themes"
 sleep 6
 ipc open; sleep 3
-wtype m 2>/dev/null; sleep 1; wtype -k Right 2>/dev/null; sleep 1; shot del-1-themes
+wtype -k Right 2>/dev/null; sleep 1; shot del-1-themes
 before=$(md5sum < "$st/themes")
 wtype -k Delete 2>/dev/null; sleep 1; wtype -k Delete 2>/dev/null; sleep 2; shot del-2-builtin-Delete
 [ "$(md5sum < "$st/themes")" = "$before" ] && ok "menu: Delete on a built-in theme changed nothing" || bad "menu: built-in theme changed"

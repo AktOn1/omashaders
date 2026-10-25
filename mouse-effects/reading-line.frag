@@ -10,6 +10,7 @@ layout(std140, binding = 0) uniform buf {
   float time;
   vec2 mouse;
   vec2 res;
+  float size;
   vec4 h0;
   vec4 h1;
   vec4 h2;
@@ -42,7 +43,8 @@ vec2 segment(vec2 p, vec2 a, vec2 b) {
 void main() {
   vec2 p = qt_TexCoord0 * res;
   float d = length(p - mouse);
-  float on = onScreen();
-  float dim = 0.5 * smoothstep(36.0, 90.0, abs(p.y - mouse.y)) * on;
+  float k = max(size, 0.05);
+  float band = smoothstep(36.0 * k, 90.0 * k, abs(p.y - mouse.y));
+  float dim = 0.5 * mix(1.0, band, onScreen());
   fragColor = vec4(0.0, 0.0, 0.0, dim) * qt_Opacity;
 }

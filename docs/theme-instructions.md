@@ -1,4 +1,4 @@
-Theme guide version: 1.39.0
+Theme guide version: 1.41.0
 
 # OmaShaders theme guide
 

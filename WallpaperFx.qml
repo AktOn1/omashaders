@@ -9,6 +9,9 @@ Scope {
   id: fx
 
   property string effect: ""
+  // report(kind, name, why, driver): set by the plugin; called when the renderer refuses a shader, so the effect is switched off
+  // instead of the graphics driver retrying it on every frame (which fills the shell log and memory)
+  property var report: null
   property var offScreens: [] // names of the monitors that get no effect (they show a fullscreen window)
   function shownScreens(off) {
     var out = []
@@ -99,6 +102,12 @@ Scope {
     required property var scr
     required property var image
     property string name: ""
+    property bool dead: false // the renderer refused this shader: stop feeding it to the GPU
+    onNameChanged: dead = false
+    onStatusChanged: if (status === ShaderEffect.Error && !dead) {
+      dead = true
+      if (fx.report) fx.report(name === fx.effect ? "wall" : "wall2", name, "the graphics driver rejected the shader", true)
+    }
     property variant source
     property real zoom: 1.0
     anchors.fill: parent
@@ -130,7 +139,7 @@ Scope {
     property real mid: fx.mid
     property real treble: fx.treble
     vertexShader: Qt.resolvedUrl("wallpaper-effects/zoom.vert.qsb")
-    fragmentShader: name !== "" ? fx.shaderUrl(name) : ""
+    fragmentShader: (name !== "" && !dead) ? fx.shaderUrl(name) : ""
   }
 
   Variants {

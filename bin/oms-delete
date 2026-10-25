@@ -7,6 +7,7 @@
       KIND = screen | window | color | wallpaper | cursor | frame   (window = a window effect, any shader in shaders/)
   oms-delete check theme --line LINE | element KIND NAME [--json]     what the menu asks before it deletes
   oms-delete rm    theme --line LINE | element KIND NAME --yes [--json]
+  oms-delete builtin --json                     what is built in: the theme lines and the effect names per kind, and the dev switch (the menu draws a lock on them)
 
 Built in = shipped with the plugin: the themes in `starter-themes` (by a short hash of the whole line, no author, no user id) and
 the effect files in the plugin folder. Other users cannot delete them: "Built-in theme, cannot be deleted". The developer can: the
@@ -198,6 +199,28 @@ def cmd_list(_a, as_json):
             print("There are no saved themes yet")
 
 
+def cmd_builtin(_a, as_json):
+    lines = sorted(l for l in L.read_themes() if L.is_builtin_theme(l))
+    kinds = {}
+    for kind, (dirs, exts, _own, _slots) in LAYOUT.items():
+        names = set()
+        for d in dirs:
+            try:
+                for f in os.listdir(os.path.join(L.ROOT, d)):
+                    for e in exts:
+                        if f.endswith(e) and L.ID_RE.match(f[:-len(e)]):
+                            names.add(f[:-len(e)])
+                            break
+            except OSError:
+                pass
+        kinds[kind] = sorted(names)
+    res = {"ok": True, "dev": L.dev_switch(), "themes": lines, "elements": kinds}
+    if as_json:
+        print(json.dumps(res))
+    else:
+        print("%d built-in themes, %s" % (len(lines), ", ".join("%d %s" % (len(v), k) for k, v in kinds.items())))
+
+
 def find(a):
     """('theme', line) or ('element', kind, name) from the arguments"""
     pos = [x for x in a if not x.startswith("--")]
@@ -232,6 +255,9 @@ def main():
     try:
         if a[0] == "list":
             cmd_list(a[1:], as_json)
+            return 0
+        if a[0] == "builtin":
+            cmd_builtin(a[1:], as_json)
             return 0
         verb = {"check": "check", "rm": "rm", "delete": "rm"}.get(a[0])
         if not verb:

@@ -349,6 +349,32 @@ def run():
         aigen.GEN = os.path.join(state, "generated")
         left = aigen.listing()
         check("keep: the effect in the theme is kept, the replaced one is deleted", [m["id"] for m in left] == [gen2] and left[0]["kept"] is True, str(left) + r.stdout[-200:])
+
+        # ---------------------------------------------------------- 3c) "Create with AI" in an effect category: one new effect, no theme
+        for f in os.listdir(log):
+            os.remove(os.path.join(log, f))
+        themes_before = open(themes_file).read() if os.path.exists(themes_file) else ""
+        o_a = {"idea": "A green pulse.", "name": "Only Pulse", "screen": part("Green Pulse", new_screen("30ff60"), "sunlit", 70), "cursor": "comet", "color": "warm", "strength": {"screen": 60}}
+        o_b = {"idea": "Slower.", "screen": part("Slow Pulse", new_screen("20e050"), "sunlit", 70)}
+        for i, a_ in enumerate((o_a, o_b), 1):
+            open(os.path.join(log, "answer-%d.json" % i), "w").write(json.dumps(a_))
+        r = cli(["chat", "turn", "a slow green pulse", "--invent", "--only", "screen", "--new", "--json"], e_chat)
+        d1 = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+        check("only: one screen effect is made, the other slots stay empty", d1.get("ok") and d1.get("only") == "screen" and len(d1.get("new", [])) == 1
+              and d1.get("line", "").split("|")[1:4] == ["", "", ""] and d1["line"].split("|")[0] == d1.get("effect"), str(d1)[:400] + r.stderr[-300:])
+        p1 = open(os.path.join(log, "prompt-1.txt")).read()
+        check("only: the prompt asks for that one effect", "ONLY" in p1.upper() and "screen" in p1.lower(), p1[:300])
+        r = cli(["chat", "turn", "slower", "--json"], e_chat)
+        d2 = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+        check("only: a follow-up changes the same effect", d2.get("ok") and d2.get("only") == "screen" and d2.get("effect") != d1.get("effect"), str(d2)[:400] + r.stderr[-300:])
+        r = cli(["chat", "keep", "--json"], e_chat)
+        k = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+        aigen.GEN = os.path.join(state, "generated")
+        left = aigen.listing()
+        check("only: keep saves the effect as mine, deletes the replaced one and adds no theme", k.get("ok") and k.get("only") == "screen" and k.get("line") == ""
+              and sorted(m["id"] for m in left) == sorted([gen2, d2.get("effect")]) and all(m["kept"] for m in left) and d1.get("effect") not in [m["id"] for m in left] and (open(themes_file).read() if os.path.exists(themes_file) else "") == themes_before, str(k)[:300] + str(left))
+        r = cli(["chat", "turn", "x", "--only", "nonsense", "--new", "--json"], e_chat)
+        check("only: an unknown slot is refused", r.returncode != 0, r.stdout[-200:])
     except SkipInvent:
         pass
     finally:
