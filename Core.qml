@@ -1567,6 +1567,73 @@ Item {
   }
   function aiThemeFromWallhaven(id) { openDialog("ai", id, 0) }
 
+  // the theme's own Wallhaven picture: the capsule above the Wallpaper tab. Nothing is downloaded until the button (or H) is pressed.
+  readonly property string currentWhId: {
+    var m = /\/wallhaven-([a-z0-9]{6})\.[A-Za-z]+$/.exec(wallpaperPath)
+    return m ? m[1] : ""
+  }
+  // the theme under the cursor while the Themes list has the focus, else the theme the look came from
+  readonly property string capWh: {
+    var it = focusKind === "theme" && themeSec.selected && String(themeSec.selected.id).charAt(0) !== "@" ? themeSec.selected : null
+    return it ? ((it.opts && it.opts.wh) || "") : lineWh(originLine)
+  }
+  property var capCached: ({})
+  property string capErr: ""
+  property string capErrId: ""
+  readonly property var capState: wallCapState(capWh, capCached[capWh] === true, currentWhId, capUseProc.running && capUseProc.id === capWh, capErrId === capWh ? capErr : "")
+  readonly property string capHint: capState.kind === "set" ? "set theme wallpaper" : capState.kind === "error" ? "retry theme wallpaper" : capState.kind === "current" ? "theme wallpaper (set)" : "download theme wallpaper"
+  onCapWhChanged: capCheck()
+  function capCheck() {
+    if (capWh === "" || !popupOpen || capCached[capWh] === true) return
+    if (capCheckProc.running) { capCheckProc.again = true; return }
+    capCheckProc.id = capWh
+    capCheckProc.command = ["python3", path("bin/wallhaven"), "cached", capWh]
+    capCheckProc.running = true
+  }
+  function capMark(id, on) {
+    var m = {}
+    Object.keys(capCached).forEach(function(k) { m[k] = capCached[k] })
+    m[id] = on
+    capCached = m
+  }
+  Process {
+    id: capCheckProc
+    property string id: ""
+    property bool again: false
+    onExited: function(code) {
+      root.capMark(id, code === 0)
+      if (again) { again = false; root.capCheck() }
+    }
+  }
+  Process {
+    id: capUseProc
+    property string id: ""
+    stderr: StdioCollector { id: capUseErr; waitForEnd: true }
+    onExited: function(code) {
+      if (code === 0) {
+        root.capErrId = ""
+        root.capMark(id, true)
+        root.wallhavenUsed(id)
+        root.flash("Wallpaper set: Wallhaven " + id)
+      } else {
+        var e = String(capUseErr.text).trim().split("\n").pop().replace(/^wallhaven: /, "").replace(/ \(curl.*$/, "")
+        root.capErr = e !== "" ? e : "no answer"
+        root.capErrId = id
+        root.flash("Wallpaper not set: " + root.capErr, 5000)
+      }
+    }
+  }
+  function capAct() {
+    if (capWh === "") { flash("This theme has no Wallhaven picture"); return }
+    if (capState.kind === "current") { flash("Wallpaper is already set: Wallhaven " + capWh); return }
+    if (capUseProc.running) { flash("Still fetching Wallhaven " + capUseProc.id); return }
+    capErrId = ""
+    capUseProc.id = capWh
+    capUseProc.command = ["python3", path("bin/wallhaven"), "use", capWh]
+    capUseProc.running = true
+  }
+  function capOpenPage() { if (capWh !== "") Quickshell.execDetached(["xdg-open", "https://wallhaven.cc/w/" + capWh]) }
+
   // the theme dialog (ThemeDialog.qml: AI theme, share code, import code) is loaded the first time it opens
   property bool dlgOpen: false
   property bool dlgLoaded: false
@@ -2118,6 +2185,8 @@ Item {
   // Wallhaven picture id); applying a theme sets the ones that are there. Lines without it leave the strengths alone.
   property var themes: []
   property string themeFlash: ""
+  // wallcap:begin
+  // (pure helpers; bin/wallcapsule_selftest.py runs everything up to wallcap:end under node)
   function themeCompose(s, w, m, c, name, wf, wc, wr, opts) {
     var win = (wf || wc || wr || opts) ? true : false
     var out = [s, w, m, c]
@@ -2132,6 +2201,32 @@ Item {
     return themeCompose(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", p[5] || "", p[6] || "", p[7] || "")
   }
   function themeHasWin(line) { var p = line.split("|"); return (p[5] || p[6] || p[7]) ? true : false }
+  // the Wallhaven id kept in a theme line's 9th field ("" when there is none or it is not a well formed id)
+  function lineWh(line) {
+    var m = /(^|,)wh=([a-z0-9]{6})(,|$)/.exec(String(line || "").split("|")[8] || "")
+    return m ? m[2] : ""
+  }
+  // the same theme under another name; every other field, the 9th (numbers and Wallhaven id) included, stays as it is
+  function themeRenamed(line, name) {
+    var q = String(line).split("|")
+    return themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", name, q[5] || "", q[6] || "", q[7] || "", q[8] || "")
+  }
+  // the 9th field to save: the numbers of the look on screen, plus the theme's own Wallhaven id when the screen shows no Wallhaven picture of its own
+  function optsWithWh(opts, wh) {
+    var o = String(opts || "")
+    if (wh === "" || /(^|,)wh=/.test(o)) return o
+    return o !== "" ? o + ",wh=" + wh : "wh=" + wh
+  }
+  // the capsule above the Wallpaper tab for a theme that has a Wallhaven id: what it says and whether pressing it does anything
+  function wallCapState(wh, cached, currentId, busy, error) {
+    if (!wh) return { kind: "none", label: "", enabled: false }
+    if (busy) return { kind: "busy", label: cached ? "Setting wallpaper\u2026" : "Downloading\u2026", enabled: false }
+    if (currentId === wh) return { kind: "current", label: "Wallpaper set", enabled: false }
+    if (error !== "") return { kind: "error", label: "Wallhaven did not answer. Retry", enabled: true }
+    if (cached) return { kind: "set", label: "Set wallpaper", enabled: true }
+    return { kind: "download", label: "Download and set", enabled: true }
+  }
+  // wallcap:end
   function themeMatchesNow(line) {
     var p = line.split("|")
     var a = themeKey(p[0] || "", p[1] || "", p[2] || "", p[3] || "", "", "", "")
@@ -2474,6 +2569,11 @@ Item {
   }
   // the theme the look on now came from: when it is a built-in one, only the author may save into it; everyone else saves under a new name
   property string themeOrigin: ""
+  // the picture on screen when the look last came from a saved theme: while it is still that one, saving keeps the theme's own Wallhaven id
+  property string originWallPath: ""
+  function savedOpts() {
+    return optsWithWh(currentOpts(), themeOrigin !== "" && wallpaperPath === originWallPath ? lineWh(themeOrigin) : "")
+  }
   readonly property bool originLocked: themeOrigin !== "" && isLocked("theme", themeOrigin)
   readonly property string originName: themeOrigin !== "" ? themeItem(themeOrigin).label : ""
   // the saved theme the look came from, and whether the look on screen has drifted from it (a label only: nothing is copied until Save as)
@@ -2498,7 +2598,7 @@ Item {
   Timer { id: undoTimer; interval: 180000; onTriggered: root.undoLine = "" }
   function adoptOrigin() {
     if (themeOrigin !== "" || optsTimer.running) return
-    for (var i = 0; i < themes.length; i++) if (themeSameNow(themes[i])) { themeOrigin = themes[i]; return }
+    for (var i = 0; i < themes.length; i++) if (themeSameNow(themes[i])) { themeOrigin = themes[i]; originWallPath = wallpaperPath; return }
   }
   // put the look back to the saved theme it came from; the edits stay available with Undo
   function revertLook() {
@@ -2528,12 +2628,13 @@ Item {
     var nm = String(name || "").replace(/[|\r\n]/g, " ").trim().slice(0, 40)
     var dup = themes.filter(themeSameNow)
     if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return false }
-    var opts = currentOpts()
+    var opts = savedOpts()
     var q = key.split("|")
     if (opts !== "" || nm !== "") key = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", nm, q[5] || "", q[6] || "", q[7] || "", opts)
     themes = themes.concat([key])
     writeThemes()
     themeOrigin = key
+    originWallPath = wallpaperPath
     flash("Saved theme: " + themeItem(key).label)
     return true
   }
@@ -2544,7 +2645,7 @@ Item {
     if (originLocked && !devSwitch) { flash("Built-in themes are changed by the author only. Save under a new name instead."); return false }
     if (themeNow === "|||") { flash("Nothing to save: every effect is off"); return false }
     var q = themeNow.split("|"), o = themeOrigin.split("|")
-    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", o[4] || "", q[5] || "", q[6] || "", q[7] || "", currentOpts())
+    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", o[4] || "", q[5] || "", q[6] || "", q[7] || "", savedOpts())
     if (line === themeOrigin) { flash("Already saved: " + themeItem(line).label); return false }
     if (themes.indexOf(line) >= 0) { flash("That look is already another theme"); return false }
     var next = themes.slice()
@@ -2552,6 +2653,7 @@ Item {
     themes = next
     writeThemes()
     themeOrigin = line
+    originWallPath = wallpaperPath
     flash((originLocked ? "Replaced built-in theme: " : "Updated theme: ") + themeItem(line).label)
     return true
   }
@@ -2592,7 +2694,7 @@ Item {
     var q = id.split("|")
     if (n === "") { flash("Give the copy a name"); return false }
     if (n === (q[4] || "")) { flash("Pick a name different from the original"); return false }
-    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", n, q[5] || "", q[6] || "", q[7] || "", q[8] || "")
+    var line = themeRenamed(id, n)
     if (themes.indexOf(line) >= 0) { flash("There is already a theme named " + n); return false }
     var next = themes.slice()
     next.splice(i + 1, 0, line)
@@ -2626,8 +2728,7 @@ Item {
     var i = themes.indexOf(id)
     if (i < 0) return
     var n = String(name).replace(/[|\r\n]/g, " ").trim().slice(0, 40)
-    var q = id.split("|")
-    var line = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", n, q[5] || "", q[6] || "", q[7] || "", q[8] || "")
+    var line = themeRenamed(id, n)
     if (asCopy) {
       if (line === id || themes.indexOf(line) >= 0) { flash("Built-in theme, kept as it is"); return }
       var withCopy = themes.slice()
@@ -2655,12 +2756,12 @@ Item {
   function applyTheme(it, keep) {
     if (!it || it.id.charAt(0) === "@") return
     if (lookChanged) {
-      undoLine = themeCompose(current, wallShown, mouseCurrent, colorCurrent, "", winEffect, winColor, winFrame, currentOpts())
+      undoLine = themeCompose(current, wallShown, mouseCurrent, colorCurrent, "", winEffect, winColor, winFrame, savedOpts())
       undoOrigin = themeOrigin
       undoTimer.restart()
       flash("Changes to \"" + originName + "\" dropped. Press y to undo", 6000)
     }
-    if (themes.indexOf(it.id) >= 0) { themeOrigin = it.id; applyGuard.restart() }
+    if (themes.indexOf(it.id) >= 0) { themeOrigin = it.id; originWallPath = wallpaperPath; applyGuard.restart() }
     chooseScreen({ id: it.screen }, true)
     chooseColor({ id: it.color }, true)
     chooseMouse({ id: it.mouse }, true)
@@ -2821,7 +2922,7 @@ Item {
     { k: ["Tab"], t: "next menu" },
     { k: ["Esc"], t: "close" } ]
   // the legend for the flag that marks built-in rows (same wording as the status line under the lists); shown after the keys of every list that has such rows
-  readonly property var flagLegend: ({ legend: true, k: [builtinGlyph], t: "built in (" + (devSwitch ? "yours to edit" : "Duplicate to change") + ")" })
+  readonly property var flagLegend: ({ legend: true, k: [builtinGlyph], t: "built in (" + (devSwitch ? "edit and save yours with F" : "Duplicate to change") + ")" })
   readonly property var focusHints: {
     var k = focusKind
     if (k === "theme") {
@@ -2834,7 +2935,7 @@ Item {
               { k: ["r"], t: "random theme" },
               { k: ["R"], t: "random everything" },
               { k: ["1-9"], t: "category" },
-              { k: ["g", "G"], t: "first / last" } ].concat(lookChanged ? [] : [{ k: ["F"], t: "save as theme" }], [flagLegend])
+              { k: ["g", "G"], t: "first / last" } ].concat(lookChanged ? [] : [{ k: ["F"], t: "save as theme" }], capWh !== "" ? [{ k: ["H"], t: capHint }] : [], [flagLegend])
     }
     var out = [{ head: true, k: [], t: kindTitle(k), strong: true },
                { k: ["o"], t: "off" },
@@ -2850,6 +2951,7 @@ Item {
     if (k === "wall") out.push({ k: ["u"], t: "type a colour" })
     if (k === "mouse") out.push({ k: ["x"], t: "only with Shift" })
     out.push({ k: ["g", "G"], t: "first / last" })
+    if (capWh !== "") out.push({ k: ["H"], t: capHint })
     if (activeSec.lockKind !== "") out.push(flagLegend)
     return out
   }
@@ -3151,6 +3253,7 @@ Item {
   }
   onPopupOpenChanged: {
     if (!popupOpen) renaming = false
+    if (popupOpen) { capCached = ({}); capCheck() }
     loadHold = 0
     if (popupOpen) loadHold = loadH
     if (!popupOpen) wn.close()
@@ -3377,6 +3480,7 @@ Item {
     else if (t === "G") s.jump(true)
     else if (t === "f") toggleFav(k)
     else if (t === "F") startSave()
+    else if (t === "H") capAct()
     else if (t === "b") revertLook()
     else if (t === "y") undoDrop()
     else if (t === "n") startRename(false)
@@ -3445,6 +3549,8 @@ Item {
     function themeMenu(): string { var s = themeSec; return "open=" + root.popupOpen + " cat=" + (s.curCat ? s.curCat.id : "") + " catIdx=" + s.catIdx + " nCmd=" + s.nCmd + " item=" + s.itemIdx + " items=" + s.curItems.length + " col=" + s.col + " scroll=" + Math.round(s.listY) + " catscroll=" + Math.round(s.catY) + " jumps=" + s.topJumps + " rows=" + s.visibleRows + " chrome=" + Math.round(root.chromeH) + " load=" + Math.round(loadBox.implicitHeight) + " loadH=" + Math.round(root.loadH) + " sel=" + (s.selected ? s.selected.label : "") }
     function hints(): string { return (root.keyHints ? "on" : "off") + " strip=" + Math.round(root.stripShown ? hintStrip.height : 0) + " tiny=" + root.tinyScreen + " rows=" + root.rowsFit + " dense=" + root.denseHints + " need=" + Math.round(body.implicitHeight) + " room=" + Math.round(root.cardRoom) + " preview=" + (root.keyPreview ? "on" : "off") + " slashcap=" + (slashCap.visible && slashCap.width > 0) + " f1cap=" + (f1Cap.visible && f1Cap.width > 0) + " f1dim=" + (f1Cap.opacity < 1) + " focus=" + root.focusKind + " row2=" + (root.stripShown && focusFlow.visible) + " chrome=" + Math.round(root.chromeBase) + " extra=" + Math.round(root.maxExtra) + " measure=" + Math.round(hintMeasure.height) + " open=" + root.popupOpen + " legend=" + (root.stripShown && focusFlow.visible && root.focusHints.some(function(h) { return h.legend === true })) + " legendtext=" + root.flagLegend.t.replace(/ /g, "_") + " fkeys=" + root.focusHints.filter(function(h) { return h.legend !== true }).map(function(h) { return h.k.join("+") }).join(",") + " ekeys=" + root.everywhereHints.map(function(h) { return h.k.join("+") }).join(",") }
     function custom(): string { return "hex=" + root.customHex + " h=" + root.customH.toFixed(3) + " s=" + root.customS.toFixed(3) + " v=" + root.customV.toFixed(3) + " on=" + root.customActive + " railcaps=" + colorSec.railCaps }
+    function wallCap(): string { return "visible=" + (wallCap.visible && wallCap.width > 0) + " wh=" + root.capWh + " kind=" + root.capState.kind + " label=" + root.capState.label.replace(/ /g, "_") + " enabled=" + root.capState.enabled + " err=" + root.capErr.replace(/ /g, "_") + " running=" + capUseProc.running + " cached=" + (root.capCached[root.capWh] === true) + " current=" + root.currentWhId + " x=" + Math.round(wallCap.mapToItem(null, 0, 0).x) + " y=" + Math.round(wallCap.mapToItem(null, 0, 0).y) + " w=" + Math.round(wallCap.width) + " h=" + Math.round(wallCap.height) }
+    function wallCapPress(): void { root.capAct() }
     function look(): string { return root.originLine === "" ? "none" : (root.lookChanged ? "changed|" : "same|") + root.originName }
     function theme(which: string): void { if (which === "save") root.saveTheme(); else root.applyTheme(root.themeAt(which), true) }
     function themeRename(which: string, name: string): void { var it = root.themeAt(which); if (it) root.renameTheme(it.id, name) }
@@ -5355,18 +5461,84 @@ Item {
             font.pixelSize: Style.font.body * 1.05
             font.bold: true
           }
-          Text {
+          Item {
             width: body.rightW
             height: stepRow.height
-            verticalAlignment: Text.AlignVCenter
-            leftPadding: Style.space(10)
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-            text: root.partWord + "  (pick a tab to fine-tune it)"
-            color: root.fg
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.body * 1.05
-            font.bold: true
+            Text {
+              width: parent.width - (wallCap.visible ? wallCap.width + Style.space(10) : 0)
+              height: stepRow.height
+              verticalAlignment: Text.AlignVCenter
+              leftPadding: Style.space(10)
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+              text: root.partWord + "  (pick a tab to fine-tune it)"
+              color: root.fg
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body * 1.05
+              font.bold: true
+            }
+            // the theme's own Wallhaven picture, right above the tab row: the link opens its page, the button fetches and sets it (key H)
+            Rectangle {
+              id: wallCap
+              visible: root.capWh !== ""
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              height: stepRow.height - Style.space(4)
+              width: capLink.implicitWidth + capBtn.width + Style.space(22)
+              radius: height / 2
+              color: root.fgA(0.1)
+              border.width: 1
+              border.color: root.fgA(0.35)
+              Text {
+                id: capLink
+                x: Style.space(10)
+                height: parent.height
+                verticalAlignment: Text.AlignVCenter
+                textFormat: Text.PlainText
+                text: "Wallhaven " + root.capWh
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.9
+                font.underline: capLinkMouse.containsMouse
+                MouseArea {
+                  id: capLinkMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.capOpenPage()
+                }
+              }
+              Rectangle {
+                id: capBtn
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(2)
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height - Style.space(4)
+                width: capBtnText.implicitWidth + Style.space(18)
+                radius: height / 2
+                color: root.fgA(!root.capState.enabled ? 0.06 : (capBtnMouse.containsMouse ? 0.34 : 0.2))
+                opacity: root.capState.enabled || root.capState.kind === "busy" ? 1 : 0.7
+                Text {
+                  id: capBtnText
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: root.capState.kind === "current" ? "\uDB80\uDD2C " + root.capState.label
+                        : (root.capState.kind === "busy" ? "" : "\uDB80\uDDDA ") + root.capState.label
+                  color: root.fg
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body * 0.9
+                }
+                MouseArea {
+                  id: capBtnMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  enabled: root.capState.enabled
+                  cursorShape: root.capState.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  onClicked: root.capAct()
+                }
+              }
+            }
           }
         }
 
@@ -5843,7 +6015,7 @@ Item {
             var cc = root.focusKind === "theme" ? root.activeSec.curCat : null
             if (cc && cc.job !== undefined) return root.jobTip(cc.job)
             var it = root.activeSec.selected
-            if (it) return root.kindTitle(root.focusKind) + " · " + (root.activeSec.lockMark(it.id) !== "" ? root.builtinGlyph + " Built in, " + (root.devSwitch ? "yours to edit" : "locked (Duplicate to change)") + " · " : "") + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
+            if (it) return root.kindTitle(root.focusKind) + " · " + (root.activeSec.lockMark(it.id) !== "" ? root.builtinGlyph + " Built in, " + (root.devSwitch ? "edit and save yours with F" : "locked (Duplicate to change)") + " · " : "") + it.label + (it.desc ? ": " + it.desc : (it.hint && it.id.charAt(0) !== "@" ? ": " + it.hint : ""))
             return "Move to an item for details"
           }
           color: root.fg

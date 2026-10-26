@@ -2,7 +2,7 @@
 
 Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar icon: over 100 screen and window shaders (CRT, pixel art, e-ink, Game Boy, camouflage, halation, oil paint, matrix rain ...), over 130 colour grades plus your own custom colour, about 170 animated wallpaper effects (a slider sets how much they follow the mouse; one reacts only to a colour you pick), more than 50 cursor effects (trails, glows, rain ripples, plus ones that bend the real screen under the pointer), and 156 ready-made themes that set everything together. Hover to preview, click to keep, and a strength slider on every menu that starts at a value where text stays readable.
 
-> **Brand new: this plugin is about two weeks old** (first written on 9 October 2026, first public release on 10 October 2026, this update on 25 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
+> **Brand new: this plugin is about two weeks old** (first written on 9 October 2026, first public release on 10 October 2026, this update on 26 October 2026). Most of it has only been tried by its author on one machine (NVIDIA GPU, two monitors). Expect rough edges, effects that change or get renamed, and settings that move between versions. Bug reports are welcome.
 
 ![Nine of the screen effects, each combined with a colour grade](preview.png)
 
@@ -11,6 +11,13 @@ Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar ico
 <a href='https://ko-fi.com/akton1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 ## What's new
+
+**1.48.0 (26 Oct 2026)**
+
+- **A themed Wallhaven picture can be fetched from the menu.** When the theme you are on (applied, or under the cursor in the Themes list) remembers a Wallhaven picture, a small capsule appears above the Wallpaper tab row: `Wallhaven <id>` (a link that opens the picture's page on wallhaven.cc) and a button. The button says **Download and set** when the picture is not on your disk yet, **Set wallpaper** when it is but another picture is on screen, and **Wallpaper set** (ticked, disabled) when it already is the wallpaper. If wallhaven.cc does not answer the button says so and offers a retry. `H` (Shift-h) does the same as the button and the hint strip shows it. Nothing is downloaded until you press it.
+- **Every way of keeping a theme keeps its Wallhaven id.** Duplicate, rename, moving to another category, Save as new, Replace, Undo/Revert and AI-made themes all carry the id. Before, saving a theme while its picture was not on your disk (so the wallpaper on screen was another one) dropped the id. A theme whose picture is a local file or an AI picture has no Wallhaven link, so it shows no capsule. The built-in starter themes have none either.
+- **New wording for the flag.** With the author's dev switch on, the legend and the status line say "edit and save yours with F" instead of "yours to edit". Everyone else still reads "Duplicate to change".
+- `bin/wallhaven cached ID` tells (exit code and path) whether a picture is already on disk, without any network.
 
 **1.47.3 (25 Oct 2026)**
 
@@ -22,7 +29,7 @@ Shader effects for the [Omarchy](https://omarchy.org/) desktop, from one bar ico
 
 **1.47.1 (25 Oct 2026)**
 
-- **The hint strip explains the flag.** Under the menus, after the keys of the Themes list (and of the other lists that mark built-in rows), a small legend shows the flag glyph and "built in (Duplicate to change)". It is the same wording as the status line under the lists, and it follows `F1` like the rest of the strip. On a small screen, where the strip shrinks to one line, the legend is left out with the second row.
+- **The hint strip explains the flag.** Under the menus, after the keys of the Themes list (and of the other lists that mark built-in rows), a small legend shows the flag glyph and "built in (Duplicate to change)" (with the author's dev switch on, "built in (edit and save yours with F)"). It is the same wording as the status line under the lists, and it follows `F1` like the rest of the strip. On a small screen, where the strip shrinks to one line, the legend is left out with the second row.
 
 **1.47.0 (24 Oct 2026)**
 

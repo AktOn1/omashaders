@@ -7,6 +7,7 @@
   wallhaven preview ID              medium-size preview (CDN, no API call), prints its path
   wallhaven fetch ID                download the full picture into the cache, print its path
   wallhaven use ID                  fetch it and make it the wallpaper (same way as the picker)
+  wallhaven cached ID               exit 0 and print its path when it is already on disk, else exit 1 (no network)
   wallhaven prune                   trim the cache to its size caps
 
 Everything is fetched with curl. Cache and notes live in
@@ -330,6 +331,20 @@ def cmd_preview(a):
     print(dest)
 
 
+def cached_path(wid):
+    if not ID_RE.match(wid or ""):
+        return ""
+    for d in (FULL, USED):
+        for ext in (".jpg", ".png"):
+            p = os.path.join(d, "wallhaven-%s%s" % (wid, ext))
+            try:
+                if os.path.getsize(p) > 0:
+                    return p
+            except OSError:
+                pass
+    return ""
+
+
 def cmd_fetch(a):
     print(fetch(a[0] if a else ""))
 
@@ -360,6 +375,11 @@ def main():
     cmd, rest = a[0], a[1:]
     try:
         fn = {"search": cmd_search, "info": cmd_info, "fetch": cmd_fetch, "preview": cmd_preview, "use": cmd_use}.get(cmd)
+        if cmd == "cached":
+            p = cached_path(rest[0] if rest else "")
+            if p:
+                print(p)
+            return 0 if p else 1
         if cmd == "prune":
             prune()
         elif fn:
