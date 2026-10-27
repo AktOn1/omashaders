@@ -1,0 +1,11 @@
+# category: Border
+# desc: Prism border: a thin soap-film rainbow around the window with a soft pearl glow
+rounding=14
+border_size=2
+border_colors=ffe9a8ff,ff9fd6ff,8fb6ffff,9fffd8ff
+border_angle=120
+border_inactive=5a6070aa
+shadow_range=38
+shadow_power=2
+shadow_color=9fc4ff66
+shadow_inactive=00000000

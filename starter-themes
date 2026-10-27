@@ -26,12 +26,12 @@ lantern-glow|lanterns|lantern-spark|paper-lantern|Lantern Night|shoji-paper||emb
 tidepool|caustics|bubble-trail|lagoon|Tide Pool|sea-glass||soft-round
 cabin-frost|cabinsnow|ice-crystals|cocoa|Snug Cabin|frost-pane||thin-gold
 lavender-haze|lavenderfields|firefly-trail|lavender-dusk|Lavender Dusk|dusk-glass||bold-pastel
-soft-sky|cloudscape|cloud-puff|peach-sky|Cloud Garden|cloud-veil||white-halo
+soft-sky|cloudscape||peach-sky|Cloud Garden|garden-pane||white-halo
 polar-glow|auroralake|star-dust|aurora-night|Aurora Calm|aurora-glass||aurora
 moonlight|moonlake|silver-ripples|moonsilver|Moon Lake|moon-glass||mono-line
 smog-bloom|alley-chochin|neon-tube-trail|blade-haze|Izakaya Alley|sign-glow||neon-tube-amber
 wet-window|cafe-fogpane|rain-ripples|gaslight|Rainy Cafe|morning-dew||soft-shadow
-film|lounge-teak|lamp|atomic-cream|Seventies Lounge|sunbeam-pane||atomic-orange
+film|lounge-glow|lamp|atomic-cream|Seventies Lounge|sunbeam-pane||atomic-orange
 paper-tooth|aquarelle-wash|brush-bloom|pigment-wash|Aquarelle Studio|wet-paper||watercolor-edge
 paper-tooth|hokusai-surf|ink-brush|indigo-hush|Great Wave|shoji-paper||woodblock-ink
 golden-porch|studylamp|lamp|honey|Study Lamp|firelight||chalk-wood
@@ -74,7 +74,7 @@ sunlit|shoots-rain|rain-ripples|evergreen|Green Shoots|morning-dew||soft-round
 manor-gloom|hauntedmanor|ghost-wisp|grave-teal|Haunted Manor|moon-glass||wrought-iron
 fireside|cryptcandles|lantern-spark|tallow|Crypt Candles|firelight||old-stone
 nave-glow|cathedral|mote-glow|stained-glass|Gothic Cathedral|stained-light||lead-came
-moonlight|wolfmoon|silver-ripples|wolfsbane|Wolf Moon|frost-pane||contact-shadow
+moonrime|wolfmoon|breath-mist|indigo-rime|Wolf Moon|frostrim-glass||moonrim-glow
 pine-mist|graveyardmist|mist-trail|ashen-green|Graveyard Mist|morning-dew||rust-edge
 crimson-vignette|bloodmoon|bat-flutter|claret|Blood Moon Castle|dusk-glass||crimson-edge
 smog-bloom|witchinghour|bubble-trail|hex-purple|Witching Hour|leaf-shade||spore-glow
@@ -158,3 +158,26 @@ anamorphic|lensflare|neon|rose-gold|Rose Lens Flare|sunbeam-pane||sunset
 sunlit|skybirds|cloud-puff|alpenglow|Birds at Dawn|cloud-veil||clean
 moonlight|watersparkle|silver-ripples|ice|Moon Glitter|moon-glass||white-halo
 soft-sky|windstreaks|cloud-puff|fresh-meadow|Windy Ridge|cloud-veil||clean
+witching-veil|trickortreat|moth-flutter|candy-corn-dusk|Trick or Treat|jack-glow||pumpkin-spice
+hollow-dusk|hollow-eve|night-lamp|hollow-ink|Hollow Eve|hollow-pane||hollow-edge
+film-fringe|soapfilm-drift|soap-burst|soap-sheen|Soap Film|bubble-pane|soap-sheen|prism-border
+wetpaper-grain|inkwater-bloom|pigment-drop|wet-pigment|Ink in Water|wetpaper-pane||wash-bleed
+chrome-brush|mercury-flow|mercury-beads|chrome-steel|Liquid Chrome|chrome-sweep||chrome-bevel
+lumen-bloom|lumen-drift|lumen-wake|lumen-night|Lumen Drift|lumen-pane||lumen-rim
+dead-signal|dread-creep|dread-torch|dread-tint|Dead Channel|dread-pane||dread-rot
+quarantine-static|quarantine-deck|quarantine-locator|quarantine-steel|Quarantine|quarantine-pane||quarantine-seal
+rite-candle|rite-sigil|rite-hook|rite-oxblood|Oxblood Rite|rite-pane||rite-brass
+lantern-glow|sacredclockwork|star-dust|lapis-gold|Sacred Clockwork|||thin-gold|wall=90,cur=70
+tidepool|startiles|silver-ripples|lagoon|Star Tiles|||holo-cyan|fx=40,wall=90,cur=65
+chromatic|tumblingblocks|neon-tube-trail|neon-noir|Tumbling Blocks|||neon-pink|fx=40,wall=90,cur=70
+dialup-glow|dialup-hearts|love-ping|dialup-pink|Dial-Up Love|chat-pane||dialup-edge
+teal-dither|desk95-drift|hourglass-trail|teal-95|Teal Desktop 95|bevel-pane||bevel-95
+poly-dither|poly-drift|poly-shapes|disc-quad|Polygon Disc|disc-pane||quad-edge
+field-nv|radar-grid|target-lock|olive-drab|Field Terminal|hud-pane||stencil-edge
+chart-glass|star-chart|star-weave|night-ink|Star Chart|starfield-pane||chart-edge
+redline-hud|redline-rumble|apex-line|track-red|Redline Run|chassis-pane||race-livery
+fibre-light|paper-soak|damp-nib|ink-soak|Soaked Paper|soak-sheet||deckle-wet
+board-glow|circuit-trace|board-build|solder-mint|Open Circuit|pcb-pane||board-edge
+lacquer-grain|wood-print|brand-trail|walnut-print|Walnut Print|plank-pane||walnut-bevel
+stone-glow|rune-field|rune-orbit|rune-slate|Rune Hall|knot-pane||meander-edge
+sun-meadow|meadow-drift|butterfly-glide|spring-lawn|Overgrown Panes|grass-pane||hedge-edge

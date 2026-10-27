@@ -1,0 +1,12 @@
+# category: Border
+# desc: Square olive-drab border with a tan accent, flat and rugged like a stencilled equipment panel, with a hard dark drop shadow and a dim inactive edge
+rounding=0
+border_size=3
+border_colors=5a6330ff,b8a878ff
+border_angle=45
+border_inactive=39402a99
+shadow_range=14
+shadow_power=4
+shadow_color=0a0d05cc
+shadow_offset=3,4
+shadow_inactive=00000066

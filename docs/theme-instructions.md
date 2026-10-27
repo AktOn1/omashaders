@@ -1,4 +1,4 @@
-Theme guide version: 1.41.0
+Theme guide version: 1.56.0
 
 # OmaShaders theme guide
 
@@ -226,13 +226,13 @@ effect when the wallpaper overlay already carries the whole mood, no cursor
 effect for calm themes, no frame when windows should stay plain, no window shader
 when the screen effect already does that job. `window_color` is
 almost always `""`: a second grade on top of the screen grade double-tints text.
-In the 156 shipped themes, none sets `window_color`.
+In the 172 shipped themes, none sets `window_color`.
 
 **Cursor, window and frame are accents.** They are accents in size, not in
 presence: in a Full theme fill each with the one that best fits the idea. Thin, small frames read well (`thin-gold`, `mono-line`, `clean`,
 `soft-shadow`, `contact-shadow`, `soft-round`); big busy ones do not. Glow frames
 (`ember`, `aurora`, `neon-cyan`) suit night and neon themes only. Spin frames
-(`*-spin`) animate the border forever - used in 4 of 156 themes, so keep them for
+(`*-spin`) animate the border forever - used in 4 of 172 themes, so keep them for
 arcade, party or music requests. Window shaders are per-window glass and light;
 they need an optional plugin and simply do nothing if it is missing, so never let
 the whole idea rest on them.
@@ -360,6 +360,25 @@ below), ripples from `sin(length(uv - m) * k - time)`, a window edge glow that
 runs around the frame. Keep it small and soft: text must stay readable at the
 `start` strength. Use the pointer (`m`, `P(i)`) so something answers it. Leave
 the overall colour to an existing `color` grade or a short `C_` mix.
+
+**Support the picture, do not replace it.** A wallpaper effect never draws a scene
+(a room, a sea, a cemetery); it lays the theme's mood on the user's own picture
+with light, particles, depth and motion: out-of-focus lights drifting at two
+speeds, thin light streaks, rays from the picture's own bright spots, moving
+caustics, mist keyed to the dark parts, a few small painted sprites near the
+edges. Rich in light and particles is good; a fixed backdrop is a reject, because
+users pick other wallpapers for a theme and it has to look good on a forest, a
+city, a portrait and a plain gradient.
+
+**The cursor is one thing attached to the pointer** (a comet, a lens flare, a
+hook on a swinging chain, a torch). It may trail and sway. It does not spawn
+puffs, ripples, drops or growing shapes that appear and disconnect from the
+pointer: those look like separate events and users find them weak.
+
+**Names the real graphics driver refuses** although the gate's quick render accepts
+them: never name a variable `gl` or anything starting with `gl_` (it becomes the
+reserved `gl_1`), and use no integer `min`, `max` or `clamp` (floats only; write
+`i > 0 ? i - 1 : 0`).
 
 ### Colours
 
@@ -519,6 +538,9 @@ A theme is a place and a moment, not a filter. Ask: where am I (biome, room, str
 3. Motion is calm: slow drifts, soft pulses, gentle particles. Nothing flashes, nothing strobes, nothing covers the middle of the screen.
 4. Overlays are light: glints, beams, mist, particles, streaks. A flat colour wash belongs in `color`, not in an overlay.
 5. Colours come from the picture's palette. Keep to 3-6 colours with a role each.
+6. The wallpaper is support, not scenery: light, particles, depth, mist, sprites at the edges. No drawn room, sea or cemetery, and it must look good on any picture.
+7. The cursor is one thing attached to the pointer. Nothing that spawns, grows or drops away from it.
+8. Never name a variable `gl` or `gl_*`, and use no integer `min`/`max`/`clamp` (the real driver refuses them).
 
 ### Reading the picture (or inventing a place)
 

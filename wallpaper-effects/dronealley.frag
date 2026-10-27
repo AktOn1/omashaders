@@ -228,7 +228,7 @@ vec4 fxMain(vec2 mpx) {
     if (isWall > 0.5 && side == sgn) {
       vec2 dn = vec2((z - z0) / 1.0, (r.y * z - v0) / 0.55);
       neon += nc * exp(-dot(dn, dn)) * 0.9;
-      vec2 sq = vec2((z - z0) / (0.20 + 0.05 * float(i % 2)), (r.y * z - v0) / 0.26);
+      vec2 sq = vec2((z - z0) / (0.20 + 0.05 * mod(float(i), 2.0)), (r.y * z - v0) / 0.26);
       float dbox = max(abs(sq.x), abs(sq.y));
       float tubeLine = smoothstep(0.16, 0.0, abs(dbox - 1.0)) + smoothstep(0.12, 0.0, abs(sq.x * 0.5 - sq.y * 0.7)) * step(dbox, 0.95) * 0.7;
       float fk = 1.0 - 0.5 * step(0.95, da_hash(vec2(floor(t * 8.0), float(i))));

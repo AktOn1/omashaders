@@ -332,6 +332,27 @@ def save_theme(c):
     return line, len(have) + 1, False
 
 
+def replace_theme(number, expect_line, c):
+    """save changes in place: line `number` (1-based) of the themes file becomes the theme `c`. `expect_line` is the line the edit started from
+    (the list may have changed meanwhile: it is searched when it is not at `number` any more). Built-in themes are refused (unless the developer's
+    switch is on): they can only be saved as a new theme. Returns (line, number)."""
+    have = read_themes()
+    i = number - 1
+    if not (0 <= i < len(have) and have[i] == expect_line):
+        near = [k for k, l in enumerate(have) if l == expect_line]
+        if not near:
+            raise Bad("That theme is not in your list any more (it was changed or deleted); save this one as a new theme")
+        i = near[0]
+    if is_builtin_theme(have[i]) and not dev_switch():
+        raise Bad("Built-in themes cannot be changed; save this one as a new theme")
+    line = theme_line(c)
+    have[i] = line
+    write_themes(have)
+    if line in starter_lines():
+        mark_own(line)
+    return line, i + 1
+
+
 # ---- built-in themes and effects (what other users may not delete)
 # A theme is built in when its whole line is in the shipped `starter-themes` file (its id is a short hash of that line). Nothing
 # else marks it: no author, no user id, and a share code never carries the tag. Edit or rename it and the line changes, so the

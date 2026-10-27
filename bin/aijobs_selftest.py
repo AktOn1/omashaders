@@ -1,10 +1,11 @@
 """Offline self-test of the background theme jobs (bin/aijobs.py). A fake AI command stands in for the AI; everything runs in a scratch state
 folder and a scratch notify command, nothing touches the real state or desktop. It proves: the job survives the process that started it,
 the finished theme waits as a draft (not in the list) until saved, a killed runner shows as interrupted and can be retried, cancel only
-happens through `job cancel` and kills the whole run, two jobs at most, the draft can be changed, and the form is restored.
+happens through `job cancel` and kills the whole run, two jobs at most, the draft can be changed, chosen parts can be regenerated and a saved theme opened, saved in place or as new, and the form is restored.
 Run: python3 bin/aijobs_selftest.py   (also part of: python3 bin/ai-theme selftest)"""
 import sys
 sys.dont_write_bytecode = True
+import glob
 import json
 import os
 import shutil
@@ -163,6 +164,69 @@ def scenarios(label):
     for jid in (ja, jb):
         cli("dismiss", jid)
     delay(0)
+    regen_scenarios(label)
+
+
+def regen_scenarios(label):
+    """open a saved theme as a job, regenerate chosen parts in the background, go back, save in place / as new; a built-in theme is never overwritten"""
+    cat = L.catalog()
+    pick = {k: next(iter(cat[k])) for k in ("screen", "color")}   # what the fake AI answers
+    ids = {k: sorted(v for v in cat[k] if v != pick.get(k))[-1] for k in ("screen", "color", "mouse", "frame")}
+    light = sorted(L.overlay_ids() & set(cat["wall"]))
+    own = {"n": "Mine", "s": ids["screen"], "c": ids["color"], "w": light[-1], "m": ids["mouse"], "wf": "", "wc": "", "wr": ids["frame"], "o": {"fx": 55, "col": 66, "wall": 44, "cur": 77}}
+    own_line = L.theme_line(own)
+    builtin = [l for l in open(L.STARTER, encoding="utf-8").read().split("\n") if l.strip()][0]
+    shutil.rmtree(os.path.join(STATE, "generated"), ignore_errors=True)
+    with open(os.path.join(STATE, "themes"), "w") as f:
+        f.write(builtin + "\n" + own_line + "\n")
+    res, r = cli("load", "2")
+    jid = res.get("job", {}).get("id", "")
+    j = res.get("job", {})
+    check(label + ": load opens a saved theme as a finished draft without an AI call", res.get("ok") and j.get("state") == "done" and j.get("has_result") and j["result"].get("loaded") and j["result"]["origin"]["number"] == 2, r.stdout[:300] + r.stderr[-200:])
+    check(label + ": the loaded draft is not a new line in the list", len(themes().split()) == 2)
+    delay(2)
+    res, r = cli("regen", jid, "screen,color", "colder please")
+    check(label + ": regen starts a background job on the draft", res.get("ok") and res["job"]["state"] in ("starting", "running"), r.stdout[:300] + r.stderr[-200:])
+    j = wait(jid, ("running",), 10)
+    check(label + ": the regenerate runs without the starter", j.get("state") == "running" and J.alive(j) and j.get("steps_total", 0) >= 2, str(j)[:300])
+    j = wait(jid, ("done", "failed"), 60)
+    n = L.parse_line(j["result"]["line"]) if j.get("result") else {}
+    check(label + ": the regenerate finished and changed only the chosen parts", j.get("state") == "done" and n.get("s") == pick["screen"] and n.get("c") == pick["color"]
+          and n.get("w") == own["w"] and n.get("m") == own["m"] and n.get("wr") == own["wr"] and n["o"].get("wall") == 44 and n["o"].get("cur") == 77, str(j)[:500])
+    check(label + ": the history says what was regenerated", any("Regenerate: Screen, Color" in h.get("text", "") for h in j.get("history", [])), str(j.get("history"))[:300])
+    delay(0)
+    res, r = cli("regen-undo", jid, "screen")
+    n = L.parse_line(res["job"]["result"]["line"]) if res.get("ok") else {}
+    check(label + ": regen-undo brings back the earlier screen and keeps the colour", n.get("s") == own["s"] and n.get("c") == pick["color"] and n["o"].get("fx") == 55, r.stdout[:300])
+    res, r = cli("regen", jid, "screen")
+    j = wait(jid, ("done", "failed"), 60)
+    check(label + ": a second regenerate works on the same job", j.get("state") == "done" and L.parse_line(j["result"]["line"])["s"] == pick["screen"], str(j)[:300])
+    res, r = cli("save", jid, "--replace")
+    have = themes().split("\n")
+    check(label + ": save --replace rewrites the opened theme in place", res.get("ok") and res.get("replaced") and len([x for x in have if x]) == 2 and have[0] == builtin and L.parse_line(have[1])["s"] == pick["screen"] and L.parse_line(have[1])["n"] == "Mine", r.stdout[:200] + themes())
+    check(label + ": a saved job is gone", not os.path.exists(os.path.join(STATE, "jobs", jid)))
+    # as a new theme
+    with open(os.path.join(STATE, "themes"), "w") as f:
+        f.write(builtin + "\n" + own_line + "\n")
+    res, _ = cli("load", "2")
+    jid = res["job"]["id"]
+    cli("regen", jid, "color")
+    wait(jid, ("done", "failed"), 60)
+    res, r = cli("save", jid)
+    have = [x for x in themes().split("\n") if x]
+    check(label + ": save without --replace adds a new theme and leaves the original", res.get("ok") and len(have) == 3 and "(edited)" in L.parse_line(have[2])["n"], r.stdout[:200] + themes())
+    # built-in
+    res, _ = cli("load", "1")
+    jid = res["job"]["id"]
+    check(label + ": a built-in theme opens as flagged built-in", res["job"]["result"]["origin"]["builtin"])
+    cli("regen", jid, "screen")
+    wait(jid, ("done", "failed"), 60)
+    before = themes()
+    res, r = cli("save", jid, "--replace")
+    check(label + ": a built-in theme cannot be saved in place; nothing changed and the draft stays", not res.get("ok") and themes() == before and os.path.isdir(os.path.join(STATE, "jobs", jid)), r.stdout[:300])
+    res, _ = cli("discard", jid)
+    check(label + ": discard leaves the list as it was and no stray generated effect", res.get("ok") and themes() == before and not glob.glob(os.path.join(STATE, "generated", "*")))
+    open(os.path.join(STATE, "themes"), "w").close()
 
 
 def main():

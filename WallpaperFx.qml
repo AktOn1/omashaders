@@ -26,7 +26,7 @@ Scope {
     return Qt.resolvedUrl("wallpaper-effects/" + n + ".frag.qsb")
   }
   // effects that draw sprites from wallpaper-effects/NAME.png (sampler `sprites`, binding 2, RGBA atlas)
-  readonly property var spriteEffects: ["pumpkin-night"]
+  readonly property var spriteEffects: ["pumpkin-night", "trickortreat", "wolfmoon", "graveyardmist", "rite-sigil"]
   // AI-made effects with painted sprites: the id ends in -sp (or -sp-2 ...) and genDir/wall/NAME.png is the atlas (a checked 1024x512 PNG made by bin/aisprites.py)
   function spriteUrl(n) {
     if (n.indexOf("ai-") === 0) return (fx.genDir !== "" && /-sp(-[0-9]+)?$/.test(n)) ? fx.genDir + "/wall/" + n + ".png" : ""

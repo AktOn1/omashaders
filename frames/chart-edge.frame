@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Thin silver-blue to periwinkle gradient border with a soft midnight-indigo glow underneath and a dim slate inactive edge, like a window lit by the night sky
+rounding=8
+border_size=2
+border_colors=8a96ffff,d4e6ffff,a98bffff
+border_angle=60
+border_inactive=2a3466aa
+shadow_range=28
+shadow_power=3
+shadow_color=1a2266aa
+shadow_offset=0,3
+shadow_inactive=00000044

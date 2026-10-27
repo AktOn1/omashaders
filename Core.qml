@@ -60,6 +60,8 @@ Item {
   readonly property string shiftOnlyFile: stateDir + "/shift-only"
   readonly property string keyHintsFile: stateDir + "/hotkey-hints"
   readonly property string keyPreviewFile: stateDir + "/key-preview"
+  readonly property string resourcesFile: stateDir + "/resources"
+  readonly property string lastViewFile: stateDir + "/last-view"
   readonly property string disabledFile: stateDir + "/disabled"
   readonly property string fsPauseFile: stateDir + "/pause-fullscreen"
   readonly property string mouseSizeFile: stateDir + "/mouse-size"
@@ -156,6 +158,7 @@ Item {
     if (id === "@share") return "󰒗"
     if (id === "@import") return "󰋺"
     if (id === "@ai") return "󰁨"
+    if (id === "@edit") return "󰏫"
     if (id === "@dup") return "󰆏"
     if (id === "@newcat") return "󰉗"
     if (id === "@move") return "󰉒"
@@ -474,6 +477,21 @@ Item {
     onFileChanged: reload()
     onLoaded: root.keyHintsFlag = String(text() || "").trim()
     onLoadFailed: root.keyHintsFlag = ""
+  }
+  // F3 shows / hides the "What is using my GPU" block; remembered in a state file, shown until the user turns it off. Hidden, the lists get its room and the GPU poll stops.
+  property string resFlag: ""
+  readonly property bool resShown: resFlag !== "off"
+  function toggleResources() {
+    resFlag = resShown ? "off" : "on"
+    writeFile(resourcesFile, resFlag)
+  }
+  FileView {
+    path: root.resourcesFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.resFlag = String(text() || "").trim()
+    onLoadFailed: root.resFlag = ""
   }
   // F2: live preview while moving with the keyboard. Off by default: the cursor only moves, Space / Enter apply. Shift+arrow previews one step either way.
   property string keyPreviewFlag: ""
@@ -1004,7 +1022,8 @@ Item {
   property bool palLoaded: false
   function openPalette() {
     popupOpen = false
-    whOpen = false
+    closeWallhavenKeeping()
+    rememberView("palette")
     palLoaded = true
     Qt.callLater(function() { root.palOpen = true })
   }
@@ -1552,12 +1571,56 @@ Item {
     stepProc.command = [root.stepScript, action]
     stepProc.running = true
   }
+  // Which picker (Create with AI, Wallhaven, Palette, share / import) was open when the menu was closed without leaving it: the next open goes back there.
+  // The choice is kept in the state file `last-view`; leaving a picker the normal way (Esc, Back, Done, finishing) clears it, so the main menu is never out of reach.
+  property string lastView: ""
+  property bool keepView: false
+  readonly property bool viewOpen: dlgOpen || whOpen || palOpen
+  function rememberView(v) {
+    if (v === lastView) return
+    lastView = v
+    writeFile(lastViewFile, v)
+  }
+  function forgetView() { rememberView("") }
+  function closeWallhavenKeeping() {
+    keepView = true
+    whOpen = false
+    keepView = false
+  }
+  // keep = the menu was dismissed (icon, click away, another popout): the picker stays remembered; otherwise the user left it
+  function hideViews(keep) {
+    keepView = keep
+    dlgOpen = false
+    whOpen = false
+    palOpen = false
+    keepView = false
+  }
+  function restoreView() {
+    var p = lastView.split("|")
+    if (p[0] === "wallhaven") openWallhaven()
+    else if (p[0] === "palette") openPalette()
+    else if (p[0] === "dialog" && ["ai", "share", "import"].indexOf(p[1]) >= 0) openDialog(p[1], "", Math.floor(Number(p[2])) || 0, p[3] || "", p[4] || "")
+    else { forgetView(); return false }
+    return true
+  }
+  onDlgOpenChanged: if (!dlgOpen && !keepView) forgetView()
+  onWhOpenChanged: if (!whOpen && !keepView) forgetView()
+  onPalOpenChanged: if (!palOpen && !keepView) forgetView()
+  FileView {
+    path: root.lastViewFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.lastView = String(text() || "").trim()
+    onLoadFailed: root.lastView = ""
+  }
   // the Wallhaven browser (Wallhaven.qml) is loaded the first time it opens
   property bool whOpen: false
   property bool whLoaded: false
   property bool aiAvailable: false
   function openWallhaven() {
     popupOpen = false
+    rememberView("wallhaven")
     whLoaded = true
     Qt.callLater(function() { root.whOpen = true })
   }
@@ -1573,15 +1636,19 @@ Item {
     return m ? m[1] : ""
   }
   // the theme under the cursor while the Themes list has the focus, else the theme the look came from
-  readonly property string capWh: {
+  readonly property string capLine: {
     var it = focusKind === "theme" && themeSec.selected && String(themeSec.selected.id).charAt(0) !== "@" ? themeSec.selected : null
-    return it ? ((it.opts && it.opts.wh) || "") : lineWh(originLine)
+    return it ? String(it.id) : originLine
   }
+  readonly property string capWh: lineWh(capLine)
   property var capCached: ({})
   property string capErr: ""
   property string capErrId: ""
-  readonly property var capState: wallCapState(capWh, capCached[capWh] === true, currentWhId, capUseProc.running && capUseProc.id === capWh, capErrId === capWh ? capErr : "")
-  readonly property string capHint: capState.kind === "set" ? "set theme wallpaper" : capState.kind === "error" ? "retry theme wallpaper" : capState.kind === "current" ? "theme wallpaper (set)" : "download theme wallpaper"
+  readonly property var capState: wallCapState(capWh, capCached[capWh] === true, currentWhId, capUseProc.running && capUseProc.id === capWh, capErrId === capWh ? capErr : "", capLine !== "")
+  readonly property string capHint: capState.kind === "set" ? "set theme wallpaper" : capState.kind === "error" ? "retry theme wallpaper" : capState.kind === "current" ? "theme wallpaper (set)"
+                                    : capState.kind === "remember" ? "remember Wallhaven " + currentWhId : capState.kind === "unsaved" ? "save look keeps Wallhaven " + currentWhId : "download theme wallpaper"
+  readonly property string autoHint: useThemeWallpaper ? "theme wallpapers: on" : "theme wallpapers: off"
+  readonly property bool capHasKey: capState.kind !== "none" && capState.kind !== "unsaved"
   onCapWhChanged: capCheck()
   function capCheck() {
     if (capWh === "" || !popupOpen || capCached[capWh] === true) return
@@ -1621,16 +1688,72 @@ Item {
         root.capErrId = id
         root.flash("Wallpaper not set: " + root.capErr, 5000)
       }
+      if (root.capNext !== "") { var n = root.capNext; root.capNext = ""; if (n !== id) root.capFetch(n) }
     }
   }
   function capAct() {
-    if (capWh === "") { flash("This theme has no Wallhaven picture"); return }
+    if (capState.kind === "remember") { rememberWallhaven(); return }
+    if (capState.kind === "unsaved") { flash("Press F to save the look as a theme: it keeps Wallhaven " + currentWhId); return }
+    if (capWh === "") { flash("No Wallhaven picture saved for this theme"); return }
     if (capState.kind === "current") { flash("Wallpaper is already set: Wallhaven " + capWh); return }
     if (capUseProc.running) { flash("Still fetching Wallhaven " + capUseProc.id); return }
+    capFetch(capWh)
+  }
+  function capFetch(id) {
     capErrId = ""
-    capUseProc.id = capWh
-    capUseProc.command = ["python3", path("bin/wallhaven"), "use", capWh]
+    capUseProc.id = id
+    capUseProc.command = ["python3", path("bin/wallhaven"), "use", id]
     capUseProc.running = true
+  }
+  readonly property bool useThemeWallpaper: setting("useThemeWallpaper", false) === true
+  property string capNext: ""
+  // the checkbox in the capsule row (key L): writes the same plugin setting as the Omarchy settings screen, so both stay in step
+  function setUseThemeWallpaper(on) {
+    var entry = settingsEntry(moduleName, settings, "useThemeWallpaper", on === true)
+    host.settings = entry
+    if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function") bar.shell.updateEntryInline(moduleName, entry)
+    flash(on === true ? "Theme wallpapers on: applying a theme sets its Wallhaven picture" : "Theme wallpapers off: applying a theme leaves your wallpaper alone")
+  }
+  // applying a theme from the menu, a key or IPC: with the setting on, a theme that has a Wallhaven id brings its picture along (same code as the capsule button)
+  function themeWallpaper(it) {
+    var wh = it && it.opts && it.opts.wh ? it.opts.wh : ""
+    var plan = themeWallPlan(useThemeWallpaper, wh, currentWhId, capUseProc.running ? capUseProc.id : "")
+    if (plan === "fetch") capFetch(wh)
+    else if (plan === "queue") capNext = wh
+  }
+  // H on a theme without a picture while Wallhaven is on screen: the theme keeps this id. Your own theme is changed in place;
+  // a built-in one stays as it is and a copy is saved (the author's dev-export switch edits it in place, like F)
+  function rememberWallhaven(target) {
+    var id = currentWhId, line = target !== undefined ? target : capLine
+    var i = themes.indexOf(line)
+    if (id === "" || i < 0 || lineWh(line) !== "") return false
+    var next = themes.slice()
+    var wasOrigin = themeOrigin === line
+    var fresh
+    if (isLocked("theme", line) && !devSwitch) {
+      var q = line.split("|")
+      var base = (q[4] || themeItem(line).label).slice(0, 30), nm = base + " (mine)", n = 2
+      while (themes.some(function(t) { return (t.split("|")[4] || "") === nm })) nm = base + " (mine " + n++ + ")"
+      fresh = lineWithWh(themeRenamed(line, nm), id)
+      if (themes.indexOf(fresh) >= 0) { flash("Already saved: " + nm); return false }
+      next.splice(i + 1, 0, fresh)
+      flash("Saved as \"" + nm + "\" with Wallhaven " + id + ": built-in themes stay as they are. Press n to rename")
+    } else {
+      fresh = lineWithWh(line, id)
+      if (themes.indexOf(fresh) >= 0) { flash("That look is already another theme"); return false }
+      next[i] = fresh
+      flash("Theme keeps Wallhaven " + id)
+    }
+    themes = next
+    writeThemes()
+    if (wasOrigin) { themeOrigin = fresh; originWallPath = wallpaperPath }
+    return true
+  }
+  // F or the save command on a look that is already a saved theme: when the only thing missing is the Wallhaven picture on screen, attach it instead of saying "Already saved"
+  function alreadySaved(line) {
+    if (themeSavedPlan(currentWhId, lineWh(line)) === "attach" && rememberWallhaven(line)) return true
+    flash("Already saved: " + themeItem(line).label)
+    return false
   }
   function capOpenPage() { if (capWh !== "") Quickshell.execDetached(["xdg-open", "https://wallhaven.cc/w/" + capWh]) }
 
@@ -1642,14 +1765,17 @@ Item {
   property int dlgNum: 0
   property string dlgJob: ""
   property string dlgOnly: ""   // "": a whole theme; else the one kind of effect the AI makes (`ai-theme --only SLOT`)
-  function openDialog(mode, whId, num, jobId, only) {
+  property string dlgEdit: ""   // "": a new theme; else a saved theme's number, or "current" (the look on now), opened for "Edit with AI"
+  function openDialog(mode, whId, num, jobId, only, edit) {
     popupOpen = false
-    whOpen = false
+    closeWallhavenKeeping()
+    rememberView(mode === "save" ? "" : "dialog|" + mode + "|" + (num || 0) + "|" + (jobId || "") + "|" + (only || ""))
     dlgMode = mode
     dlgWh = whId
     dlgNum = num
     dlgJob = jobId || ""
     dlgOnly = only || ""
+    dlgEdit = edit || ""
     refreshJobs()
     dlgLoaded = true
     Qt.callLater(function() { root.dlgOpen = true })
@@ -1661,11 +1787,18 @@ Item {
     if (n < 1 && themeNow === "|||") { flash("Nothing to share: every effect is off. Pick a theme or switch something on first"); return }
     openDialog("share", "", n)
   }
+  // Edit with AI (E): the highlighted saved theme, else the look on now, is opened in the dialog; the AI makes the parts you tick again, the rest stays
+  function startEdit() {
+    var it = themeSec.selected
+    var n = it && it.id.charAt(0) !== "@" ? themes.indexOf(it.id) + 1 : 0
+    if (n < 1 && themeNow === "|||") { flash("Nothing to edit: every effect is off. Pick a theme or switch something on first"); return }
+    openDialog("ai", "", 0, "", "", n > 0 ? String(n) : "current")
+  }
   // Save: a small window asks for the name (F)
   function startSave() {
     if (themeNow === "|||") { flash("Nothing to save: every effect is off"); return }
     var dup = themes.filter(themeSameNow)
-    if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return }
+    if (dup.length > 0) { alreadySaved(dup.indexOf(themeOrigin) >= 0 ? themeOrigin : dup[0]); return }
     openDialog("save", "", 0)
   }
   // Record GIF: bin/gif-capture clears the desktop, counts down (gifCount drives the number below), records and restores
@@ -2217,14 +2350,42 @@ Item {
     if (wh === "" || /(^|,)wh=/.test(o)) return o
     return o !== "" ? o + ",wh=" + wh : "wh=" + wh
   }
-  // the capsule above the Wallpaper tab for a theme that has a Wallhaven id: what it says and whether pressing it does anything
-  function wallCapState(wh, cached, currentId, busy, error) {
-    if (!wh) return { kind: "none", label: "", enabled: false }
+  // the capsule above the Wallpaper tab: what it says and whether pressing it does anything. Always shown; a theme without a Wallhaven id says so, or offers to remember the picture on screen
+  // hasTheme false: the look on screen is not a saved theme, so there is nothing to remember a picture for yet
+  function wallCapState(wh, cached, currentId, busy, error, hasTheme) {
+    if (!wh) {
+      if (currentId && hasTheme === false) return { kind: "unsaved", label: "Wallhaven " + currentId + " is on screen. Press F to save the look with it", enabled: false }
+      if (currentId) return { kind: "remember", label: "Remember Wallhaven " + currentId + " for this theme", enabled: true }
+      return { kind: "none", label: "No Wallhaven picture saved for this theme", enabled: false }
+    }
     if (busy) return { kind: "busy", label: cached ? "Setting wallpaper\u2026" : "Downloading\u2026", enabled: false }
     if (currentId === wh) return { kind: "current", label: "Wallpaper set", enabled: false }
     if (error !== "") return { kind: "error", label: "Wallhaven did not answer. Retry", enabled: true }
     if (cached) return { kind: "set", label: "Set wallpaper", enabled: true }
     return { kind: "download", label: "Download and set", enabled: true }
+  }
+  // the same theme with the Wallhaven id added to its 9th field (kept when it has one already)
+  function lineWithWh(line, wh) {
+    var q = String(line).split("|")
+    return themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", q[4] || "", q[5] || "", q[6] || "", q[7] || "", optsWithWh(q[8] || "", wh))
+  }
+  // "Use theme wallpaper when available" (plugin setting, off by default): what applying a theme does about the picture.
+  // none = leave the wallpaper alone (setting off, or the theme has no Wallhaven id); have = that picture is already on screen;
+  // wait = it is being fetched right now; queue = another one is being fetched, take this one afterwards; fetch = start now
+  function themeWallPlan(enabled, wh, currentId, busyId) {
+    if (enabled !== true || !wh) return "none"
+    if (currentId === wh) return "have"
+    if (busyId === wh) return "wait"
+    return busyId ? "queue" : "fetch"
+  }
+  // F on a look that already is a saved theme: attach the Wallhaven picture on screen when the theme has none, else it really is already saved
+  function themeSavedPlan(currentId, themeWh) { return currentId && !themeWh ? "attach" : "already" }
+  // the plugin's inline entry in shell.json with one setting changed: every other key of the entry stays
+  function settingsEntry(id, settings, key, value) {
+    var entry = { id: id }
+    for (var k in settings) if (k !== "id") entry[k] = settings[k]
+    entry[key] = value
+    return entry
   }
   // wallcap:end
   function themeMatchesNow(line) {
@@ -2557,7 +2718,8 @@ Item {
     { id: "@dup", label: "Duplicate", key: "N", action: true },
     { id: "@newcat", label: "New category", key: "K", action: true },
     { id: "@move", label: "Move to category", key: "M", action: true },
-    { id: "@ai", label: "Create with AI", key: "T", action: true }
+    { id: "@ai", label: "Create with AI", key: "T", action: true },
+    { id: "@edit", label: "Edit with AI", key: "E", action: true }
   ])
   function flash(msg, ms) { themeFlash = msg; themeFlashTimer.interval = ms || 3000; themeFlashTimer.restart() }
   Timer { id: themeFlashTimer; interval: 3000; onTriggered: root.themeFlash = "" }
@@ -2627,7 +2789,7 @@ Item {
     if (problem !== "") { flash(problem); return false }
     var nm = String(name || "").replace(/[|\r\n]/g, " ").trim().slice(0, 40)
     var dup = themes.filter(themeSameNow)
-    if (dup.length > 0) { flash("Already saved: " + themeItem(dup[0]).label); return false }
+    if (dup.length > 0) return alreadySaved(dup.indexOf(themeOrigin) >= 0 ? themeOrigin : dup[0])
     var opts = savedOpts()
     var q = key.split("|")
     if (opts !== "" || nm !== "") key = themeCompose(q[0] || "", q[1] || "", q[2] || "", q[3] || "", nm, q[5] || "", q[6] || "", q[7] || "", opts)
@@ -2753,7 +2915,7 @@ Item {
   }
   // the parts of a theme land one after the other; until the last one is in, the look differs from the theme and must not show as "changed"
   Timer { id: applyGuard; interval: 2000 }
-  function applyTheme(it, keep) {
+  function applyTheme(it, keep, withWallpaper) {
     if (!it || it.id.charAt(0) === "@") return
     if (lookChanged) {
       undoLine = themeCompose(current, wallShown, mouseCurrent, colorCurrent, "", winEffect, winColor, winFrame, savedOpts())
@@ -2772,6 +2934,7 @@ Item {
                                "bash", root.script, it.winFx, it.winCol, it.winFrame])
     }
     if (it.opts && Object.keys(it.opts).length > 0) { pendingOpts = it.opts; optsTimer.restart() }
+    if (withWallpaper === true) themeWallpaper(it)
     if (!keep) popupOpen = false
   }
   // choosing an effect resets its strength to the start value a moment later, so the theme's numbers go on last
@@ -2792,7 +2955,7 @@ Item {
   }
   function applyThemeLine(line) {
     var it = themeItem(line)
-    applyTheme(it, true)
+    applyTheme(it, true, true)
     flash("Applied: " + it.label)
   }
   function themeAt(n) {
@@ -2912,7 +3075,8 @@ Item {
     { k: ["Shift+↑↓"], t: "preview a step" },
     { k: ["Tab"], t: "next menu" },
     { k: ["Esc"], t: "close" },
-    { k: ["p"], t: "pause" } ]
+    { k: ["p"], t: "pause" },
+    { k: ["F3"], t: "resources" } ]
   // on a small screen the Everywhere row shrinks to one line
   readonly property var everywhereShort: [
     { head: true, k: [], t: "Everywhere", strong: true },
@@ -2931,11 +3095,12 @@ Item {
               { k: ["n"], t: "rename" },
               { k: ["M"], t: "move to category" },
               { k: ["S"], t: "share" },
+              { k: ["E"], t: "edit with AI" },
               { k: ["O"], t: "clear all" },
               { k: ["r"], t: "random theme" },
               { k: ["R"], t: "random everything" },
               { k: ["1-9"], t: "category" },
-              { k: ["g", "G"], t: "first / last" } ].concat(lookChanged ? [] : [{ k: ["F"], t: "save as theme" }], capWh !== "" ? [{ k: ["H"], t: capHint }] : [], [flagLegend])
+              { k: ["g", "G"], t: "first / last" } ].concat(lookChanged ? [] : [{ k: ["F"], t: "save as theme" }], capHasKey ? [{ k: ["H"], t: capHint }] : [], [{ k: ["L"], t: autoHint }], [flagLegend])
     }
     var out = [{ head: true, k: [], t: kindTitle(k), strong: true },
                { k: ["o"], t: "off" },
@@ -2951,7 +3116,8 @@ Item {
     if (k === "wall") out.push({ k: ["u"], t: "type a colour" })
     if (k === "mouse") out.push({ k: ["x"], t: "only with Shift" })
     out.push({ k: ["g", "G"], t: "first / last" })
-    if (capWh !== "") out.push({ k: ["H"], t: capHint })
+    if (capHasKey) out.push({ k: ["H"], t: capHint })
+    out.push({ k: ["L"], t: autoHint })
     if (activeSec.lockKind !== "") out.push(flagLegend)
     return out
   }
@@ -3134,8 +3300,8 @@ Item {
   // It starts at two lines of verdict plus two lines of chips and only grows if a look needs more.
   property real loadHold: 0
   // on a screen under 700 px high the reserve would push the menu off the screen, so there it only holds what has been seen
-  readonly property real loadFloor: popup.screenH > 0 && popup.screenH < Style.space(700) ? 0 : Style.space(26) + 2 * verdictMeasure.implicitHeight + 2 * Style.space(24) + Style.space(5) + Style.space(18) + 3 * Style.space(3)
-  readonly property real loadH: Math.max(loadBox.implicitHeight, loadFloor, loadHold)
+  readonly property real loadFloor: !resShown ? 0 : popup.screenH > 0 && popup.screenH < Style.space(700) ? 0 : Style.space(26) + 2 * verdictMeasure.implicitHeight + 2 * Style.space(24) + Style.space(5) + Style.space(18) + 3 * Style.space(3)
+  readonly property real loadH: !resShown ? 0 : Math.max(loadBox.implicitHeight, loadFloor, loadHold)
   onLoadHChanged: if (popupOpen && loadH > loadHold) Qt.callLater(function() { if (root.popupOpen && root.loadH > root.loadHold) root.loadHold = root.loadH })
   Text {
     id: verdictMeasure
@@ -3144,7 +3310,7 @@ Item {
     font.family: root.bar.fontFamily
     font.pixelSize: Style.font.body * 0.95
   }
-  readonly property real chromeBase: header.height + searchRow.height + stepRow.height + loadH + detailText.height + 6 * 1 + 10 * Style.space(4) + Style.space(30)
+  readonly property real chromeBase: header.height + searchRow.height + stepRow.height + loadH + detailText.height + (resShown ? 6 : 5) * 1 + (resShown ? 10 : 9) * Style.space(4) + Style.space(30)
   readonly property real rowStep: Style.space(28) + Style.space(2)
   readonly property real cardRoom: popup.availableCardHeight > 0 ? popup.availableCardHeight - popup.verticalContentInset : 100000
   // on a small screen the strip shrinks to the few keys you need first, so the lists keep their rows
@@ -3155,7 +3321,9 @@ Item {
   readonly property real chromeH: chromeBase + hintH
   readonly property real rowSpace: cardRoom - chromeH
   readonly property real maxExtra: themeSec.extraH + Style.space(34)
-  readonly property int rowsFit: Math.max(3, Math.min(40, Math.floor((rowSpace - maxExtra) / rowStep)))
+  // on a tall screen (1080 px and up) the lists take every row that fits: no 40-row ceiling, and the Themes column counts its own taller rows against the room instead of rounding twice
+  readonly property bool tallScreen: !tinyScreen && popup.screenH >= Style.space(1000)
+  readonly property int rowsFit: Math.max(3, Math.min(tallScreen ? 200 : 40, Math.floor((rowSpace - maxExtra) / rowStep)))
   // on a screen that is only just tall enough, the one-line Everywhere strip takes a little of the lists' minimum height
   readonly property int secH: Math.max(themeSec.implicitHeight, Style.space(stripShown && cardRoom < Style.space(560) ? 280 : 300))
   // the right-hand pane: a fixed row of tabs, one line saying what the open tab changes, then its list
@@ -3203,7 +3371,7 @@ Item {
     id: gpuTimer
     interval: 2500
     repeat: true
-    running: root.popupOpen
+    running: root.popupOpen && root.resShown
     triggeredOnStart: true
     onTriggered: if (!gpuProc.running) gpuProc.running = true
   }
@@ -3243,9 +3411,19 @@ Item {
   // the bar addresses panel widgets through these
   readonly property bool opened: popupOpen
   property bool popoutSwitchClosing: false
-  function open() { popupOpen = true }
-  function close() { popupOpen = false }
-  function toggle() { popupOpen = !popupOpen }
+  function open() {
+    if (viewOpen) return
+    if (lastView !== "" && restoreView()) return
+    popupOpen = true
+  }
+  function close() {
+    if (viewOpen) hideViews(true)
+    popupOpen = false
+  }
+  function toggle() {
+    if (viewOpen || popupOpen) close()
+    else open()
+  }
   function closeForPopoutSwitch() {
     popoutSwitchClosing = true
     popupOpen = false
@@ -3259,6 +3437,7 @@ Item {
     if (!popupOpen) wn.close()
     if (popupOpen) {
       wn.refresh()
+      mergeStarterThemes()
       lister.running = true
       panicProc.running = true
       screenOrigin = current
@@ -3330,7 +3509,7 @@ Item {
     var pool = (items || []).filter(function(t) { return t.id.charAt(0) !== "@" && !themeMatchesNow(t.id) })
     if (pool.length === 0) { flash("No other theme to pick here"); return }
     var t = pool[Math.floor(Math.random() * pool.length)]
-    applyTheme(t, true)
+    applyTheme(t, true, true)
     flash("Random theme: " + t.label)
   }
   function offAll() { effectKinds.forEach(offIn) }
@@ -3345,6 +3524,7 @@ Item {
       else if (id === "@revert") revertLook()
       else if (id === "@undo") undoDrop()
       else if (id === "@ai") openDialog("ai", "", 0)
+      else if (id === "@edit") startEdit()
       else if (id.indexOf("@job:") === 0) openDialog("ai", "", 0, id.substring(5))
       return
     }
@@ -3481,6 +3661,7 @@ Item {
     else if (t === "f") toggleFav(k)
     else if (t === "F") startSave()
     else if (t === "H") capAct()
+    else if (t === "L") setUseThemeWallpaper(!useThemeWallpaper)
     else if (t === "b") revertLook()
     else if (t === "y") undoDrop()
     else if (t === "n") startRename(false)
@@ -3492,6 +3673,7 @@ Item {
     else if (t === "S") startShare()
     else if (t === "i") openDialog("import", "", 0)
     else if (t === "T") openDialog("ai", "", 0)
+    else if (t === "E") startEdit()
     else if (t === "\x7f") deleteSelected(false)
     else if (t === "C") toggleSection("color")
     else if (t === "w") toggleSection("wall")
@@ -3532,6 +3714,7 @@ Item {
     function toggle(): void { root.toggle() }
     function wallhaven(): void { root.openWallhaven() }
     function aiTheme(): void { root.openDialog("ai", "", 0) }
+    function editTheme(which: string): void { root.openDialog("ai", "", 0, "", "", which === "" || which === "current" ? "current" : String(Math.floor(Number(which)) || 1)) }
     function importTheme(): void { root.openDialog("import", "", 0) }
     function palette(): void { root.openPalette() }
     function shareTheme(which: string): void { root.openDialog("share", "", Math.floor(Number(which)) || 1) }
@@ -3540,6 +3723,9 @@ Item {
     function gifCount(n: string, monitor: string): void { root.gifMonitor = monitor; root.gifCount = Math.max(0, Math.floor(Number(n)) || 0) }
     function open(): void { root.open() }
     function close(): void { root.close() }
+    function mainMenu(): void { root.hideViews(false); root.forgetView(); root.popupOpen = true }
+    function view(): string { return "last=" + (root.lastView === "" ? "none" : root.lastView.replace(/\|/g, ":")) + " menu=" + root.popupOpen + " dlg=" + root.dlgOpen + " mode=" + root.dlgMode + " wh=" + root.whOpen + " pal=" + root.palOpen }
+    function resources(): string { return "shown=" + root.resShown + " cap=" + (f3Cap.visible && f3Cap.width > 0) + " poll=" + gpuTimer.running + " height=" + Math.round(loadBox.visible ? loadBox.height : 0) + " flag=" + root.resFlag }
     function set(name: string): void { root.applyScreen(name === "off" ? "" : name) }
     function setColor(name: string): void { root.applyColor(name === "off" ? "" : name) }
     function setMouse(name: string): void { root.applyMouse(name === "off" ? "" : name) }
@@ -3549,10 +3735,11 @@ Item {
     function themeMenu(): string { var s = themeSec; return "open=" + root.popupOpen + " cat=" + (s.curCat ? s.curCat.id : "") + " catIdx=" + s.catIdx + " nCmd=" + s.nCmd + " item=" + s.itemIdx + " items=" + s.curItems.length + " col=" + s.col + " scroll=" + Math.round(s.listY) + " catscroll=" + Math.round(s.catY) + " jumps=" + s.topJumps + " rows=" + s.visibleRows + " chrome=" + Math.round(root.chromeH) + " load=" + Math.round(loadBox.implicitHeight) + " loadH=" + Math.round(root.loadH) + " sel=" + (s.selected ? s.selected.label : "") }
     function hints(): string { return (root.keyHints ? "on" : "off") + " strip=" + Math.round(root.stripShown ? hintStrip.height : 0) + " tiny=" + root.tinyScreen + " rows=" + root.rowsFit + " dense=" + root.denseHints + " need=" + Math.round(body.implicitHeight) + " room=" + Math.round(root.cardRoom) + " preview=" + (root.keyPreview ? "on" : "off") + " slashcap=" + (slashCap.visible && slashCap.width > 0) + " f1cap=" + (f1Cap.visible && f1Cap.width > 0) + " f1dim=" + (f1Cap.opacity < 1) + " focus=" + root.focusKind + " row2=" + (root.stripShown && focusFlow.visible) + " chrome=" + Math.round(root.chromeBase) + " extra=" + Math.round(root.maxExtra) + " measure=" + Math.round(hintMeasure.height) + " open=" + root.popupOpen + " legend=" + (root.stripShown && focusFlow.visible && root.focusHints.some(function(h) { return h.legend === true })) + " legendtext=" + root.flagLegend.t.replace(/ /g, "_") + " fkeys=" + root.focusHints.filter(function(h) { return h.legend !== true }).map(function(h) { return h.k.join("+") }).join(",") + " ekeys=" + root.everywhereHints.map(function(h) { return h.k.join("+") }).join(",") }
     function custom(): string { return "hex=" + root.customHex + " h=" + root.customH.toFixed(3) + " s=" + root.customS.toFixed(3) + " v=" + root.customV.toFixed(3) + " on=" + root.customActive + " railcaps=" + colorSec.railCaps }
-    function wallCap(): string { return "visible=" + (wallCap.visible && wallCap.width > 0) + " wh=" + root.capWh + " kind=" + root.capState.kind + " label=" + root.capState.label.replace(/ /g, "_") + " enabled=" + root.capState.enabled + " err=" + root.capErr.replace(/ /g, "_") + " running=" + capUseProc.running + " cached=" + (root.capCached[root.capWh] === true) + " current=" + root.currentWhId + " x=" + Math.round(wallCap.mapToItem(null, 0, 0).x) + " y=" + Math.round(wallCap.mapToItem(null, 0, 0).y) + " w=" + Math.round(wallCap.width) + " h=" + Math.round(wallCap.height) }
+    function wallCap(): string { return "visible=" + (wallCap.visible && wallCap.width > 0) + " wh=" + root.capWh + " kind=" + root.capState.kind + " label=" + root.capState.label.replace(/ /g, "_") + " enabled=" + root.capState.enabled + " err=" + root.capErr.replace(/ /g, "_") + " running=" + capUseProc.running + " auto=" + root.useThemeWallpaper + " cached=" + (root.capCached[root.capWh] === true) + " current=" + root.currentWhId + " box=" + (autoBox.visible && autoBox.width > 0) + " boxx=" + Math.round(autoBox.mapToItem(null, 0, 0).x) + " boxw=" + Math.round(autoBox.width) + " x=" + Math.round(wallCap.mapToItem(null, 0, 0).x) + " y=" + Math.round(wallCap.mapToItem(null, 0, 0).y) + " w=" + Math.round(wallCap.width) + " h=" + Math.round(wallCap.height) }
     function wallCapPress(): void { root.capAct() }
+    function autoWallpaper(mode: string): void { root.setUseThemeWallpaper(mode === "toggle" ? !root.useThemeWallpaper : (mode === "on" || mode === "1")) }
     function look(): string { return root.originLine === "" ? "none" : (root.lookChanged ? "changed|" : "same|") + root.originName }
-    function theme(which: string): void { if (which === "save") root.saveTheme(); else root.applyTheme(root.themeAt(which), true) }
+    function theme(which: string): void { if (which === "save") root.saveTheme(); else root.applyTheme(root.themeAt(which), true, true) }
     function themeRename(which: string, name: string): void { var it = root.themeAt(which); if (it) root.renameTheme(it.id, name) }
     // old names, kept so existing key bindings keep working
     function combo(which: string): void { theme(which) }
@@ -3562,6 +3749,11 @@ Item {
     function power(mode: string): void { root.setPower(mode === "" ? "toggle" : mode) }
     function strength(kind: string, value: string): void { Quickshell.execDetached([root.script, "strength", kind, value]) }
     function shiftOnly(mode: string): void { root.setShiftOnly(mode === "toggle" ? !root.shiftOnly : (mode === "on" || mode === "1")) }
+  }
+
+  // new starter themes appear without a shell restart: the same merge runs each time the menu opens (the themes file is watched and reloads)
+  function mergeStarterThemes() {
+    Quickshell.execDetached(["bash", "-c", 'seen="$1/starter-seen"; touch "$seen" "$2"; while IFS= read -r l || [ -n "$l" ]; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$2" || { [ -s "$2" ] && [ -n "$(tail -c1 "$2")" ] && echo >> "$2"; printf "%s\\n" "$l" >> "$2"; }; printf "%s\\n" "$l" >> "$seen"; done < "$3" 2>/dev/null', "bash", root.stateDir, root.themeFile, root.path("starter-themes")])
   }
 
   property bool ready: false
@@ -3584,7 +3776,7 @@ Item {
     // the saved looks were called combos before 1.31: the user's file is moved to themes once (a copy stays as combos.pre-themes)
     // starter themes: each shipped line is added to the user's list once (tracked in starter-seen), so new releases deliver new themes
     // and a theme the user removed does not come back
-    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; if [ -s "$1/combos" ] && [ ! -s "$3" ]; then cp -p "$1/combos" "$1/.themes.$$" && mv -f "$1/.themes.$$" "$3" && mv -f "$1/combos" "$1/combos.pre-themes"; fi; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
+    Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1"; if [ -s "$1/combos" ] && [ ! -s "$3" ]; then cp -p "$1/combos" "$1/.themes.$$" && mv -f "$1/.themes.$$" "$3" && mv -f "$1/combos" "$1/combos.pre-themes"; fi; : > "$2"; seen="$1/starter-seen"; touch "$seen" "$3"; while IFS= read -r l || [ -n "$l" ]; do [ -n "$l" ] || continue; grep -qxF -- "$l" "$seen" && continue; grep -qxF -- "$l" "$3" || { [ -s "$3" ] && [ -n "$(tail -c1 "$3")" ] && echo >> "$3"; printf "%s\\n" "$l" >> "$3"; }; printf "%s\\n" "$l" >> "$seen"; done < "$4" 2>/dev/null; shift 4; for f in "$@"; do [ -e "$f" ] || : > "$f"; done', "bash",
                              root.stateDir, root.wallPreviewFile, root.themeFile, root.path("starter-themes"), root.stateFile, root.colorFile, root.colorFavFile, root.animatedFile, root.mouseFile, root.sectionsFile, root.shiftOnlyFile, root.disabledFile, root.fxStrengthFile, root.colStrengthFile, root.wallStrengthFile, root.mouseStrengthFile, root.wallReactFile, root.wallRangeFile, root.wallSpeedFile, root.wallZoomFile, root.wallTargetFile, root.winEffectFile, root.winColorFile, root.winFrameFile, root.winTargetFile, root.winAppsFile, root.winFxStrengthFile, root.winColStrengthFile,
                              root.screenFavFile, root.wallEffectFile, root.wallFavFile, root.mouseFavFile, root.themeFile, root.fsPauseFile, root.mouseSizeFile, root.mouseSpeedFile])
   }
@@ -3928,7 +4120,7 @@ Item {
     property point lastPt: Qt.point(-100, -100)
     readonly property int rowH: Style.space(special ? 38 : 28)
     readonly property int rowGap: Style.space(special ? 3 : 2)
-    readonly property int visibleRows: special ? Math.max(4, Math.floor(root.rowsFit * (Style.space(28) + Style.space(2)) / (rowH + rowGap)))
+    readonly property int visibleRows: special ? Math.max(4, root.tallScreen ? Math.floor((root.rowSpace - root.maxExtra) / (rowH + rowGap)) : Math.floor(root.rowsFit * (Style.space(28) + Style.space(2)) / (rowH + rowGap)))
                                                 : (inPane ? Math.max(3, Math.floor((root.paneRoom - extraH - Style.space(40)) / (rowH + rowGap))) : root.rowsFit)
     readonly property int titleH: inPane ? (hasPicker ? Style.space(28) : 0) : Style.space(special ? 32 : 24)
     readonly property var curCat: cats.length > 0 ? cats[root.clamp(catIdx, 0, cats.length - 1)] : null
@@ -5231,6 +5423,7 @@ Item {
           root.keyShift = (event.modifiers & Qt.ShiftModifier) !== 0
           if (event.key === Qt.Key_F1) { root.toggleKeyHints(); event.accepted = true }
           else if (event.key === Qt.Key_F2) { root.toggleKeyPreview(); event.accepted = true }
+          else if (event.key === Qt.Key_F3) { root.toggleResources(); event.accepted = true }
           else if (event.key === Qt.Key_Shift) root.setMenuShift(true)
         }
         Keys.onReleased: function(event) {
@@ -5327,6 +5520,7 @@ Item {
             spacing: Style.space(10)
             HeaderCap { id: f1Cap; cap: "F1"; label: "hotkeys"; lit: root.keyHints; onClicked: root.toggleKeyHints() }
             HeaderCap { id: f2Cap; cap: "F2"; label: "live preview"; lit: root.keyPreview; onClicked: root.toggleKeyPreview() }
+            HeaderCap { id: f3Cap; cap: "F3"; label: "resources"; lit: root.resShown; onClicked: root.toggleResources() }
           }
           HotKey {
             id: wnKey
@@ -5465,7 +5659,7 @@ Item {
             width: body.rightW
             height: stepRow.height
             Text {
-              width: parent.width - (wallCap.visible ? wallCap.width + Style.space(10) : 0)
+              width: parent.width - (wallCap.visible ? wallCap.width + Style.space(10) : 0) - autoBox.width - Style.space(10)
               height: stepRow.height
               verticalAlignment: Text.AlignVCenter
               leftPadding: Style.space(10)
@@ -5478,20 +5672,65 @@ Item {
               font.bold: true
             }
             // the theme's own Wallhaven picture, right above the tab row: the link opens its page, the button fetches and sets it (key H)
+            // the plugin setting "Use theme wallpaper when available" (off by default), same value as in the Omarchy plugin settings; key L
             Rectangle {
-              id: wallCap
-              visible: root.capWh !== ""
+              id: autoBox
+              visible: true
               anchors.right: parent.right
               anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
               height: stepRow.height - Style.space(4)
-              width: capLink.implicitWidth + capBtn.width + Style.space(22)
+              width: autoText.implicitWidth + Style.space(20)
+              radius: height / 2
+              color: root.fgA(autoMouse.containsMouse ? 0.22 : (root.useThemeWallpaper ? 0.16 : 0.08))
+              border.width: 1
+              border.color: root.fgA(root.useThemeWallpaper ? 0.5 : 0.3)
+              Text {
+                id: autoText
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: (root.useThemeWallpaper ? "\uF046 " : "\uF096 ") + "Use theme wallpapers"
+                color: root.fg
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.9
+              }
+              MouseArea {
+                id: autoMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.setUseThemeWallpaper(!root.useThemeWallpaper)
+              }
+            }
+            Rectangle {
+              id: wallCap
+              visible: true
+              anchors.right: autoBox.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              height: stepRow.height - Style.space(4)
+              width: Math.min(parent.width - Style.space(30) - autoBox.width, (root.capWh !== "" ? capLink.implicitWidth : 0) + (capBtn.visible ? capBtn.width : 0) + (capNote.visible ? capNote.implicitWidth : 0) + Style.space(22))
               radius: height / 2
               color: root.fgA(0.1)
               border.width: 1
               border.color: root.fgA(0.35)
               Text {
+                id: capNote
+                visible: !capBtn.visible
+                x: Style.space(10)
+                width: parent.width - Style.space(20)
+                height: parent.height
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: root.capState.label
+                color: root.fgA(0.6)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body * 0.9
+              }
+              Text {
                 id: capLink
+                visible: root.capWh !== ""
                 x: Style.space(10)
                 height: parent.height
                 verticalAlignment: Text.AlignVCenter
@@ -5511,6 +5750,7 @@ Item {
               }
               Rectangle {
                 id: capBtn
+                visible: root.capState.kind !== "none" && root.capState.kind !== "unsaved"
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(2)
                 anchors.verticalCenter: parent.verticalCenter
@@ -5524,6 +5764,7 @@ Item {
                   anchors.centerIn: parent
                   textFormat: Text.PlainText
                   text: root.capState.kind === "current" ? "\uDB80\uDD2C " + root.capState.label
+                        : root.capState.kind === "remember" ? "\uDB80\uDD93 " + root.capState.label
                         : (root.capState.kind === "busy" ? "" : "\uDB80\uDDDA ") + root.capState.label
                   color: root.fg
                   font.family: root.bar.fontFamily
@@ -5563,7 +5804,7 @@ Item {
             onPointed: function(item) { root.previewTheme(item) }
             onChosen: function(item, keep) {
               if (item.id.indexOf("@rand:") === 0 || item.id.indexOf("@clear:") === 0) { root.runSurprise(item.id); if (!keep) root.popupOpen = false }
-              else root.applyTheme(item, keep)
+              else root.applyTheme(item, keep, true)
             }
             onActed: function(id) { root.runAction("theme", id) }
             onFocusRequested: root.activeKind = "theme"
@@ -5902,9 +6143,10 @@ Item {
 
         Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
 
-        // what is on and what it costs: the answer to "why is my system slow?"
+        // what is on and what it costs: the answer to "why is my system slow?" (F3 hides it)
         Column {
           id: loadBox
+          visible: root.resShown
           width: body.width
           height: root.loadH
           spacing: Style.space(3)
@@ -6000,7 +6242,7 @@ Item {
           }
         }
 
-        Rectangle { width: body.width; height: 1; color: root.fgA(0.2) }
+        Rectangle { visible: root.resShown; width: body.width; height: 1; color: root.fgA(0.2) }
 
         Text {
           id: detailText

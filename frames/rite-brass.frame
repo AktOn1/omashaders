@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Rite brass: a thin machined brass edge that runs from dark brass through bright polished brass and back, a tight deep-red candle bleed around the focused window, small hard corners, and a dim oxblood-brown edge on the others
+rounding=4
+border_size=2
+border_colors=5a3d14ff,dca642ff,fff0c8ff,dca642ff,5a3d14ff
+border_angle=45
+border_inactive=3a1a16aa
+shadow_range=26
+shadow_power=3
+shadow_color=b8101a88
+shadow_offset=0,1
+shadow_inactive=00000000

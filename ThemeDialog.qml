@@ -16,6 +16,10 @@ import qs.Ui
 //   mode "share"   pick which parts go into the OMS1: code (all on by default) of the saved theme `number`, or of the look on now (number 0); the button makes it, copies it, shows it
 //   mode "save"    a name field for saving the look on now as a theme
 //   mode "import"  paste a code, bin/theme-code checks it (unknown ids are reported and left out) and saves it as a theme
+//             Regenerate (bin/airegen.py): on any draft the parts (Screen, Color, Wallpaper, Cursor, Windows, Frame) can be ticked and made again as a different take, with
+//             an optional direction; every part that is not ticked comes back exactly as it was. "Previous" goes back to the version a part had before.
+//             Edit with AI: a saved theme (or the look on now) is opened as a draft the same way (`ai-theme job load`); "Save changes" rewrites an own theme in place,
+//             "Save as new theme" keeps the original. Built-in themes can only be saved as new.
 // Everything is done by bin/ai-theme and bin/theme-code; nothing the AI or a code says is ever executed.
 Item {
   id: td
@@ -29,14 +33,16 @@ Item {
   function fgA(a) { return Qt.rgba(fg.r, fg.g, fg.b, a) }
   readonly property string font: core ? core.bar.fontFamily : "sans"
   // Esc hides the dialog and nothing else: a running job keeps running, a draft stays a draft, the typed words are remembered
-  function close() {
+  // leave() is the user going out (Esc, Close, Done): the menu opens on the main list next time. close() is the menu being dismissed (icon, click away, another popout): the next open comes back here.
+  function leave() { hideNotes(); if (core) core.hideViews(false) }
+  function close() { hideNotes(); if (core) core.hideViews(true) }
+  function hideNotes() {
     if (mode === "ai") {
       if (busy) core.notify("OmaShaders", "Still working in the background. You will get a notification when your theme is ready.")
       else if (chatActive) core.notify("OmaShaders", "Your draft is kept. Open the menu, Themes, Made by AI, to save, change or discard it.")
     } else if (jobs.any) cancel()
-    if (core) core.dlgOpen = false
   }
-  function closeForPopoutSwitch() { if (core) core.dlgOpen = false }
+  function closeForPopoutSwitch() { if (core) core.hideViews(true) }
 
   property string status: ""
   property bool statusBad: false
@@ -107,6 +113,7 @@ Item {
     var r = j.result, u = r.usage || {}
     var line = u.tokens_in ? "Turn " + r.turn + ": used " + nfmt(u.tokens_in) + " tokens in, " + nfmt(u.tokens_out || 0) + " out" + money(u.cost_usd) + (u.calls > 1 ? " in " + u.calls + " calls" : "") + ". " : ""
     var tail = onlyMode ? "Applied on top of your look: " + r.name + ". Not kept yet: keep talking to change it, or keep it."
+             : r.loaded ? "Applied: " + r.name + ". Not saved yet: tick parts to make them again, keep talking to change it, or save it."
                         : "Applied: " + r.name + ". Not saved yet: keep talking to change it, or save it."
     if (j.state === "interrupted") return "The last change was interrupted. Retry runs it again, or keep this draft. " + tail
     if (j.state === "failed") return "The last change did not work: " + (j.error || "the AI answer could not be used") + ". " + tail
@@ -150,6 +157,37 @@ Item {
     { key: "frame", label: "Window frame", hint: "e.g. thin red border, soft glow" }
   ]
   readonly property bool anyPartFocus: { for (var i = 0; i < partFields.count; i++) { var f = partFields.itemAt(i); if (f && f.activeFocus) return true } return false }
+  // Edit with AI and Regenerate: a saved theme opened as a draft ("loaded"), and the parts ticked to be made again
+  property string editRef: ""            // "N" (a saved theme's number) or "current" while the form waits to open a theme for editing
+  readonly property bool editForm: mode === "ai" && job === null && editRef !== "" && !onlyMode
+  readonly property bool loaded: res ? res.loaded === true : false
+  readonly property var origin: res && res.origin ? res.origin : null
+  readonly property bool canReplace: loaded && origin !== null && origin.own === true
+  readonly property string editName: {
+    if (editRef === "" || !core) return ""
+    var n = Number(editRef)
+    return n > 0 && n <= core.themes.length ? core.themeItem(core.themes[n - 1]).label : "the look on now"
+  }
+  property var regenPick: ({})
+  property var regenEst: null
+  readonly property var regenList: {
+    var q = chatLine.split("|")
+    var wf = q[5] || "", wc = q[6] || ""
+    var pr = function(x) { return core.prettyId(x) }
+    return [
+      { key: "screen", label: "Screen", has: (q[0] || "") !== "", what: (q[0] || "") !== "" ? pr(q[0]) : "" },
+      { key: "color", label: "Color", has: (q[3] || "") !== "", what: (q[3] || "") !== "" ? pr(q[3]) : "" },
+      { key: "wallpaper", label: "Wallpaper", has: (q[1] || "") !== "", what: (q[1] || "") !== "" ? core.wallLabel(q[1]) : "" },
+      { key: "cursor", label: "Cursor", has: (q[2] || "") !== "", what: (q[2] || "") !== "" ? pr(q[2]) : "" },
+      { key: "windows", label: "Windows", has: wf !== "" || wc !== "", what: [wf, wc].filter(function(x) { return x !== "" }).map(pr).join(" + ") },
+      { key: "frame", label: "Frame", has: (q[7] || "") !== "", what: (q[7] || "") !== "" ? pr(q[7]) : "" }
+    ]
+  }
+  readonly property string regenSlots: regenList.filter(function(x) { return regenPick[x.key] === true }).map(function(x) { return x.key }).join(",")
+  readonly property var previousList: {
+    var have = res && res.previous ? res.previous : []
+    return regenList.filter(function(x) { return have.indexOf(x.key) >= 0 })
+  }
   readonly property var cardRows: {
     if (!card) return []
     var names = { wallpaper: "Wallpaper overlay", screen: "Screen", color: "Color", cursor: "Cursor", window: "Windows", frame: "Frame" }
@@ -165,7 +203,7 @@ Item {
     return rows
   }
   readonly property bool aiOk: core ? core.aiAvailable : false
-  readonly property string title: mode === "ai" ? (onlyMode ? "Create your own " + (onlyWhat[onlySlot] || "effect") + " (AI)" : "Create your own theme (AI)") : (mode === "share" ? "Share" : (mode === "save" ? "Save as a theme" : "Import a theme"))
+  readonly property string title: mode === "ai" ? (onlyMode ? "Create your own " + (onlyWhat[onlySlot] || "effect") + " (AI)" : (editForm || loaded ? "Edit a theme with AI" : "Create your own theme (AI)")) : (mode === "share" ? "Share" : (mode === "save" ? "Save as a theme" : "Import a theme"))
 
   // share: the theme line being shared (a saved theme, or the look on now) and which of its parts go into the code
   property string srcLine: ""
@@ -207,8 +245,10 @@ Item {
     settingsOpen = true; actMsg = ""; actBad = false; confirmCancel = false; fresh = false
     testMsg = ""; est = null
     if (mode === "ai") {
-      jobId = core.dlgJob !== "" && core.jobById(core.dlgJob) ? core.dlgJob : bestJob()
-      if (jobId === "") restoreForm(core.jobsForm)
+      editRef = core.dlgEdit; regenPick = ({}); regenEst = null
+      jobId = editRef !== "" ? "" : (core.dlgJob !== "" && core.jobById(core.dlgJob) ? core.dlgJob : bestJob())
+      if (editRef !== "") { fresh = true; restoreForm(core.jobsForm) }
+      else if (jobId === "") restoreForm(core.jobsForm)
       else { settingsOpen = false; showDraft() }
       sprites = false; imgMsg = ""; imgCheckpoints = []
       core.refreshAi(); loadProviders(); loadImg(); focusTimer.restart()
@@ -244,7 +284,7 @@ Item {
     if (!open || mode !== "ai") return
     if (jobId !== "" && job === null) {
       // the job is gone (saved, discarded or dismissed somewhere else)
-      jobId = ""; fresh = true; settingsOpen = true; actMsg = ""; restoreForm(core.jobsForm)
+      jobId = ""; editRef = ""; fresh = true; settingsOpen = true; actMsg = ""; restoreForm(core.jobsForm)
       return
     }
     if (jobId === "" && !fresh && !starting && promptField.text === "") { var b = bestJob(); if (b !== "") jobId = b }
@@ -257,6 +297,7 @@ Item {
     if (open && mode === "ai") showDraft()
   }
   onJobSigChanged: if (!(job && job.alive)) confirmCancel = false
+  onJobIdChanged: { regenPick = ({}); regenEst = null }
 
   // the draft is previewed live while the dialog is open; hiding the dialog puts the look back (the draft itself stays)
   function showDraft() {
@@ -339,7 +380,8 @@ Item {
     }
   }
   // the panel hands the focus to its key catcher right after opening, so the text box takes it back a moment later
-  Timer { id: focusTimer; interval: 300; onTriggered: { if (td.mode === "ai") promptField.forceActiveFocus(); else if (td.mode === "import") codeField.forceActiveFocus(); else if (td.mode === "save") { saveField.forceActiveFocus(); saveField.selectAll() } } }
+  // (not when a saved theme is opened for editing: there the number keys, g, p and w must work at once)
+  Timer { id: focusTimer; interval: 300; onTriggered: { if (td.mode === "ai") { if (td.editForm || (td.loaded && td.chatActive)) keys.forceActiveFocus(); else promptField.forceActiveFocus() } else if (td.mode === "import") codeField.forceActiveFocus(); else if (td.mode === "save") { saveField.forceActiveFocus(); saveField.selectAll() } } }
 
   // ------------------------------------------------------------ AI provider
   function loadProviders() { if (!provProc.running) provProc.running = true }
@@ -582,7 +624,7 @@ Item {
   function money(c) { return c ? ", about $" + (c < 0.1 ? Number(c).toFixed(3) : Number(c).toFixed(2)) : "" }
   readonly property string estText: {
     if (!est) return ""
-    if (useRich) return "Before you start: " + est.summary + (est.note ? " (" + est.note + ")" : "") + ". " + (est.review ? "The renders of each piece are checked and weak ones are made again (up to " + richRounds + " round" + (richRounds === 1 ? "" : "s") + "). " : (richRounds > 0 && !provImage ? "This AI cannot look at pictures, so the renders are not checked. " : "")) + "Quick would use about " + nfmt(est.quick.tokens_in + est.quick.tokens_out) + " tokens. The real cost is shown when it is done."
+    if (useRich) return "Before you start: " + est.summary + (est.note ? " (" + est.note + ")" : "") + ". " + (est.review ? "The renders of each piece are checked and weak ones are made again (up to " + richRounds + " round" + (richRounds === 1 ? "" : "s") + "). " : (richRounds > 0 && !provImage ? "This AI cannot look at pictures, so the renders are not checked. " : "")) + (est.quick ? "Quick would use about " + nfmt(est.quick.tokens_in + est.quick.tokens_out) + " tokens. " : "") + "The real cost is shown when it is done."
     if (useInvent) return "Before you start: about " + nfmt(est.tokens_in) + " tokens in and " + nfmt(est.tokens_out) + " out" + money(est.cost_usd) + (est.note ? " (" + est.note + ")" : "")
                        + ". Each repair try adds about " + nfmt(est.repair_tokens_in + est.repair_tokens_out) + " (at most 2 per part). Pick existing would send about " + nfmt(est.pick_tokens_in) + " tokens in."
     return "Before you start: about " + nfmt(est.pick_tokens_in) + " tokens in. Only a small copy of the picture and its colours are sent."
@@ -593,13 +635,14 @@ Item {
   // Enter / "Create theme": the first message starts a job, a later one changes the draft (a second turn of the same job)
   function sendTurn(surprise) {
     if (starting || busy || actProc.running) return
+    if (editForm) { startEdit(); return }
     if (job !== null && !chatActive) { retryJob(); return }
     var text = promptField.text.trim()
     if (!aiOk) { say("AI needed. " + core.aiHint, true); return }
     var first = job === null
     if (first && onlyMode && !inventReady) { say(inventHint, true); return }
     if (!first) {
-      if (text === "") { saveChat(); return }
+      if (text === "") { saveChat(false); return }
       starting = true
       actMsg = ""
       runJob(["change", job.id, text, "--est", ""], function(d) {
@@ -680,24 +723,113 @@ Item {
   function newTheme() {
     if (job === null) return
     leaveLook()
-    jobId = ""; fresh = true; settingsOpen = true; actMsg = ""; confirmCancel = false
+    jobId = ""; editRef = ""; fresh = true; settingsOpen = true; actMsg = ""; confirmCancel = false
     restoreForm(core.jobsForm)
     say("", false)
     focusTimer.restart()
   }
-  function saveChat() {
+  // Save: a fresh draft is saved as a new theme; an opened (loaded) own theme is rewritten in place ("Save changes"), or saved as a new one with asNew
+  function saveChat(asNew) {
     if (!chatActive || busy || actProc.running) return
+    var replace = canReplace && asNew !== true
     actMsg = "Saving…"; actBad = false
     var id = job.id
-    runJob(["save", id], function(d) {
+    runJob(replace ? ["save", id, "--replace"] : ["save", id], function(d) {
       if (!d.ok) { td.actMsg = d.error || (td.onlyMode ? "Could not keep the effect." : "Could not save the theme."); td.actBad = true; return }
       td.forgetLook(id)
-      td.jobId = ""; td.fresh = true; td.actMsg = ""
+      td.jobId = ""; td.editRef = ""; td.fresh = true; td.actMsg = ""
       if (d.only) td.core.reloadList(function() { td.core.flash("Kept your new effect: " + d.name + " (it is yours, not locked)") })
+      else if (d.replaced) td.core.reloadList(function() { td.core.flash("Updated theme #" + d.number + ": " + d.name) })
       else td.core.reloadList(function() { td.core.flash((d.existed ? "You already had this theme (#" : "Saved as theme #") + d.number + "): " + d.name) })
       td.core.dlgOpen = false
     })
   }
+
+  // ------------------------------------------------------------ edit and regenerate
+  // open a saved theme (or the look on now) as a draft in the mode picked above; no AI call is made until Regenerate
+  function startEdit() {
+    if (starting || actProc.running || editRef === "") return
+    if (invent && !inventReady) { say(inventHint, true); return }
+    var c = ["load", editRef === "current" ? "current" : editRef]
+    if (editRef === "current") { c.push("--line"); c.push(core.lookLine()) }
+    if (rich) c.push("--rich"); else if (invent) c.push("--invent")
+    starting = true
+    say("Opening…", false)
+    runJob(c, function(d) {
+      td.starting = false
+      if (!d.ok) { td.say(d.error || "Could not open that theme.", true); return }
+      td.say("", false)
+      td.core.jobs = td.core.jobs.concat([d.job])
+      td.jobId = d.job.id
+      td.editRef = ""
+      td.fresh = false
+      td.settingsOpen = false
+      td.core.refreshJobs()
+    })
+  }
+  function toggleRegen(i) {
+    if (!chatActive || onlyMode) return
+    var x = regenList[i]
+    if (!x) return
+    var m = {}
+    for (var k in regenPick) m[k] = regenPick[k]
+    m[x.key] = !m[x.key]
+    regenPick = m
+    actMsg = ""
+    refreshRegenEst()
+  }
+  function regenerate() {
+    if (!chatActive || busy || starting || actProc.running) return
+    if (regenSlots === "") { actMsg = "Tick the parts to make again first (keys 1-6)."; actBad = true; return }
+    if (!aiOk) { actMsg = "AI needed. " + core.aiHint; actBad = true; return }
+    var words = dirField.text.trim().replace(/^[-\s]+/, "")
+    var c = ["regen", job.id, regenSlots]
+    if (words !== "") c.push(words)
+    if (job.mode === "rich") { c.push("--rounds"); c.push(String(richRounds)) }
+    c.push("--est"); c.push(regenEstText.substring(0, 190))
+    starting = true
+    actMsg = ""
+    runJob(c, function(d) {
+      td.starting = false
+      if (!d.ok) { td.actMsg = d.error || "Could not start the regenerate."; td.actBad = true; return }
+      dirField.text = ""
+      td.actBad = false
+    })
+  }
+  // take back the last version of the parts that are ticked (and have one); with none ticked, of every part that has one
+  function regenBack(all) {
+    if (!chatActive || busy || starting || actProc.running) return
+    var parts = previousList.filter(function(x) { return all === true || regenPick[x.key] === true }).map(function(x) { return x.key })
+    if (parts.length === 0) parts = previousList.map(function(x) { return x.key })
+    if (parts.length === 0) { actMsg = "There is no earlier version yet."; actBad = true; return }
+    actMsg = ""
+    runJob(["regen-undo", job.id, parts.join(",")], function(d) {
+      if (!d.ok) { td.actMsg = d.error || "Could not go back."; td.actBad = true; return }
+      td.actBad = false
+    })
+  }
+  Timer { id: regenEstTimer; interval: 500; onTriggered: td.runRegenEst() }
+  function refreshRegenEst() { regenEst = null; if (chatActive && regenSlots !== "") regenEstTimer.restart() }
+  function runRegenEst() {
+    if (!chatActive || regenSlots === "") return
+    if (regenEstProc.running) { regenEstTimer.restart(); return }
+    var c = ["python3", core.path("bin/ai-theme"), "estimate", "--regen", regenSlots]
+    if (job.mode === "rich") c = c.concat(["--rich", "--rounds", String(richRounds)])
+    else if (job.mode === "invent") c.push("--invent")
+    c.push("--json")
+    regenEstProc.command = c
+    regenEstProc.running = true
+  }
+  Process {
+    id: regenEstProc
+    environment: td.core ? td.core.aiEnv() : ({})
+    stdout: StdioCollector { id: regenEstOut; waitForEnd: true }
+    onExited: function(code) {
+      try { td.regenEst = JSON.parse(String(regenEstOut.text).trim().split("\n").pop()) } catch (e) { td.regenEst = null }
+    }
+  }
+  readonly property string regenEstText: regenEst ? regenEst.summary + (regenEst.note ? " (" + regenEst.note + ")" : "") : ""
+
   // put the previous look back and delete what the draft generated; stay = keep the panel open for a fresh start
   function discardChat(stay) {
     if (!chatActive || busy || actProc.running) return
@@ -707,7 +839,7 @@ Item {
       if (!d.ok) { td.actMsg = d.error || "Could not discard."; td.actBad = true; return }
       td.forgetLook(id)
       td.core.reloadList()
-      td.jobId = ""; td.fresh = true; td.settingsOpen = true; td.actMsg = ""
+      td.jobId = ""; td.editRef = ""; td.fresh = true; td.settingsOpen = true; td.actMsg = ""
       td.restoreForm(td.core.jobsForm)
       td.say("Discarded. Your previous look is back and " + (td.onlyMode ? "the new effect is deleted." : "the effects made for this theme are deleted."), false)
     })
@@ -893,7 +1025,7 @@ Item {
     if (undoToken === "") return
     Quickshell.execDetached(["python3", core.path("bin/theme-code"), "keep", "--token", undoToken])
     undoToken = ""
-    close()
+    leave()
   }
   function undoImport() {
     if (undoToken === "" || undoProc.running) return
@@ -911,7 +1043,7 @@ Item {
       var pl = td.prevLook
       if (pl !== "") td.core.reloadList(function() { td.core.restoreLook(pl) })
       else td.core.reloadList()
-      td.close()
+      td.leave()
       td.core.flash("Import undone: the theme and its new effects are removed.")
     }
   }
@@ -978,27 +1110,33 @@ Item {
     open: td.open
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(760))
-    contentHeight: panel.fittedContentHeight(td.mode === "ai" ? (td.job !== null ? (td.chatActive ? (td.card ? Style.space(td.settingsOpen ? 980 : 860) : (td.settingsOpen ? Style.space(780) : Style.space(600))) : Style.space(td.settingsOpen ? 700 : 440)) : (td.rich ? Style.space(780 + td.spritesExtra) : td.invent ? Style.space(700 + td.spritesExtra) : Style.space(520 + td.spritesExtra))) : (td.mode === "save" ? Style.space(core.originLine !== "" ? 220 : 170) : Style.space(td.mode === "share" ? 400 : 380)))
+    contentHeight: panel.fittedContentHeight(td.mode === "ai" ? (td.job !== null ? (td.chatActive ? (td.card ? Style.space(td.settingsOpen ? 1100 : 940) : (td.settingsOpen ? Style.space(940) : Style.space(760))) : Style.space(td.settingsOpen ? 700 : 440)) : (td.editForm ? Style.space(td.settingsOpen ? 640 : 330) : td.rich ? Style.space(780 + td.spritesExtra) : td.invent ? Style.space(700 + td.spritesExtra) : Style.space(520 + td.spritesExtra))) : (td.mode === "save" ? Style.space(core.originLine !== "" ? 220 : 170) : Style.space(td.mode === "share" ? 400 : 380)))
 
     PanelKeyCatcher {
       id: keys
       anchors.fill: parent
-      blocked: saveField.activeFocus || promptField.activeFocus || genreField.activeFocus || codeField.activeFocus || customField.activeFocus || td.anyPartFocus || provDrop.popupOpen || modelDrop.popupOpen || imgUrlField.activeFocus || imgEpUrlField.activeFocus || imgEpModelField.activeFocus || imgEpKeyEnvField.activeFocus || imgEpKeyFileField.activeFocus || imgCmdField.activeFocus || imgProvDrop.popupOpen || imgCkptDrop.popupOpen
+      blocked: saveField.activeFocus || promptField.activeFocus || dirField.activeFocus || genreField.activeFocus || codeField.activeFocus || customField.activeFocus || td.anyPartFocus || provDrop.popupOpen || modelDrop.popupOpen || imgUrlField.activeFocus || imgEpUrlField.activeFocus || imgEpModelField.activeFocus || imgEpKeyEnvField.activeFocus || imgEpKeyFileField.activeFocus || imgCmdField.activeFocus || imgProvDrop.popupOpen || imgCkptDrop.popupOpen
       onMoveRequested: function(dx, dy) {}
       onActivateRequested: {
-        if (td.mode === "ai") { if (td.chatActive) td.saveChat(); else if (td.formMode) td.sendTurn(false); else if (!td.busy) td.retryJob() }
-        else if (td.mode === "import") { if (td.undoToken !== "") td.keepImport(); else if (td.done && !td.wallFailed) td.close(); else if (td.done) td.retryWallpaper(); else td.startImport(true) }
+        if (td.mode === "ai") { if (td.chatActive) td.saveChat(false); else if (td.formMode) td.sendTurn(false); else if (!td.busy) td.retryJob() }
+        else if (td.mode === "import") { if (td.undoToken !== "") td.keepImport(); else if (td.done && !td.wallFailed) td.leave(); else if (td.done) td.retryWallpaper(); else td.startImport(true) }
         else if (td.mode === "save") td.saveNamed()
         else if (td.done) td.copyAgain()
         else td.startShare()
       }
       onDeleteRequested: {}
-      onCloseRequested: td.close()
+      onCloseRequested: td.leave()
       onTextKey: function(t) {
-        if (t === "q") td.close()
+        if (t === "q") td.leave()
         else if (t === "/" || t === "e" || t === "i") { if (td.mode === "ai") promptField.forceActiveFocus(); else if (td.mode === "import") codeField.forceActiveFocus() }
         else if (t === "b" && td.mode === "ai" && td.whId === "" && td.formMode && !td.onlyMode) td.useCurrent = !td.useCurrent
-        else if (t === "s" && td.mode === "ai" && td.chatActive) td.saveChat()
+        else if (t === "s" && td.mode === "ai" && td.chatActive) td.saveChat(false)
+        else if (t === "S" && td.mode === "ai" && td.chatActive && td.canReplace) td.saveChat(true)
+        else if (t === "g" && td.mode === "ai" && td.chatActive && !td.onlyMode) td.regenerate()
+        else if (t === "w" && td.mode === "ai" && td.chatActive && !td.onlyMode) dirField.forceActiveFocus()
+        else if (t === "p" && td.mode === "ai" && td.chatActive && !td.onlyMode) td.regenBack(false)
+        else if (t.length === 1 && t >= "1" && t <= "6" && td.mode === "ai" && td.chatActive && !td.onlyMode) td.toggleRegen(Number(t) - 1)
+        else if (t === "E" && td.mode === "ai" && td.formMode && !td.onlyMode && td.whId === "") { td.editRef = td.editRef === "" ? "current" : ""; td.refreshEstimate() }
         else if (t === "s" && td.mode === "ai" && td.formMode && !td.invent && !td.onlyMode) td.subtle = !td.subtle
         else if (t === "m" && td.mode === "ai" && td.formMode && !td.onlyMode) td.nextMode()
         else if (t === "r" && td.mode === "ai" && td.chatActive && td.sheetUrl !== "") td.showSheet = !td.showSheet
@@ -1206,7 +1344,7 @@ Item {
             Btn { toggle: true; checked: td.rich; label: (td.rich ? "󰄲 " : "󰄱 ") + "Invent: Rich"; onClicked: td.setMode("rich") }
           }
           Row {
-            visible: td.rich && td.formMode && !td.onlyMode
+            visible: td.rich && td.formMode && !td.onlyMode && !td.editForm
             spacing: Style.space(8)
             PlainField {
               id: genreField
@@ -1404,7 +1542,7 @@ Item {
                 width: col.width
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
-                text: "When you press Create, eight short sprite descriptions (for example “a glowing paper lantern”) go to this image model, one picture each. Only those descriptions are sent: your wallpaper and the words you typed are not. If the image model does not answer, the theme is still made, without sprites."
+                text: "When you press Create, eight short sprite descriptions (for example “a glowing paper lantern”) go to this image model, three tries each (24 pictures; the best one of each is kept). Only those descriptions are sent: your wallpaper and the words you typed are not. If the image model does not answer, the theme is still made, without sprites."
                 opacity: 0.8
                 color: td.fg
                 font.family: td.font
@@ -1439,7 +1577,9 @@ Item {
             width: col.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: td.onlyMode
+            text: td.editForm
+                  ? "Editing \"" + td.editName + "\". It opens as a draft and nothing changes until you save. Then tick the parts to make again (Screen, Color, Wallpaper, Cursor, Windows, Frame; a part it lacks can be ticked to add one), add a direction if you like, and press Regenerate selected. Parts you do not tick stay exactly as they are. Pick existing chooses other installed effects. Invent: Quick writes new ones. Invent: Rich builds each ticked part from a short brief taken from the theme (there is no planning step, so it costs less than a new Rich theme). Save changes rewrites your own theme; Save as new theme keeps the original. Built-in themes can only be saved as new."
+                  : td.onlyMode
                   ? "Describe one new " + (td.onlyWhat[td.onlySlot] || "effect") + ". The AI writes it, it has to pass the safety check, and it is kept as your own effect (not locked). Nothing else of your look changes: the new effect is shown on top of what you have now until you keep or discard it."
                   : td.whId !== ""
                   ? "Base picture: Wallhaven " + td.whId + ". It is set as your wallpaper first, then the AI builds a complete theme around it. The picture itself never changes. Add a wish if you like, or leave it empty."
@@ -1472,7 +1612,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
-                text: td.card ? td.card.concept.title + "  ·  " + td.card.concept.biome + ", " + td.card.concept.time_of_day : ""
+                text: td.card ? [td.card.concept.title, [td.card.concept.biome, td.card.concept.time_of_day].filter(function(x) { return x }).join(", ")].filter(function(x) { return x }).join("  ·  ") : ""
                 color: td.fg
                 font.family: td.font
                 font.pixelSize: Style.font.body * 1.1
@@ -1529,7 +1669,7 @@ Item {
               Flickable {
                 visible: td.showSheet && td.sheetUrl !== ""
                 width: parent.width
-                height: visible ? Style.space(td.settingsOpen ? 170 : 250) : 0
+                height: visible ? Style.space(td.settingsOpen ? 140 : 170) : 0
                 contentWidth: width
                 contentHeight: sheetImg.height
                 clip: true
@@ -1550,7 +1690,7 @@ Item {
             id: histView
             visible: td.job !== null
             width: col.width
-            height: td.job === null ? 0 : (td.chatActive ? Style.space(td.card ? (td.settingsOpen ? 80 : 110) : (td.settingsOpen ? 140 : 270)) : Style.space(td.settingsOpen ? 140 : 190))
+            height: td.job === null || (td.loaded && td.history.length === 0) ? 0 : (td.chatActive ? Style.space(td.card ? (td.settingsOpen ? 70 : 80) : (td.settingsOpen ? 110 : 130)) : Style.space(td.settingsOpen ? 140 : 190))
             contentWidth: width
             contentHeight: histCol.implicitHeight
             clip: true
@@ -1601,9 +1741,94 @@ Item {
               }
             }
           }
+          // regenerate: tick the parts to make again (the rest stays byte for byte), an optional direction, and go back to the earlier version of a part
+          Column {
+            id: regenBox
+            visible: td.mode === "ai" && td.chatActive && !td.onlyMode
+            width: col.width
+            spacing: Style.space(6)
+            Text {
+              width: col.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: td.loaded ? (td.canReplace ? "Editing your theme \"" + td.origin.name + "\" (#" + td.origin.number + "). Save changes replaces it; Save as new theme keeps it."
+                                               : "Editing \"" + (td.origin ? td.origin.name : "") + "\"" + (td.origin && td.origin.builtin ? ", a built-in theme: it stays as it is, Save as new theme makes your own copy." : ". Save it as a new theme to keep the result."))
+                                : "Make parts again: tick what to regenerate (keys 1-6). Everything you leave unticked stays exactly as it is."
+              opacity: 0.85
+              color: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body * 0.92
+            }
+            Flow {
+              width: col.width
+              spacing: Style.space(6)
+              Repeater {
+                model: td.regenList
+                Btn {
+                  required property var modelData
+                  required property int index
+                  toggle: true
+                  dim: td.busy
+                  checked: td.regenPick[modelData.key] === true
+                  label: (checked ? "󰄲 " : "󰄱 ") + modelData.label + " (" + (index + 1) + "): " + (modelData.has ? modelData.what : (checked ? "add one" : "none"))
+                  onClicked: td.toggleRegen(index)
+                }
+              }
+            }
+            Flow {
+              visible: td.previousList.length > 0
+              width: col.width
+              spacing: Style.space(6)
+              Text { textFormat: Text.PlainText; text: "Earlier version (p):"; opacity: 0.75; color: td.fg; font.family: td.font; font.pixelSize: Style.font.body * 0.92; height: Style.space(28); verticalAlignment: Text.AlignVCenter }
+              Repeater {
+                model: td.previousList
+                Btn {
+                  required property var modelData
+                  dim: td.busy || td.starting || actProc.running
+                  label: "󰕌 Previous " + modelData.label
+                  onClicked: { var m = {}; m[modelData.key] = true; td.regenPick = m; td.regenBack(false) }
+                }
+              }
+            }
+            PlainField {
+              id: dirField
+              width: col.width
+              height: Style.space(30)
+              verticalPadding: Style.space(3)
+              placeholderText: "Direction for the ticked parts (w, optional): calmer, more teal, less busy…  (⏎ regenerates)"
+              foreground: td.fg
+              font.family: td.font
+              font.pixelSize: Style.font.body * 0.95
+              maximumLength: 300
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) { keys.forceActiveFocus(); event.accepted = true }
+                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.regenerate(); event.accepted = true }
+              }
+            }
+            Row {
+              spacing: Style.space(10)
+              Btn {
+                dim: td.busy || td.starting || actProc.running || td.regenSlots === "" || !td.aiOk
+                label: td.starting ? "Starting…" : "Regenerate selected  (g)"
+                onClicked: td.regenerate()
+              }
+              Text {
+                visible: td.regenEstText !== "" && td.regenSlots !== ""
+                anchors.verticalCenter: parent.verticalCenter
+                width: regenBox.width - Style.space(230)
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                text: td.regenEstText
+                opacity: 0.65
+                color: td.fg
+                font.family: td.font
+                font.pixelSize: Style.font.body * 0.82
+              }
+            }
+          }
           PlainField {
             id: promptField
-            visible: td.formMode || (td.chatActive && !td.busy)
+            visible: (td.formMode && !td.editForm) || (td.chatActive && !td.busy)
             width: col.width
             height: visible ? Style.space(32) : 0
             verticalPadding: Style.space(3)
@@ -1620,7 +1845,7 @@ Item {
           }
           // optional orders per part (Invent only)
           Grid {
-            visible: td.invent && td.formMode && !td.onlyMode
+            visible: td.invent && td.formMode && !td.onlyMode && !td.editForm
             width: col.width
             columns: 2
             columnSpacing: Style.space(8)
@@ -1647,7 +1872,7 @@ Item {
             }
           }
           Row {
-            visible: td.formMode
+            visible: td.formMode && !td.editForm
             spacing: Style.space(8)
             Btn {
               visible: td.whId === "" && !td.onlyMode
@@ -1665,7 +1890,7 @@ Item {
             }
           }
           Text {
-            visible: td.formMode
+            visible: td.formMode && !td.editForm
             width: col.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
@@ -1784,7 +2009,7 @@ Item {
             font.pixelSize: Style.font.body
             maximumLength: 40
             Keys.onPressed: function(event) {
-              if (event.key === Qt.Key_Escape) { td.close(); event.accepted = true }
+              if (event.key === Qt.Key_Escape) { td.leave(); event.accepted = true }
               else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { td.saveNamed(); event.accepted = true }
             }
           }
@@ -1902,15 +2127,22 @@ Item {
           spacing: Style.space(8)
           Btn {
             visible: td.mode === "ai" && (td.formMode || td.chatActive)
-            dim: !td.aiOk || td.busy || td.starting || actProc.running
-            label: td.starting ? "Starting…" : (td.chatActive ? "Send  (⏎)" : (td.onlyMode ? "Create effect  (⏎)" : td.rich ? "Make Rich theme  (⏎)" : td.invent ? "Invent theme  (⏎)" : "Create theme  (⏎)"))
+            dim: (!td.aiOk && !td.editForm) || td.busy || td.starting || actProc.running
+            label: td.starting ? "Starting…" : (td.editForm ? "Open for editing  (⏎)" : td.chatActive ? "Send  (⏎)" : (td.onlyMode ? "Create effect  (⏎)" : td.rich ? "Make Rich theme  (⏎)" : td.invent ? "Invent theme  (⏎)" : "Create theme  (⏎)"))
             onClicked: td.sendTurn()
           }
           Btn {
-            visible: td.mode === "ai" && td.rich && td.formMode && !td.onlyMode
+            visible: td.mode === "ai" && td.rich && td.formMode && !td.onlyMode && !td.editForm
             dim: !td.aiOk || td.starting || actProc.running
             label: "Surprise me  (u)"
             onClicked: td.sendTurn(true)
+          }
+          Btn {
+            visible: td.mode === "ai" && td.formMode && !td.onlyMode && td.whId === ""
+            toggle: true
+            checked: td.editForm
+            label: td.editForm ? "Back to a new theme  (E)" : "Edit the look on now  (E)"
+            onClicked: { td.editRef = td.editRef === "" ? "current" : ""; td.refreshEstimate() }
           }
           Btn {
             visible: td.mode === "ai" && td.job !== null && !td.busy && !td.chatActive
@@ -1944,8 +2176,14 @@ Item {
           Btn {
             visible: td.mode === "ai" && td.chatActive
             dim: td.busy || actProc.running
-            label: td.onlyMode ? "Keep effect  (s)" : "Save as theme  (s)"
-            onClicked: td.saveChat()
+            label: td.onlyMode ? "Keep effect  (s)" : (td.loaded ? (td.canReplace ? "Save changes  (s)" : "Save as new theme  (s)") : "Save as theme  (s)")
+            onClicked: td.saveChat(false)
+          }
+          Btn {
+            visible: td.mode === "ai" && td.chatActive && td.canReplace
+            dim: td.busy || actProc.running
+            label: "Save as new theme  (S)"
+            onClicked: td.saveChat(true)
           }
           Btn {
             visible: td.mode === "ai" && td.chatActive
@@ -2008,7 +2246,7 @@ Item {
           Btn { visible: td.mode === "share"; dim: gifProc.running || td.pickedParts.length === 0; label: gifProc.running ? "Making the code…" : "Record sharable GIF  (g)"; onClicked: td.startShareGif() }
           Btn { visible: td.mode === "save"; label: core.originLine !== "" && (!core.originLocked || core.devSwitch) ? "Save as new  (⏎)" : "Save as…  (⏎)"; onClicked: td.saveNamed() }
           Btn { visible: td.mode === "save" && core.originLine !== "" && (!core.originLocked || core.devSwitch); label: (core.originLocked ? "Replace built-in \"" : "Replace \"") + core.originName + "\""; onClicked: td.replaceBuiltin() }
-          Btn { label: jobs.any || td.mode === "save" ? "Cancel  (esc)" : (td.mode === "ai" && td.busy ? "Hide, keep working  (esc)" : (td.mode === "ai" && td.chatActive ? "Close, keep the draft  (esc)" : "Close  (esc)")); onClicked: td.close() }
+          Btn { label: jobs.any || td.mode === "save" ? "Cancel  (esc)" : (td.mode === "ai" && td.busy ? "Hide, keep working  (esc)" : (td.mode === "ai" && td.chatActive ? "Close, keep the draft  (esc)" : "Close  (esc)")); onClicked: td.leave() }
         }
       }
     }

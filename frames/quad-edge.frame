@@ -1,0 +1,12 @@
+# category: Border
+# desc: Border in four colours, a red top, yellow right, green bottom and blue left running into each other, over a deep cool shadow and a dim inactive edge, like the four-colour logo of a 32-bit console
+rounding=6
+border_size=3
+border_colors=e60012ff,f7c600ff,00a040ff,0072bcff
+border_angle=45
+border_inactive=3a4250aa
+shadow_range=22
+shadow_power=3
+shadow_color=05070dcc
+shadow_offset=0,4
+shadow_inactive=00000055

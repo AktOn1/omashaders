@@ -1,0 +1,12 @@
+# category: Nature
+# desc: Hedge edge: a thin leaf-green to lime gradient border with softly rounded corners and a deep green shadow underneath, like a clipped hedge around the window, and a dark green inactive edge
+rounding=6
+border_size=3
+border_colors=2f8f3cff,86d13aff,c8e84aff
+border_angle=60
+border_inactive=1d3d22aa
+shadow_range=26
+shadow_power=3
+shadow_color=0c2a12bb
+shadow_offset=0,3
+shadow_inactive=00000044

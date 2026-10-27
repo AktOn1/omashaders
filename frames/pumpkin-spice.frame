@@ -1,0 +1,12 @@
+# category: Border
+# desc: Rounded border that runs from pumpkin orange to witch violet, with a soft plum shadow
+rounding=14
+border_size=3
+border_colors=ff8a1aff,b45cf0ff
+border_angle=60
+border_inactive=6b4a8c99
+shadow_range=24
+shadow_power=3
+shadow_color=2a0f3f77
+shadow_offset=0,4
+shadow_inactive=00000044

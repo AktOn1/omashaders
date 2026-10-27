@@ -396,6 +396,8 @@ def text_rules(kind, code, lim=None):
         p.append("no arrays and no [ ] indexing at all (they break on some graphics drivers); use if-chains or .x .y .z .w")
     if re.search(r"\bgl_(?!FragCoord\b)", plain):
         p.append("only gl_FragCoord may be used from the gl_ names")
+    if re.search(r"\bgl\b", plain):
+        p.append("do not name anything gl (the shader compiler turns it into the reserved gl_1); use another name")
     if re.search(r"\b(?:tex|src)\s*=|\b(?:in|out)\s+(?:float|vec|int)\w*\s+\w+\s*;", plain):
         p.append("do not declare or assign inputs and outputs; the template does")
     if kind == "color":

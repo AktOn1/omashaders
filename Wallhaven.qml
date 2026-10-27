@@ -17,7 +17,9 @@ Item {
   readonly property color fg: core ? core.fg : "white"
   function fgA(a) { return Qt.rgba(fg.r, fg.g, fg.b, a) }
   readonly property string font: core ? core.bar.fontFamily : "sans"
-  function close() { if (core) core.whOpen = false }
+  // leave() = the user going out (Esc, q): the next menu open is the main list; close() = dismissed (icon, click away): the next open comes back here
+  function leave() { if (core) core.hideViews(false) }
+  function close() { if (core) core.hideViews(true) }
   function closeForPopoutSwitch() { close() }
 
   // ------------------------------------------------------------ filters
@@ -149,7 +151,6 @@ Item {
     if (!item) return
     if (!core.aiAvailable) { say("Needs an AI command: see “AI themes” in the README (setting aiCommand).", true); return }
     core.aiThemeFromWallhaven(item.id)
-    close()
   }
   function openPage() { if (item) Quickshell.execDetached(["xdg-open", "https://wallhaven.cc/w/" + item.id]) }
 
@@ -189,7 +190,7 @@ Item {
     else if (t === "1" || t === "2" || t === "3") toggleCat(parseInt(t) - 1)
     else if (t === "t") themeIt()
     else if (t === "o") openPage()
-    else if (t === "q") close()
+    else if (t === "q") leave()
   }
 
   onOpenChanged: {
@@ -250,7 +251,7 @@ Item {
       onMoveRequested: function(dx, dy) { wh.move(dx, dy) }
       onActivateRequested: wh.useIt()
       onDeleteRequested: {}
-      onCloseRequested: wh.close()
+      onCloseRequested: wh.leave()
       onTabRequested: function(dir) { wh.goPage(dir) }
       onTextKey: function(t) { wh.handleKey(t) }
 

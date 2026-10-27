@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akton1.omashaders",
   "name": "OmaShaders",
-  "version": "1.48.0",
+  "version": "1.56.0",
   "author": "AktOn1",
   "license": "MIT",
-  "description": "Brand new (two weeks old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 156 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
+  "description": "Brand new (two weeks old, expect rough edges). One bar icon opens menus for over 100 screen and window GPU shaders, 130+ colour grades, about 170 animated wallpaper effects with a mouse-reaction slider, 50+ cursor effects and 183 ready-made themes. Hover to preview, strength slider per effect (starts readable), favourites, pause key, GPU use.",
   "kinds": [
     "bar-widget"
   ],
@@ -23,6 +23,7 @@
       "cursorNeedsShift": false,
       "pauseKey": "CTRL + ALT + P",
       "menuLayout": "New",
+      "useThemeWallpaper": false,
       "aiProvider": "Remembered choice",
       "aiModel": "",
       "aiCommand": ""
@@ -52,6 +53,12 @@
         "label": "Menu layout (New: themes first; Classic: the older Screen, Color, Wallpaper, Cursor, Windows, Combos columns)",
         "options": ["New", "Classic"],
         "defaultValue": "New"
+      },
+      {
+        "key": "useThemeWallpaper",
+        "type": "boolean",
+        "label": "Use theme wallpaper when available (applying a theme that remembers a Wallhaven picture downloads it if needed and sets it as the wallpaper; off = applying a theme never touches your wallpaper)",
+        "defaultValue": false
       },
       {
         "key": "aiProvider",

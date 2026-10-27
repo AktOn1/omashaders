@@ -1,5 +1,7 @@
 #!/bin/bash
 # Compiles mouse-effects/*.frag into *.frag.qsb (Qt shader bundles; needs qt6-shadertools).
 export PATH="$PATH:/usr/lib/qt6/bin"
-cd "$(dirname "$0")/../mouse-effects" || exit 1
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here/../mouse-effects" || exit 1
 for f in *.frag; do qsb --qt6 -o "$f.qsb" "$f" || exit 1; done
+"$here/qt-glsl-check"

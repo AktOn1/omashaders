@@ -56,7 +56,7 @@ FRAME_EXAMPLES = [
     ("cold neon edge", {"rounding": 6, "border_size": 3, "border_colors": ["00e5ff", "7c4dff", "ff4fd8"], "border_angle": 90, "shadow_range": 40,
                         "shadow_power": 3, "shadow_color": "00e5ff55", "border_inactive": "20243a99", "spin": 60}),
 ]
-EXAMPLE_KIND = {"wallpaper": "wallpaper", "cursor": "cursor", "screen": "screen", "window": "window", "color": "color"}
+EXAMPLE_KIND = {"wallpaper": "wallpaper", "cursor": "cursor", "screen": "screen", "window": "window", "color": "color", "window_color": "color"}
 
 
 def steps_add(steps, usage, step, u):
@@ -207,7 +207,7 @@ def pick_examples(slot, concept, n=2):
 
 
 def fallback_ids(slot, cat):
-    pool = L.slot_pool(cat, {"screen": "screen", "window": "window", "color": "color", "wallpaper": "wall", "cursor": "cursor", "frame": "frame"}[slot])
+    pool = L.slot_pool(cat, {"screen": "screen", "window": "window", "color": "color", "window_color": "window_color", "wallpaper": "wall", "cursor": "cursor", "frame": "frame"}[slot])
     ids = [k for k in pool if not k.startswith("ai-")]
     if I.SLOTS[slot][0] == "wallpaper":
         light = L.overlay_ids()
@@ -215,7 +215,9 @@ def fallback_ids(slot, cat):
     return sorted(ids)
 
 
-def build_prompt(slot, concept, pal, cat, prev=None, fixes=None, sprites=False):
+def build_prompt(slot, concept, pal, cat, prev=None, fixes=None, sprites=False, different=None, direction=""):
+    """different = the version a regenerate replaces ({"code"|"settings"|"desc"}): the Builder is told to make a genuinely other take;
+    direction = the user's words for this regenerate (bin/airegen.py)"""
     c = concept
     rows = [concept_text(c), "\n# ALL BRIEFS (what the other parts do, so yours belongs with them)"]
     rows += ["- %s: %s" % (k, v) for k, v in c["briefs"].items()]
@@ -235,6 +237,11 @@ def build_prompt(slot, concept, pal, cat, prev=None, fixes=None, sprites=False):
         rows.append("\n" + t)
     if prev is not None:
         rows.append("\n# YOUR PREVIOUS VERSION (revise it, keep what works)\n" + (prev.get("code") or json.dumps(prev.get("settings") or {})))
+    if different:
+        rows.append("\n# THE VERSION BEING REPLACED (do not repeat it: make a genuinely different take on the same brief, with another technique, other shapes and another motion)\n"
+                    + (different.get("code") or (json.dumps(different["settings"]) if different.get("settings") else "") or different.get("desc") or "(an existing effect)")[:3500])
+    if direction:
+        rows.append("\n# DIRECTION FROM THE USER (for this piece only)\n" + direction)
     if fixes:
         rows.append("\n# FIXES TO MAKE\n" + "\n".join("- " + f for f in fixes))
     rows.append("\nAnswer with the one JSON object only (the whole piece).")
@@ -670,6 +677,186 @@ def follow(request, rs, theme, history, path, wh, ch, progress=lambda m: None, k
     rs["sheet"] = sheet_path
     return {"ok": True, "mode": "rich", "name": clean["n"], "clean": clean, "notes": notes, "note": "", "idea": reply, "usage": usage, "new": made,
             "fell_back": fell_back, "sheet": sheet_path, "steps": steps, "rich_state": rs, "part": slot, "action": action}
+
+
+# ------------------------------------------------------------------ 5. regenerate chosen parts (bin/airegen.py)
+BRIEF_FALLBACK = {
+    "wallpaper": "a light overlay on the picture that moves with time and reacts to the pointer",
+    "screen": "a full-screen effect that suits the mood without hiding text",
+    "color": "a colour grade for the whole screen that suits the palette",
+    "cursor": "a small cursor effect that suits the story",
+    "window": "a window effect (the window surface) that suits the mood",
+    "window_color": "a colour grade for the window surfaces that goes with the rest",
+    "frame": "a window border (colours, rounding, glow) that suits the palette",
+}
+
+
+def minimal_concept(theme, cat, pal, desc_of=None, title=""):
+    """A stand-in Planner result for a theme the AI did not plan (a saved theme opened for editing): the name, what each current part is and
+    does (its catalog hint or its description) and the picture's measured palette. No AI call is made for it."""
+    names = {"wallpaper": "wall", "screen": "screen", "color": "color", "cursor": "mouse", "window": "winfx", "window_color": "color", "frame": "frame"}
+    briefs, have = {}, []
+    for slot in ("wallpaper", "screen", "color", "cursor", "window", "window_color", "frame"):
+        v = theme.get(I.SLOTS[slot][1], "")
+        if not v:
+            continue
+        hint = (desc_of(v) if desc_of else "") or (cat.get(names[slot], {}).get(v) or cat.get("screen", {}).get(v) or {}).get("hint", "")
+        briefs[slot] = T.sentence("keep the spirit of the current %s \"%s\"%s" % (I.TITLE[slot].lower(), v, (": " + hint) if hint else ""), 900)
+        have.append("%s %s" % (slot, v))
+    pl = [{"hex": h, "role": nm} for h, _, nm in pal["main"][:5]]
+    name = title or theme.get("n") or "Edited theme"
+    st = {}
+    for slot, opt in T.CHAT_STRENGTH:
+        if opt in (theme.get("o") or {}):
+            st[slot] = max(40, int(theme["o"][opt]))
+    return {"title": name, "biome": "", "time_of_day": "", "mood": "", "story": T.sentence("The user's existing theme \"%s\" (%s)." % (name, "; ".join(have) or "no parts"), 420),
+            "layout": "", "motion": "", "pointer": "", "playful_detail": "", "why_you_would_keep_it_on_all_day": "", "palette": pl, "sprites": SP.clean_spec(None),
+            "tags": [], "briefs": briefs, "strength": st}
+
+
+def regen(slots, direction, rs, theme, history, path, wh, ch, avoid, rounds=DEFAULT_ROUNDS, progress=lambda m: None, keep_out="", desc_of=None):
+    """Make the chosen parts again with their Builders (in parallel where the provider allows), then let the Reviewer look at those pieces only.
+    rs = the stored rich_state, or None (a theme opened for editing: the concept is then built by minimal_concept, no Planner call).
+    avoid = {slot: [ids of versions not to use again]}. Returns the same shape as follow(); the caller locks every other part."""
+    av = P.availability(ch)
+    if not av["available"]:
+        raise L.Bad("AI needed. " + av["hint"])
+    miss = G.render_ready()
+    if miss:
+        raise L.Bad(miss)
+    rounds = max(0, min(MAX_ROUNDS, int(rounds)))
+    cat = L.catalog()
+    usage, steps, notes = new_usage(), [], []
+    pal = I.palette(path)
+    rs = json.loads(json.dumps(rs)) if rs else {"concept": minimal_concept(theme, cat, pal, desc_of), "pieces": {}, "sheet": ""}
+    concept = rs["concept"]
+    direction = T.sentence(direction, 400)
+    for slot in slots:
+        if slot not in concept["briefs"]:
+            concept["briefs"][slot] = BRIEF_FALLBACK[slot]
+    build_sys = T.builder_text()
+
+    def different_of(slot):
+        old = rs["pieces"].get(slot)
+        cur = theme.get(I.SLOTS[slot][1], "")
+        if old and old.get("id") == cur and (old.get("code") or old.get("settings")):
+            return {"code": old.get("code", ""), "settings": old.get("settings")}
+        if cur:
+            return {"desc": (desc_of(cur) if desc_of else "") or "the existing effect " + cur}
+        return None
+
+    progress("Making %d part%s again…" % (len(slots), "" if len(slots) == 1 else "s"))
+    results = pmap(ch, lambda s: make_piece(ch, build_sys, s, build_prompt(s, concept, pal, cat, different=different_of(s), direction=direction), path, keep_out), slots)
+    pieces, tries, refused = {}, {}, {}
+    for slot, (piece, us, n, problems) in zip(slots, results):
+        for u in us:
+            steps_add(steps, usage, "Build: " + slot, u)
+        tries[slot] = n
+        if piece:
+            pieces[slot] = piece
+        else:
+            refused[slot] = problems
+    scores, fixes_of, seen, revisions = {}, {}, {}, {s: 0 for s in slots}
+    history_of = {s: [(p, None)] for s, p in pieces.items()}
+    rounds_done, review_summary, sheet = 0, "", None
+    seeable = lambda: {s: p for s, p in pieces.items() if s in S.ROW_NAMES}
+    if rounds > 0 and seeable() and reviewer_possible(ch):
+        built_for = None
+        for rnd in range(rounds + 1):
+            label = "Look %d" % (rnd + 1)
+            sheet, got, review_summary = look(ch, concept, seeable(), path, usage, steps, label, progress)
+            built_for = {s: id(p) for s, p in seeable().items()}
+            if not got:
+                notes.append(review_summary or "The review gave no scores; the pieces are kept as the gate passed them.")
+                break
+            for slot, e in got.items():
+                scores[slot], seen[slot], fixes_of[slot] = e["score"], e["seen"], e["fixes"]
+                history_of[slot][-1] = (history_of[slot][-1][0], e["score"])
+                prev = [sc for _, sc in history_of[slot][:-1] if sc is not None]
+                if prev and e["score"] < max(prev):
+                    best = max((h for h in history_of[slot][:-1] if h[1] is not None), key=lambda h: h[1])
+                    pieces[slot] = best[0]
+                    scores[slot] = best[1]
+            weak = [s for s in seeable() if scores.get(s, 10) < PASS_SCORE and history_of[s][-1][0] is pieces[s]]
+            if rnd == rounds or not weak:
+                break
+            progress("%s: revising %s…" % (label, ", ".join(weak)))
+            rounds_done += 1
+            outs = pmap(ch, lambda s: make_piece(ch, build_sys, s, build_prompt(s, concept, pal, cat, prev=pieces[s]["p"], fixes=fixes_of.get(s), different=different_of(s), direction=direction),
+                                                 path, keep_out, 1), weak)
+            for slot, (piece, us, n, problems) in zip(weak, outs):
+                for u in us:
+                    steps_add(steps, usage, "Revise: " + slot, u)
+                tries[slot] += n
+                if piece:
+                    pieces[slot] = piece
+                    history_of[slot].append((piece, None))
+                    revisions[slot] += 1
+                else:
+                    notes.append("%s: the revision did not pass the safety check, so I kept the earlier version." % I.TITLE[slot])
+        if sheet is not None and built_for != {s: id(p) for s, p in seeable().items()}:
+            sheet = None
+    elif rounds > 0 and pieces:
+        notes.append("This AI cannot look at pictures, so the renders were not reviewed; the pieces are kept as the gate passed them." if not reviewer_possible(ch)
+                     else "These parts have no preview to review; they are kept as the gate passed them.")
+    if "window_color" in pieces and rounds > 0:
+        notes.append("The window colour has no preview picture, so the Reviewer did not look at it; it passed the safety check.")
+    fell_back, d, made = [], {}, []
+    for slot in list(pieces):
+        if scores.get(slot, 10) < DROP_SCORE:
+            refused[slot] = ["the review scored it %d of 10: %s" % (scores[slot], seen.get(slot) or "too weak")]
+            del pieces[slot]
+            sheet = None
+    for slot in slots:
+        if slot in pieces:
+            continue
+        p = dict(history_of[slot][-1][0]["p"]) if slot in history_of else {"name": I.TITLE[slot], "desc": "", "fallback": ""}
+        words = " ".join([p.get("desc", ""), concept["briefs"].get(slot, ""), direction])
+        alt = I.closest_existing(slot, dict(p, desc=words), cat, set(avoid.get(slot, [])) | {theme.get(I.SLOTS[slot][1], "")})
+        reason = (refused.get(slot) or ["it did not pass"])[0]
+        fell_back.append({"slot": slot, "title": I.TITLE[slot], "name": p["name"], "reason": reason, "used": alt, "problems": refused.get(slot, [])})
+        notes.append("%s: the new effect “%s” was not good enough (%s)%s." % (I.TITLE[slot], p["name"], reason[:140],
+                     (", so I used the shipped “%s” instead" % alt) if alt else ", so that part stays as it was"))
+        if alt:
+            d[slot] = alt
+    strength = {}
+    for slot, piece in pieces.items():
+        eid = install_piece(slot, piece, direction or "regenerate", scores.get(slot))
+        d[slot] = eid
+        cb, fb = piece_bytes(piece)
+        p = piece["p"]
+        made.append({"slot": slot, "title": I.TITLE[slot], "id": eid, "name": p["name"], "desc": p["desc"], "tries": tries.get(slot, 1), "start": piece["start"],
+                     "info": piece["info"], "score": scores.get(slot), "seen": seen.get(slot, ""), "fixes": fixes_of.get(slot, []), "revisions": revisions.get(slot, 0),
+                     "bytes_code": cb, "bytes_file": fb})
+        rs["pieces"][slot] = state_piece(slot, piece, eid, scores.get(slot))
+        if slot in STRENGTH_PARTS:
+            strength[slot] = piece["start"]
+    if strength:
+        d["strength"] = strength
+    cur = T.theme_as_answer(theme)
+    clean, vnotes = T.finish(T.merge_answer(cur, d), L.catalog(), wh, "follow")
+    notes += vnotes
+    for m in list(made):
+        if clean.get(I.SLOTS[m["slot"]][1]) != m["id"]:
+            G.delete(m["id"])
+            made.remove(m)
+            rs["pieces"].pop(m["slot"], None)
+    keep_pieces = {}
+    for s2, e in rs["pieces"].items():
+        if clean.get(I.SLOTS[s2][1]) == e["id"]:
+            keep_pieces[s2] = e
+    rs["pieces"] = keep_pieces
+    sheet_path = ""
+    shown = {s: p for s, p in pieces.items() if s in S.ROW_NAMES and rs["pieces"].get(s, {}).get("id") == d.get(s)}
+    if shown:
+        if sheet is None or not sheet.get("sheet"):
+            progress("Rendering the contact sheet…")
+            sheet = S.build({s: {"built": p["built"], "start": p["start"], "settings": p["p"].get("settings"), "atlas": ""} for s, p in shown.items()}, path, rich_dir())
+        sheet_path = sheet.get("sheet", "")
+    rs["sheet"] = sheet_path
+    return {"ok": True, "mode": "rich", "name": clean["n"], "clean": clean, "notes": notes, "note": "", "idea": T.sentence("New take on: " + ", ".join(I.TITLE[s].lower() for s in slots), 300),
+            "usage": usage, "new": made, "fell_back": fell_back, "sheet": sheet_path, "steps": steps, "rich_state": rs, "scores": scores, "review": review_summary,
+            "rounds_done": rounds_done, "provider": ch["provider"], "model": ch.get("model", "")}
 
 
 # ------------------------------------------------------------------ estimate

@@ -121,7 +121,7 @@ vec4 fxMain(vec2 mpx) {
     float r = 0.025 + 0.035 * rs_h(vec2(fi, 8.0));
     float d = length(p - c + off * 2.0);
     float tw = 0.85 + 0.15 * sin(t * 0.3 + fi * 5.0);
-    vec3 lc = i % 2 == 0 ? vec3(1.0, 0.78, 0.45) : vec3(1.0, 0.92, 0.75);
+    vec3 lc = mod(float(i), 2.0) < 0.5 ? vec3(1.0, 0.78, 0.45) : vec3(1.0, 0.92, 0.75);
     col += lc * smoothstep(r, r * 0.35, d) * 0.22 * tw * (1.0 - wipe * 0.8);
   }
   // water on the glass: bright rim and darker body

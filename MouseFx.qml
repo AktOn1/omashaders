@@ -23,6 +23,9 @@ Scope {
     if (n.indexOf("ai-") === 0) return fx.genDir !== "" ? fx.genDir + "/mouse/" + n + ".frag.qsb" : ""
     return Qt.resolvedUrl("mouse-effects/" + n + ".frag.qsb")
   }
+  // effects that draw sprites from mouse-effects/NAME.png (sampler `sprites`, binding 1, RGBA atlas)
+  readonly property var spriteEffects: ["rite-hook"]
+  function spriteUrl(n) { return fx.spriteEffects.indexOf(n) >= 0 ? Qt.resolvedUrl("mouse-effects/" + n + ".png") : "" }
   property bool motion: false
   property point mouse: Qt.point(-10000, -10000)
   property int fps: 30
@@ -106,6 +109,8 @@ Scope {
           yScale: fx.selfSized ? 1 : fx.size
         }
         property real size: fx.selfSized ? fx.size : 1.0
+        property variant sprites: spriteImg
+        Image { id: spriteImg; visible: false; source: fx.spriteUrl(fx.effect); mipmap: true; smooth: true; asynchronous: false }
         property real time: fx.time
         property real audio: fx.audio
         property real bass: fx.bass

@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Lumen rim: a thin cyan-white edge that warms to an amber glint and back to cyan, with a soft cool cyan glow around the focused window and a dim deep-teal edge on the others
+rounding=12
+border_size=2
+border_colors=7fe8ffff,ffa840ff,7fe8ffff
+border_angle=135
+border_inactive=1f4a5a99
+shadow_range=40
+shadow_power=3
+shadow_color=3fd2ff66
+shadow_inactive=00000000

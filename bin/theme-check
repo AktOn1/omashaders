@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""theme-check [-v] : quality gate for wallpaper effects, no GPU needed (reads wallpaper-effects/overlay.tsv).
+A wallpaper effect supports the theme on top of the user's picture, it never paints a picture of its own (see docs/DEVELOPMENT.md,
+"Wallpaper effects support, never scenery"). overlay.tsv comes from bin/wallpaper-overlay-scan and marks every effect overlay or scene.
+Checks: (1) every wallpaper effect has an overlay.tsv row, (2) the number of scene effects stays at or below wallpaper-effects/scene-ceiling
+(lower the number whenever effects are converted, never raise it), (3) lists the starter themes whose wallpaper effect is a scene (-v: with ids).
+Exit 1 on (1) or (2) failing."""
+import os, sys
+HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.join(HERE, "..")
+WE = os.path.join(ROOT, "wallpaper-effects")
+rows = {}
+for line in open(os.path.join(WE, "overlay.tsv")):
+    f = line.rstrip("\n").split("\t")
+    if len(f) >= 4: rows[f[0]] = f[3]
+ids = sorted(n[:-5] for n in os.listdir(WE) if n.endswith(".frag"))
+missing = [i for i in ids if i not in rows]
+scenes = sorted(i for i in ids if rows.get(i) == "scene")
+ceiling = int(open(os.path.join(WE, "scene-ceiling")).read().split()[0])
+bad = 0
+if missing:
+    bad = 1; print("no overlay.tsv row (run bin/wallpaper-overlay-scan with ONLY=%s and merge): %s" % (",".join(missing), " ".join(missing)))
+if len(scenes) > ceiling:
+    bad = 1; print("scene effects: %d, ceiling %d. A new effect repaints the user's picture; make it an overlay (mean change <= 20, <= 40 %% of pixels)." % (len(scenes), ceiling))
+else:
+    print("scene effects: %d (ceiling %d), overlay effects: %d" % (len(scenes), ceiling, len([i for i in ids if rows.get(i) == "overlay"])))
+users = []
+for line in open(os.path.join(ROOT, "starter-themes")):
+    f = line.rstrip("\n").split("|")
+    if len(f) >= 5 and rows.get(f[1]) == "scene": users.append("%s (%s)" % (f[4], f[1]))
+print("starter themes that still use a scene wallpaper effect: %d" % len(users))
+if "-v" in sys.argv:
+    for u in users: print("  " + u)
+# (4) window shader slot: a starter theme names a window shader (field 6) that exists with "// target: window"; themes without one stay at or below starter-themes-no-window-ceiling
+nowin = []
+for line in open(os.path.join(ROOT, "starter-themes")):
+    f = line.rstrip("\n").split("|")
+    if len(f) < 5: continue
+    if len(f) < 6 or f[5] == "": nowin.append(f[4]); continue
+    if f[5].startswith("ai-"): continue
+    sf = os.path.join(ROOT, "shaders", f[5] + ".frag")
+    if not os.path.exists(sf) or "// target: window" not in open(sf).read():
+        bad = 1; print("theme %s: window shader '%s' is missing or has no '// target: window' header" % (f[4], f[5]))
+wceil = int(open(os.path.join(ROOT, "starter-themes-no-window-ceiling")).read().split()[0])
+if len(nowin) > wceil:
+    bad = 1; print("starter themes without a window shader: %d, ceiling %d. Every new theme needs its own window shader (field 6 of its starter line). Without one: %s" % (len(nowin), wceil, ", ".join(nowin[-5:])))
+else:
+    print("starter themes without a window shader: %d (ceiling %d)" % (len(nowin), wceil))
+sys.exit(bad)

@@ -1,0 +1,12 @@
+# category: Border
+# desc: Thin antique-gold to ember gradient border with a dark slate shadow underneath and a dim cold-slate inactive edge, like a gilded line along a carved stone panel
+rounding=2
+border_size=3
+border_colors=d9b25cff,f08a34ff,b8923eff
+border_angle=45
+border_inactive=3a4658aa
+shadow_range=30
+shadow_power=3
+shadow_color=0a1018cc
+shadow_offset=0,4
+shadow_inactive=00000055

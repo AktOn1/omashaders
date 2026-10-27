@@ -53,6 +53,25 @@ bad_shader=$(newlog | grep -iE "shader|uniform|qsb|ShaderEffect|Image" | head -5
 ipc wallpaper off
 if [ -n "$bad_shader" ]; then bad "pumpkin-night errors in the shell log: $bad_shader"; else ok "pumpkin-night rendered with the pointer away and near, no shader errors (look at pumpkin-*.png)"; fi
 
+# ---------------------------------------------------------------- 1c. sacred geometry wallpaper effects and their themes
+for fx in sacredclockwork startiles tumblingblocks; do
+  mark=$(log | wc -l)
+  ipc wallpaper $fx; sleep 3
+  hyprctl dispatch 'hl.dsp.cursor.move({x=900,y=100})' >/dev/null 2>&1; sleep 1; shot geo-$fx-0-away
+  hyprctl dispatch 'hl.dsp.cursor.move({x=400,y=400})' >/dev/null 2>&1; sleep 1
+  hyprctl dispatch 'hl.dsp.cursor.move({x=420,y=410})' >/dev/null 2>&1; sleep 2; shot geo-$fx-1-pointer
+  bad_shader=$(newlog | grep -iE "shader|uniform|qsb|ShaderEffect" | head -5)
+  ipc wallpaper off
+  if [ -n "$bad_shader" ]; then bad "$fx errors in the shell log: $bad_shader"; else ok "$fx rendered with the pointer away and near, no shader errors (look at geo-$fx-*.png)"; fi
+done
+n=0; for th in "Sacred Clockwork" "Star Tiles" "Tumbling Blocks"; do
+  n=$((n + 1)); line=$(grep -n "|$th|" "$state/themes" | head -1 | cut -d: -f1)
+  [ -n "$line" ] || { bad "theme $th is not in the themes list"; continue; }
+  ipc theme "$line"; sleep 4; shot geo-theme-$n
+  case "$(ipc look)" in *"$th"*) ok "theme $th applied (geo-theme-$n.png)";; *) bad "theme $th did not apply: $(ipc look)";; esac
+done
+ipc set off; ipc setColor off; ipc setMouse off; ipc wallpaper off
+
 # ---------------------------------------------------------------- 2. hot reload
 run_phase() { # NAME DIR  (the plugin is installed the way NAME says; DIR is where its files really are)
   local name=$1 dir=$2 core=$2/Core.qml before n r0 r1 i listing

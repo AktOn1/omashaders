@@ -1,0 +1,12 @@
+#!/bin/bash
+# Fails when a built Qt shader pack (wallpaper/cursor effect) would not compile on the live NVIDIA GL path (GLSL ES 1.00):
+# integer % & | ^ << >>, const arrays. Offscreen previews pass these; the shell then draws nothing and the guard trips.
+export PATH="$PATH:/usr/lib/qt6/bin"
+cd "$(dirname "$0")/.." || exit 1
+bad=0
+for q in wallpaper-effects/*.frag.qsb mouse-effects/*.frag.qsb; do
+  out=$(qsb -x glsl,100es -o /dev/stdout "$q" 2>/dev/null) || continue
+  hit=$(printf '%s\n' "$out" | grep -nE '>>|<<|[^&]&[^&]| \| |\^|[^%]%[^%]|^(const )?[a-z0-9]+ _[0-9]+\[[0-9]+\] *=' | head -3)
+  [ -n "$hit" ] && { echo "ERROR: $q would not compile on the live GPU path (int % & | ^ << >> or an array; use float mod/floor/if-chains):" >&2; echo "$hit" >&2; bad=1; }
+done
+exit $bad

@@ -32,6 +32,7 @@ FIT = 232                    # the object is scaled to fit this box in the middl
 PAINT_SIZE = 768             # what the image model is asked for
 MAX_ATLAS_BYTES = 3_000_000
 MIN_GOOD = 6                 # fewer usable cells than this and the whole atlas is dropped
+CANDIDATES = 3               # pictures painted per cell; the one that scores best is kept (OMS_SPRITE_CANDIDATES overrides, 1 = paint once)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 PREFIX_STYLE = "painted game sprite, soft rim light, vivid colours"
 SUFFIX = "single object, centred, whole object in view, isolated on a plain solid black background, no text, no border, nothing else"
@@ -136,6 +137,11 @@ def _grow(a):
 
 def cut_out(im):
     """a picture of ONE object on a plain background -> RGBA cut-out (straight alpha, colours un-mixed from the background); raises Junk"""
+    return _cut(im)[0]
+
+
+def _cut(im):
+    """cut_out plus the numbers score() judges the picture by -> (RGBA cut-out, stats)"""
     import numpy as np
     from PIL import Image
     im = im.convert("RGB")
@@ -175,7 +181,29 @@ def cut_out(im):
     out = np.dstack([col, alpha[..., None]])
     box = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
     pil = Image.fromarray((out * 255 + 0.5).astype("uint8"), "RGBA").crop(box)
-    return pil
+    obj = alpha > 0.5
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    lum = (rgb * np.array([0.299, 0.587, 0.114], np.float32)).sum(axis=2)
+    edge_a = np.concatenate([alpha[0], alpha[-1], alpha[:, 0], alpha[:, -1]])
+    stats = {"cropped": float((edge_a > 0.3).mean()),                                  # the object touches the border of the picture
+             "solid": float(obj[box[1]:box[3], box[0]:box[2]].mean()),                 # how much of its bounding box it fills
+             "fuzz": float(((alpha > 0.1) & (alpha < 0.9)).sum() / max(1, (alpha > 0.1).sum())),   # ragged, half-cut edges
+             "detail": float(lum[obj].std()) if obj.any() else 0.0,
+             "colour": float((rgb.max(axis=2) - rgb.min(axis=2))[obj].mean()) if obj.any() else 0.0,
+             "size": (bw, bh), "area": float(obj.sum())}
+    return pil, stats
+
+
+def score(stats):
+    """0..1, how good a cut-out sprite is likely to look small on a picture: whole (not cropped by the border), crisp edges, big enough once
+    fitted into its cell, with some shading and colour. A plain heuristic; it only has to tell a good try from a bad one of the same prompt."""
+    bw, bh = stats["size"]
+    k = min(FIT / bw, FIT / bh)
+    fill = min(1.0, stats["area"] * k * k / (CELL * CELL) / 0.15)
+    crisp = 1.0 - min(1.0, stats["fuzz"] * 3.0)
+    body = min(1.0, stats["solid"] / 0.45)
+    s = 0.30 * fill + 0.20 * crisp + 0.20 * min(1.0, stats["detail"] / 0.18) + 0.15 * min(1.0, stats["colour"] / 0.35) + 0.15 * body
+    return max(0.0, s - 1.5 * stats["cropped"])
 
 
 def _bleed(rgba):
@@ -298,17 +326,28 @@ def preview(atlas_path, out_png):
 
 
 # ------------------------------------------------------------------ painting
-def paint(spec, ch, progress=lambda m: None, timeout=240):
-    """one image-model call per cell -> (atlas PNG bytes, [notes]); raises L.Bad (plain words) when no usable atlas can be made.
+def candidates_wanted():
+    try:
+        return max(1, min(5, int(os.environ.get("OMS_SPRITE_CANDIDATES", CANDIDATES))))
+    except ValueError:
+        return CANDIDATES
+
+
+def paint(spec, ch, progress=lambda m: None, timeout=240, candidates=None):
+    """`candidates` pictures per cell from the image model (default CANDIDATES), the best-scoring cut-out is kept -> (atlas PNG bytes, [notes]);
+    raises L.Bad (plain words) when no usable atlas can be made.
     A connection problem stops at once (the theme is then made without sprites); a picture that is not an object on a plain background
-    is asked for once more with another seed, and left empty if it fails again."""
+    does not count as a candidate, one extra try is allowed for it, and a cell without any usable picture stays empty."""
     from PIL import Image
     progress = progress or (lambda m: None)
+    want = candidates or candidates_wanted()
     cells, bad = [], []
     for i in range(CELLS):
-        progress("Painting sprite %d of %d with your image model…" % (i + 1, CELLS))
-        cell = None
-        for attempt in range(2):
+        best, best_score, got = None, -1.0, 0
+        for attempt in range(want + 1):
+            if got >= want:
+                break
+            progress("Painting sprite %d of %d with your image model…" % (i + 1, CELLS) + (" (try %d of %d)" % (got + 1, want) if want > 1 else ""))
             try:
                 data, _mime = I.generate(ch, cell_prompt(spec, i), NEGATIVE, PAINT_SIZE, PAINT_SIZE, None, timeout)
             except I.Bad as e:
@@ -316,20 +355,23 @@ def paint(spec, ch, progress=lambda m: None, timeout=240):
             try:
                 im = Image.open(io.BytesIO(data))
                 im.load()
-                cell = to_cell(cut_out(im))
-                break
-            except Junk:
+                cut, st = _cut(im)
+                cell = to_cell(cut)
+            except Exception:    # Junk, or a picture Pillow cannot read
                 continue
-            except Exception:
-                continue
-        if cell is None:
+            got += 1
+            sc = score(st)
+            if sc > best_score:
+                best, best_score = cell, sc
+        if best is None:
             bad.append(i)
-        cells.append(cell)
+        cells.append(best)
     if CELLS - len(bad) < MIN_GOOD:
         raise L.Bad("%d of %d pictures from the image model were not usable (an object on a plain dark background)" % (len(bad), CELLS))
     png = pack(cells)
     validate_atlas(png)
-    notes = ["Painted sprites: %d of %d were painted by your image model and the effect draws them." % (CELLS - len(bad), CELLS)]
+    notes = ["Painted sprites: %d of %d were painted by your image model and the effect draws them%s." % (
+        CELLS - len(bad), CELLS, " (best of %d tries each)" % want if want > 1 else "")]
     if bad:
         notes.append("%d of the %d sprites could not be painted (cell%s %s stay empty)." % (len(bad), CELLS, "" if len(bad) == 1 else "s", ", ".join(map(str, bad))))
     return png, notes
@@ -389,8 +431,8 @@ def finish_wall(p, ch_img, image, start, inst, profile="quick", keep_out="", pro
 def main():
     a = sys.argv[1:]
     if a[:1] == ["selftest"]:
-        import aisprites_selftest
-        return aisprites_selftest.run()
+        # a fresh interpreter: the self-test points the state folder at a scratch dir, which only works before omslib is imported
+        os.execv(sys.executable, [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "aisprites_selftest.py")])
     print(__doc__.strip())
     return 0
 

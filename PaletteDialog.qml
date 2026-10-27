@@ -26,7 +26,9 @@ Item {
   readonly property bool isFav: core ? core.colorFavs.indexOf(pid) >= 0 : false
   readonly property bool hasRamp: p.stops.length >= 2
 
-  function close() { if (core) core.palOpen = false }
+  // leave() = the user going out (Esc, q, Done): the next menu open is the main list; close() = dismissed (icon, click away): the next open comes back here
+  function leave() { if (core) core.hideViews(false) }
+  function close() { if (core) core.hideViews(true) }
   function closeForPopoutSwitch() { close() }
 
   // ---- editing: every change makes a new palette object, which updates the look after a short pause
@@ -250,11 +252,11 @@ Item {
       anchors.fill: parent
       blocked: startDrop.popupOpen || pd.editing > 0
       onMoveRequested: function(dx, dy) {}
-      onActivateRequested: pd.close()
+      onActivateRequested: pd.leave()
       onDeleteRequested: {}
-      onCloseRequested: pd.close()
+      onCloseRequested: pd.leave()
       onTextKey: function(t) {
-        if (t === "q") pd.close()
+        if (t === "q") pd.leave()
         else if (t === "f") pd.toggleFav()
         else if (t === "r") pd.revert()
         else if (t === "a") pd.addStop()
@@ -456,7 +458,7 @@ Item {
           Btn { label: "Surprise me  (s)"; onClicked: pd.surprise() }
           Btn { label: pd.isFav ? "★ Favorite  (f)" : "☆ Favorite  (f)"; onClicked: pd.toggleFav() }
           Btn { label: "Undo all  (r)"; onClicked: pd.revert() }
-          Btn { label: "Done  (esc)"; onClicked: pd.close() }
+          Btn { label: "Done  (esc)"; onClicked: pd.leave() }
         }
       }
     }

@@ -1,0 +1,12 @@
+# category: Border
+# desc: Slim varnished walnut frame: a four-pixel border that runs from bright honey oak at the top left into deep walnut brown at the bottom right, like the bevelled edge of a wooden picture frame, with a soft warm-dark shadow and a dark brown inactive edge
+rounding=3
+border_size=4
+border_colors=ebb868ff,c58a45ff,8a5a2eff,4a2a14ff
+border_angle=135
+border_inactive=3a2514cc
+shadow_range=24
+shadow_power=3
+shadow_color=1c0f06b8
+shadow_offset=2,5
+shadow_inactive=1c0f0640

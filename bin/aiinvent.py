@@ -134,9 +134,26 @@ def only_rule(only):
             "and leave out every other part. Write it as a NEW effect (shader code) unless an existing one already is exactly what was asked." % (TITLE[only].lower(), only))
 
 
-def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None, sprites=False, only=""):
+def regen_rule(regen):
+    """the REGENERATE block of a prompt: which parts are made again, which version they replace, what is locked (bin/airegen.py)"""
+    sl = list(regen["slots"])
+    rows = ["REGENERATE. The user pressed \"regenerate\" for some parts of the CURRENT THEME below. Write a genuinely DIFFERENT take for exactly these parts: %s. "
+            "For each one write a NEW effect (shader code, or a \"settings\" object for a frame), not an existing id, unless nothing new can fit. "
+            "Do not repeat the look, the idea or the code of the version being replaced. Every other part is LOCKED: leave its key out of your answer, "
+            "and list in \"strength\" only the parts you regenerate. \"idea\" is one short sentence about what is new." % ", ".join(sl)]
+    for slot in sl:
+        old = (regen.get("avoid") or {}).get(slot) or []
+        rows.append("- %s: %s" % (slot, ("replaces " + "; ".join(old[:4]) + " (do not repeat)") if old else "there is no %s yet: ADD one that suits the theme" % TITLE[slot].lower()))
+    if regen.get("direction"):
+        rows.append("Direction from the user (applies ONLY to the parts above): " + regen["direction"])
+    return "\n".join(rows)
+
+
+def user_prompt(cat, request, directions, pal, facts, tags, has_image, chat=None, sprites=False, only="", regen=None):
     p = [names_text(cat), "# MODE"]
-    if chat:
+    if chat and regen:
+        p += [regen_rule(regen), T.current_text(chat["theme"], chat.get("desc_of")), T.history_text(chat["history"])]
+    elif chat:
         p += ["INVENT. " + T.FOLLOWUP_RULES + " Write a new effect only for a part the request needs something that does not exist yet for; "
               "reuse an existing id where it is already right.", T.current_text(chat["theme"], chat.get("desc_of")), T.history_text(chat["history"]),
               "# REQUEST", request.strip()]
@@ -274,12 +291,13 @@ def gate_part(slot, p, image, keep_out="", profile="quick", sprites=False, atlas
     return r, start
 
 
-def closest_existing(slot, p, cat):
-    """the AI's own fallback when it is valid, else the closest by words in the description; '' when nothing fits"""
+def closest_existing(slot, p, cat, exclude=()):
+    """the AI's own fallback when it is valid, else the closest by words in the description; '' when nothing fits. exclude = ids not to use
+    (a regenerate must not fall back to the version it replaces)"""
     kind = SLOTS[slot][0]
     pool = L.slot_pool(cat, {"screen": "screen", "window": "window", "color": "color", "window_color": "window_color", "wallpaper": "wall",
                              "cursor": "cursor", "frame": "frame"}[slot])
-    pool = {k: v for k, v in pool.items() if not k.startswith("ai-")}
+    pool = {k: v for k, v in pool.items() if not k.startswith("ai-") and k not in exclude}
     if kind == "wallpaper":
         light = L.overlay_ids()
         pool = {k: v for k, v in pool.items() if k in light}
@@ -296,6 +314,9 @@ def closest_existing(slot, p, cat):
         s = len(words & set(re.findall(r"[a-z]{4,}", (k.replace("-", " ") + " " + e.get("hint", "") + " " + e.get("cat", "")).lower())))
         if s > score:
             best, score = k, s
+    if not best and exclude and pool:   # a regenerate must still give a different effect: no word matched, so take one by the name's letters
+        names = sorted(pool)
+        best = names[sum(ord(c) for c in (p.get("name") or slot)) % len(names)]
     return best
 
 
@@ -334,12 +355,14 @@ def add_usage(total, u):
     total["estimated"] = total["estimated"] or bool(u.get("estimated"))
 
 
-def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="", chat=None, save=True, sprites=False, only=""):
+def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="", chat=None, save=True, sprites=False, only="", regen=None):
     """-> result dict (see the keys at the end); raises L.Bad for a plain-language failure.
     chat = {"theme": cleaned current theme, "history": [...], "desc_of": fn} makes this a follow-up turn: only what the answer names changes,
     the theme is not saved (the chat does that on Keep) and the picture is not sent again (its palette still is).
     sprites = the user ticked "Painted sprites (uses your image model)": the new wallpaper effect gets eight sprites painted by the image model
-    (bin/aisprites.py). Only the first build paints; a follow-up turn never sends anything to the image model."""
+    (bin/aisprites.py). Only the first build paints; a follow-up turn never sends anything to the image model.
+    regen = {"slots": [...], "avoid": {slot: [descriptions of the versions being replaced]}, "direction": text, "exclude": {slot: [ids]}} (needs chat): only those parts
+    are written again, as genuinely different new effects; whatever else the answer holds is thrown away (bin/airegen.py locks the rest)."""
     av = P.availability(ch)
     if not av["available"]:
         raise L.Bad("AI needed. " + av["hint"])
@@ -362,7 +385,9 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
     system = T.invent_text()
     if chat:
         jpg = None
-    prompt = user_prompt(cat, request, directions, pal, facts, tags, bool(jpg) and P.can_see(ch), chat, sprites, only)
+    if regen and not chat:
+        raise L.Bad("A regenerate needs a theme")
+    prompt = user_prompt(cat, request, directions, pal, facts, tags, bool(jpg) and P.can_see(ch), chat, sprites, only, regen)
     usage = {"tokens_in": 0, "tokens_out": 0, "cost_usd": None, "calls": 0, "estimated": False}
 
     progress("Asking the AI to invent the theme…")
@@ -378,6 +403,10 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
             if attempt == 1:
                 raise
             ask = prompt + "\n\n# PREVIOUS ANSWER WAS REFUSED\n%s. Answer with one JSON object and nothing else." % e
+    if regen:  # the locked parts are not the AI's to touch, whatever it wrote
+        sel = set(regen["slots"])
+        st_in = answer.get("strength") if isinstance(answer.get("strength"), dict) else {}
+        answer = dict({k: v for k, v in answer.items() if k in sel or k in ("name", "idea", "note")}, strength={k: v for k, v in st_in.items() if k in sel})
     parts, bad = {}, []
     for slot in SLOTS:
         if only and slot != only:
@@ -490,7 +519,7 @@ def run(request, directions, path, wh, ch, progress=lambda m: None, keep_out="",
             if st["tries"] > 1:
                 notes.append("%s “%s” needed %d tries to pass the safety check." % (TITLE[slot], val["name"], st["tries"]))
         else:
-            alt = closest_existing(slot, val, cat)
+            alt = closest_existing(slot, val, cat, (regen or {}).get("exclude", {}).get(slot, ()))
             reason = (st["problems"] or ["it did not pass"])[0]
             fell_back.append({"slot": slot, "title": TITLE[slot], "name": val["name"], "reason": reason, "used": alt, "problems": st["problems"]})
             notes.append("%s: the new effect “%s” did not pass the safety check (%s)%s." %

@@ -1,5 +1,5 @@
 // label: Wolf moon
-// hint: an enormous low moon behind a ridge of pines with a wolf howling on a knoll, mist lying in the valley and now and then a slow ring of pale light rippling out from the moon; the pointer swirls the mist away from itself
+// hint: a winter moon laid over your own picture: a painted moon finds the brightest part of your sky and sends slow rings of light across it, a wolf howls on the dark bottom edge between pines and bare branches, fog banks drift along the floor and part around the pointer, and everything is cooled a little. No scenery: your picture stays the picture
 // category: Dark tales
 #version 440
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -22,6 +22,7 @@ layout(std140, binding = 0) uniform buf {
   float zoom;
 };
 layout(binding = 1) uniform sampler2D src;
+layout(binding = 2) uniform sampler2D sprites; // wolfmoon.png: 4 x 2 cells of 256 px (moon, wolf, pines, pines, owl, branch, branch)
 
 vec2 coverUV(vec2 uv) {
   float ra = res.x / res.y;
@@ -31,174 +32,186 @@ vec2 coverUV(vec2 uv) {
 }
 vec3 wall(vec2 uv) { return texture(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.05) + 0.5, 0.0, 1.0))).rgb; } // the picture stays unzoomed; only the effect scales
 
-float wm_hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float wm_noise(vec2 p) {
+float wm_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+float wm_h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float wm_h1(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+float wm_n(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(wm_hash(i), wm_hash(i + vec2(1, 0)), f.x), mix(wm_hash(i + vec2(0, 1)), wm_hash(i + vec2(1, 1)), f.x), f.y);
+  return mix(mix(wm_h(i), wm_h(i + vec2(1.0, 0.0)), f.x), mix(wm_h(i + vec2(0.0, 1.0)), wm_h(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 float wm_fbm(vec2 p) {
   float v = 0.0, a = 0.5;
-  for (int i = 0; i < 4; i++) { v += a * wm_noise(p); p = p * 2.03 + 17.0; a *= 0.5; }
+  for (int i = 0; i < 3; i++) { v += a * wm_n(p); p = p * 2.07 + 13.1; a *= 0.5; }
   return v;
 }
-float wm_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-float wm_smin(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
-float wm_cap(vec2 p, vec2 a, vec2 b, float r) {
-  vec2 pa = p - a, ba = b - a;
-  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-  return length(pa - ba * h) - r;
+
+// where a sprite cell sits in the 4 x 2 atlas; q runs -1..1 inside the cell
+vec2 wm_cuv(float cell, vec2 q) {
+  return (vec2(mod(cell, 4.0), floor(cell / 4.0)) + 0.5 + q * 0.453) / vec2(4.0, 2.0);
 }
 
-// the line of a ridge: a base height with slow hills; knoll adds one raised place for the wolf
-float wm_ridge(float x, float b, float a, float f, float sd) {
-  return b + a * (wm_noise(vec2(x * f + sd, sd * 1.7)) - 0.5) * 2.0 + a * 0.4 * (wm_noise(vec2(x * f * 2.7 + sd * 3.0, sd)) - 0.5);
+// how bright the picture is around a point: three taps, so the moon can look for open sky
+float wm_probe(vec2 uv) {
+  return (wm_luma(wall(uv)) + wm_luma(wall(uv + vec2(0.055, 0.035))) + wm_luma(wall(uv + vec2(-0.050, 0.040)))) / 3.0;
 }
 
-// a row of pines standing on a ridge: 1 inside a tree
-float wm_pines(vec2 p, float cw, float hmin, float hmax, float b, float a, float f, float sd, float aa) {
-  float m = 0.0;
-  float ci = floor(p.x / cw);
-  for (int k = -1; k <= 1; k++) {
-    float i = ci + float(k);
-    float cx = (i + 0.5 + (wm_hash(vec2(i, sd)) - 0.5) * 0.7) * cw;
-    float h = hmin + (hmax - hmin) * wm_hash(vec2(i * 1.7, sd + 4.0));
-    float by = wm_ridge(cx, b, a, f, sd) + 0.01;
-    float yf = (p.y - (by - h)) / h;                      // 0 at the tip, 1 at the foot
-    if (yf > -0.02 && yf < 1.0) {
-      float tier = fract(yf * 6.5 + wm_hash(vec2(i, sd + 9.0)));
-      float w = 0.48 * cw * 1.25 * (yf * (0.55 + 0.45 * tier)) + 0.0008;
-      m = max(m, smoothstep(aa, -aa, abs(p.x - cx) - w) * smoothstep(-0.02, 0.0, yf));
-    }
-  }
-  return m;
-}
-
-// a howling wolf in profile facing right, in local units; returns the signed distance (negative inside)
-float wm_wolf(vec2 q) {
-  float d = wm_cap(q, vec2(-0.30, 0.00), vec2(0.14, -0.02), 0.105);                 // body
-  d = wm_smin(d, wm_cap(q, vec2(0.12, -0.02), vec2(0.20, -0.05), 0.115), 0.08);      // deep chest
-  d = wm_smin(d, wm_cap(q, vec2(-0.27, 0.04), vec2(-0.31, 0.33), 0.052), 0.06);      // hind leg
-  d = wm_smin(d, wm_cap(q, vec2(-0.14, 0.06), vec2(-0.12, 0.34), 0.042), 0.05);
-  d = wm_smin(d, wm_cap(q, vec2(0.08, 0.06), vec2(0.07, 0.34), 0.042), 0.05);        // front legs
-  d = wm_smin(d, wm_cap(q, vec2(0.17, 0.06), vec2(0.18, 0.34), 0.040), 0.05);
-  d = wm_smin(d, wm_cap(q, vec2(-0.33, -0.03), vec2(-0.58, 0.07), 0.045), 0.06);     // tail
-  d = wm_smin(d, wm_cap(q, vec2(-0.56, 0.06), vec2(-0.66, 0.22), 0.030), 0.05);
-  d = wm_smin(d, wm_cap(q, vec2(0.17, -0.08), vec2(0.31, -0.30), 0.085), 0.09);      // neck lifted
-  d = wm_smin(d, wm_cap(q, vec2(0.31, -0.30), vec2(0.38, -0.41), 0.078), 0.07);      // skull
-  d = wm_smin(d, wm_cap(q, vec2(0.38, -0.41), vec2(0.53, -0.62), 0.044), 0.06);      // muzzle toward the moon
-  d = wm_smin(d, wm_cap(q, vec2(0.32, -0.38), vec2(0.29, -0.52), 0.030), 0.05);      // ear
-  return d;
+// the few painted objects: x, y (fractions of the screen), radius (fraction of the screen height), atlas cell
+vec4 wm_spot(int i) {
+  if (i == 0) return vec4(0.175, 0.890, 0.125, 1.0);   // the wolf, on the dark lower edge
+  if (i == 1) return vec4(0.042, 0.905, 0.125, 2.0);   // pines, left edge
+  if (i == 2) return vec4(0.962, 0.945, 0.118, 3.0);   // pines, right edge
+  if (i == 3) return vec4(0.101, 0.138, 0.044, 4.0);   // a small owl sitting on the left branch
+  if (i == 4) return vec4(-0.010, 0.135, 0.205, 5.0);  // a bare branch reaching in from the left edge
+  return vec4(1.022, 0.178, 0.195, 6.0);               // a bare branch leaning in from the top right
 }
 
 vec4 fxMain(vec2 mpx) {
   vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
   vec2 p = vec2(uv.x * asp, uv.y);
-  vec2 m = mpx / res;
-  bool hasM = m.x > 0.0 && m.x < 1.0 && m.y > 0.0 && m.y < 1.0;
-  vec2 mp = vec2(m.x * asp, m.y);
   float t = time;
-  float aa = 1.5 / res.y;
+  bool has = mpx.x > -5000.0;
+  vec2 mp = has ? vec2(mpx.x / res.y, mpx.y / res.y) : vec2(-20.0);
+  vec2 par = has ? (vec2(mpx.x / res.x, mpx.y / res.y) - 0.5) : vec2(0.0);
+
   vec3 pic = wall(uv);
+  float pl = wm_luma(pic);
+  // the sky part of the picture: open, brighter, higher up. Everything airy is keyed to it
+  float sky = smoothstep(0.14, 0.52, pl) * (0.30 + 0.70 * smoothstep(0.95, 0.30, uv.y));
 
-  // ---- layout
-  vec2 moonP = vec2(0.60 * asp, 0.60);
-  float moonR = 0.26;
-  float wolfX = 0.36 * asp;
-  float sc = 0.27;
+  // ---- the moon goes to the brightest of three places in the upper half of the picture
+  vec2 c0 = vec2(0.705, 0.205), c1 = vec2(0.482, 0.145), c2 = vec2(0.296, 0.252);
+  float b0 = wm_probe(c0), b1 = wm_probe(c1) * 0.98, b2 = wm_probe(c2) * 0.96;
+  vec2 mc = b0 >= b1 ? (b0 >= b2 ? c0 : c2) : (b1 >= b2 ? c1 : c2);
+  float moonR = 0.098;
+  vec2 moonP = vec2(mc.x * asp, mc.y) + par * 0.016 * vec2(-1.0, -1.0);
+  float dM = length(p - moonP);
 
-  // ---- the pointer: it pushes the mist outward and spins it a little
+  // ---- the pointer pushes the fog and the motes away from itself
   vec2 dmv = p - mp;
   float dmd = length(dmv);
   vec2 dir = dmv / max(dmd, 0.001);
-  float fall = hasM ? exp(-dmd / 0.24) : 0.0;
-  vec2 push = dir * 0.13 * fall + vec2(-dir.y, dir.x) * 0.07 * fall;
-  float part = hasM ? exp(-dmd * dmd / 0.045) : 0.0;
+  float fall = has ? exp(-dmd / 0.26) : 0.0;
+  vec2 push = dir * 0.12 * fall + vec2(-dir.y, dir.x) * 0.05 * fall;
+  float part = has ? exp(-dmd * dmd / 0.050) : 0.0;
 
-  // ---- the howl: a slow ring of pale light leaves the moon every 13 s
-  float ph = fract(t / 13.0 + 0.05);
-  float ringR = moonR * 1.02 + 1.25 * pow(ph, 0.8);
-  float ringW = 0.020 + 0.070 * ph;
-  float ringI = pow(1.0 - ph, 1.6) * smoothstep(0.0, 0.04, ph);
-  float dM = length(p - moonP);
-  float ring = exp(-pow((dM - ringR) / ringW, 2.0)) * ringI;
-  float ring2 = exp(-pow((dM - ringR * 0.80 + 0.03) / (ringW * 1.3), 2.0)) * ringI * 0.28;
-  float howl = ring + ring2;
-  float swell = smoothstep(0.0, 0.10, ph) * (1.0 - smoothstep(0.10, 0.45, ph));   // the moon brightens as it leaves
+  // ---- the cool moonlit grade: your picture, a little darker and a little blue
+  vec3 cool = pic * vec3(0.88, 0.93, 1.06);
+  cool = mix(cool, vec3(wm_luma(cool)), 0.18);
+  vec3 col = cool * 0.915 + vec3(0.010, 0.014, 0.028);
+  // the lower end of the picture sinks a touch deeper than the upper end
+  col *= 1.0 - 0.085 * smoothstep(0.45, 1.0, uv.y);
 
-  // ---- the sky: deep blue, brighter around the low moon, a few stars
-  float hv = clamp((p.y - 0.1) / 0.6, 0.0, 1.0);
-  vec3 sky = mix(vec3(0.012, 0.028, 0.070), vec3(0.075, 0.115, 0.200), hv * hv);
-  sky += vec3(0.28, 0.34, 0.46) * exp(-max(dM - moonR, 0.0) / 0.30) * 0.40;
-  sky += vec3(0.60, 0.62, 0.62) * exp(-max(dM - moonR, 0.0) / 0.05) * 0.16;
-  vec2 sg = p * 90.0;
-  vec2 sgi = floor(sg), sgf = fract(sg) - 0.5;
-  float star = smoothstep(0.10, 0.0, length(sgf - (vec2(wm_hash(sgi), wm_hash(sgi + 3.3)) - 0.5) * 0.6)) * step(0.965, wm_hash(sgi + 7.0));
-  star *= 0.5 + 0.5 * sin(t * (0.6 + wm_hash(sgi)) + wm_hash(sgi + 1.0) * 6.28);
-  sky += vec3(0.85, 0.90, 1.0) * star * 0.55 * smoothstep(0.55, 0.15, p.y) * (1.0 - smoothstep(moonR, moonR * 2.2, dM));
-  // thin cloud streaks drifting across the moon
-  float cn = wm_fbm(vec2(p.x * 1.3 - t * 0.012, p.y * 7.0 + 3.0));
-  float cloud = smoothstep(0.52, 0.78, cn) * smoothstep(0.18, 0.40, p.y) * smoothstep(0.78, 0.50, p.y) * smoothstep(0.9, 0.2, abs(p.x - moonP.x) / asp * 2.0);
-  vec3 col = sky;
-  col += vec3(0.70, 0.78, 0.92) * howl * 0.30;
+  // ---- thin cloud strips drifting across the moon
+  float cs = wm_fbm(vec2(p.x * 1.05 - t * 0.016, (p.y - moonP.y) * 8.5 + 5.0));
+  float strip = smoothstep(0.50, 0.80, cs) * exp(-pow((p.y - moonP.y - 0.015) / 0.17, 2.0));
+  float cloud = strip * (0.35 + 0.65 * sky);
 
-  // ---- the moon itself, enormous and low, warmer where it meets the haze
-  float disc = smoothstep(moonR, moonR - aa * 2.0, dM);
+  // ---- a large soft halo around the moon, lying on the picture
+  float halo = exp(-max(dM - moonR, 0.0) / 0.34) * 0.52 + exp(-max(dM - moonR, 0.0) / 0.085) * 0.40;
+  float near = has ? exp(-pow(length(mp - moonP) / 0.45, 2.0)) : 0.0;   // it swells when the pointer comes near
+  vec3 moonCol = vec3(0.70, 0.79, 1.00);
+  col += moonCol * halo * (0.30 + 0.45 * sky) * (0.85 + 0.35 * near) * (1.0 - 0.30 * cloud);
+
+  // ---- two slow rings of light leaving the moon, strongest where the sky is open
+  float ringSum = 0.0;
+  for (int k = 0; k < 2; k++) {
+    float ph = fract(t / 11.0 + float(k) * 0.5);
+    float rr = moonR * 1.05 + 1.30 * pow(ph, 0.78);
+    float rw = 0.022 + 0.085 * ph;
+    float ri = pow(1.0 - ph, 1.7) * smoothstep(0.0, 0.05, ph);
+    ringSum += exp(-pow((dM - rr) / rw, 2.0)) * ri;
+    ringSum += exp(-pow((dM - rr * 0.78) / (rw * 1.35), 2.0)) * ri * 0.30;
+  }
+  float ringLit = ringSum * (0.25 + 0.75 * sky) * (0.90 + 0.40 * near);
+  col += moonCol * ringLit * 0.30;
+  // the cloud strips catch the halo and the rings
+  col += vec3(0.62, 0.70, 0.90) * cloud * (0.055 + 0.10 * halo + 0.12 * ringSum);
+
+  // ---- fog banks lying along the floor, parting around the pointer
+  vec2 pf1 = p - push * 1.15;
+  float f1 = wm_fbm(vec2(pf1.x * 1.15 - t * 0.021, pf1.y * 3.1 + 2.0) + wm_fbm(pf1 * 1.7 + t * 0.012) * 0.65);
+  float band1 = smoothstep(0.70, 0.98, uv.y);
+  float fog1 = smoothstep(0.33, 0.72, f1) * band1 * (1.0 - 0.88 * part);
+  vec2 pf2 = p - push * 0.8;
+  float f2 = wm_fbm(vec2(pf2.x * 0.95 + t * 0.014, pf2.y * 2.6 + 9.0));
+  float band2 = smoothstep(0.60, 0.80, uv.y) * smoothstep(0.98, 0.84, uv.y);
+  float fog2 = smoothstep(0.42, 0.78, f2) * band2 * (1.0 - 0.80 * part);
+  vec3 fogC = vec3(0.33, 0.40, 0.56) + moonCol * (0.10 + 0.22 * halo + 0.30 * ringSum);
+  float fog = clamp(fog1 * 0.46 + fog2 * 0.30, 0.0, 0.70);
+  col = mix(col, fogC, fog);
+
+  // ---- the painted objects: they stand in the fog, so it only half veils them
+  for (int i = 0; i < 6; i++) {
+    vec4 sp = wm_spot(i);
+    float r = sp.z;
+    // the owl rides the branch it sits on: same drift, same sway
+    float fi = i == 3 ? 4.0 : float(i);
+    float dr = i == 3 ? 0.205 : r;
+    vec2 home = vec2(sp.x * asp, sp.y);
+    float depth = 0.35 + 0.65 * smoothstep(0.04, 0.17, dr);
+    home += par * depth * 0.026 * vec2(-1.0, -1.0);
+    float sway = i == 0 ? 0.20 : 1.0;                               // the wolf holds still, the trees breathe
+    home += vec2(0.0040 * sin(t * 0.31 + fi * 1.7), 0.0022 * sin(t * 0.47 + fi * 2.3)) * sway;
+    vec2 q0 = p - home;
+    if (abs(q0.x) < r && abs(q0.y) < r) {
+      vec2 q = q0 / r;
+      if (i == 2 || i == 4 || i == 5) q.x = -q.x;                   // mirrored copies
+      vec4 s = texture(sprites, wm_cuv(sp.w, q));
+      if (s.a > 0.004) {
+        // the edge that faces the moon catches a cold rim light
+        vec2 toMoon = normalize(moonP - home + vec2(0.0001));
+        vec2 rq = q + toMoon * 0.028;
+        float aOff = (abs(rq.x) < 1.0 && abs(rq.y) < 1.0) ? texture(sprites, wm_cuv(sp.w, rq)).a : 0.0;
+        float rim = clamp(s.a - aOff, 0.0, 1.0);
+        float lit = 0.55 + 0.45 * sky + 0.6 * ringSum;
+        // the painting sinks into the night, pale bark and frost deepest of all
+        float slum = wm_luma(s.rgb);
+        vec3 pc = mix(s.rgb, vec3(0.045, 0.058, 0.105), 0.60 + 0.34 * smoothstep(0.24, 0.72, slum));
+        pc *= vec3(0.80, 0.88, 1.08);
+        pc += moonCol * rim * 0.40 * lit;
+        // the wolf answers the pointer: it lights up when the pointer comes to it
+        if (i == 0) {
+          float wn = has ? exp(-pow(length(mp - home) / 0.28, 2.0)) : 0.0;
+          pc += moonCol * (rim * 0.70 + 0.10) * wn;
+        }
+        pc = mix(pc, fogC, fog * 0.58);                             // the fog lies around them, not over them
+        col = mix(col, pc, s.a * 0.94);
+      }
+    }
+  }
+
+  // ---- the moon itself, painted, with a thin ring of light round its rim
   vec2 mq = (p - moonP) / moonR;
-  float mare = smoothstep(0.48, 0.66, wm_fbm(mq * 2.3 + 4.0)) * 0.42 + smoothstep(0.55, 0.72, wm_fbm(mq * 5.5 + 11.0)) * 0.10;
-  float crat = 0.0;
-  vec3 moonC = mix(vec3(0.97, 0.95, 0.88), vec3(1.0, 0.86, 0.68), smoothstep(-0.2, 1.0, mq.y));
-  moonC *= 1.0 - mare - crat * 0.5;
-  moonC *= 0.88 + 0.12 * sqrt(max(1.0 - dot(mq, mq), 0.0));
-  moonC *= 1.0 + 0.18 * swell;
-  moonC = mix(moonC, vec3(0.70, 0.76, 0.86), cloud * 0.18);
-  col = mix(col, moonC * 0.80, disc);
-  col += vec3(0.50, 0.55, 0.65) * cloud * 0.12 * (1.0 - disc);
+  if (abs(mq.x) < 1.0 && abs(mq.y) < 1.0) {
+    vec4 s = texture(sprites, wm_cuv(0.0, mq));
+    if (s.a > 0.004) {
+      vec3 dc = s.rgb * vec3(0.96, 0.98, 1.04) * (0.92 + 0.14 * ringSum);
+      dc = mix(dc, dc * vec3(0.80, 0.86, 0.98) + vec3(0.06, 0.07, 0.10), cloud * 0.45);
+      col = mix(col, dc, s.a);
+    }
+  }
+  col += moonCol * exp(-pow((dM - moonR * 1.02) / (moonR * 0.10), 2.0)) * 0.22 * (0.6 + 0.4 * sky);
 
-  // ---- far ridge of pines, hazy blue
-  float rFar = wm_ridge(p.x, 0.70, 0.030, 1.6, 1.0);
-  float farM = max(step(rFar, p.y), wm_pines(p, 0.026, 0.040, 0.085, 0.70, 0.030, 1.6, 1.0, aa));
-  vec3 farC = mix(vec3(0.060, 0.090, 0.150), vec3(0.20, 0.25, 0.34), exp(-abs(p.x - moonP.x) / 0.30) * 0.5 * smoothstep(0.55, 0.85, p.y));
-  col = mix(col, farC, farM);
+  // ---- a last thin wisp of fog drifting in front of everything
+  col = mix(col, fogC, fog * fog * 0.30);
 
-  // ---- mist in the far valley
-  vec2 pm1 = p - push * 0.9;
-  float n1 = wm_fbm(vec2(pm1.x * 1.5 + t * 0.020, pm1.y * 4.2 + 1.0) + wm_fbm(pm1 * 2.2 - t * 0.01) * 0.6);
-  float band1 = smoothstep(0.64, 0.74, p.y) * smoothstep(0.90, 0.78, p.y);
-  float mist1 = smoothstep(0.30, 0.72, n1) * band1 * (1.0 - 0.85 * part);
-  vec3 mistC = vec3(0.22, 0.31, 0.45) + vec3(0.60, 0.62, 0.58) * exp(-abs(p.x - moonP.x) / 0.50) * 0.45;
-  col = mix(col, mistC * 1.1, mist1 * 0.85);
+  // ---- a few frost motes drifting up through the moonlight
+  for (int k = 0; k < 12; k++) {
+    float fk = float(k);
+    float sp2 = 0.020 + 0.030 * wm_h1(fk + 2.0);
+    float life = fract(t * sp2 + wm_h1(fk * 5.3));
+    float lane = wm_h1(fk * 1.7) * asp;
+    vec2 e = vec2(lane + 0.07 * sin(t * (0.25 + 0.2 * wm_h1(fk)) + fk), 1.02 - life * (0.55 + 0.35 * wm_h1(fk + 7.0)));
+    vec2 de = e - mp;
+    float dl = length(de);
+    e += de / (dl + 0.04) * 0.055 * (has ? exp(-pow(dl / 0.17, 2.0)) : 0.0);
+    float sz = 0.0022 + 0.0020 * wm_h1(fk + 11.0);
+    float a = exp(-dot(p - e, p - e) / (sz * sz)) * smoothstep(0.0, 0.10, life) * smoothstep(1.0, 0.60, life);
+    col += moonCol * a * (0.55 + 0.45 * sin(t * 2.1 + fk * 2.0)) * 0.80;
+  }
 
-  // ---- the near ridge with its pines, and the knoll where the wolf stands
-  float knoll = 0.075 * exp(-pow((p.x - wolfX) / 0.11, 2.0));
-  float rMid = wm_ridge(p.x, 0.80, 0.030, 1.9, 5.0) - knoll;
-  float midM = max(step(rMid, p.y), wm_pines(p, 0.034, 0.060, 0.135, 0.80, 0.030, 1.9, 5.0, aa) * (1.0 - smoothstep(0.10, 0.19, abs(p.x - wolfX))));
-  vec3 midC = vec3(0.020, 0.032, 0.060);
-  col = mix(col, midC, midM);
-  // the wolf
-  float wy = wm_ridge(wolfX, 0.80, 0.030, 1.9, 5.0) - 0.075 - 0.33 * sc + 0.012;
-  vec2 wq = (p - vec2(wolfX, wy)) / sc;
-  float wd = wm_wolf(wq) * sc;
-  float wolf = smoothstep(aa, -aa, wd);
-  col = mix(col, vec3(0.010, 0.016, 0.034), wolf);
-
-  // ---- low mist rolling in front, lit from the moon
-  vec2 pm2 = p - push * 1.2;
-  float n2 = wm_fbm(vec2(pm2.x * 1.2 - t * 0.030, pm2.y * 3.4 + 7.0) + wm_fbm(pm2 * 1.7 + t * 0.012) * 0.7);
-  float band2 = smoothstep(0.78, 0.88, p.y) * smoothstep(1.05, 0.93, p.y);
-  float mist2 = smoothstep(0.30, 0.72, n2) * band2 * (1.0 - 0.80 * part);
-  col = mix(col, mistC * 1.05, mist2 * 0.88);
-  col += vec3(0.60, 0.65, 0.75) * howl * 0.10 * (mist1 + mist2);
-
-  // ---- dark pines in the foreground at the edges
-  float edge = smoothstep(0.30, 0.06, p.x / asp) + smoothstep(0.72, 0.94, p.x / asp);
-  float nearM = wm_pines(p, 0.060, 0.22, 0.46, 1.02, 0.020, 1.3, 9.0, aa) * clamp(edge, 0.0, 1.0);
-  col = mix(col, vec3(0.006, 0.010, 0.022), max(nearM, step(0.985, uv.y)));
-
-  // a faint trace of the user's picture, and a gentle vignette
-  col += pic * 0.045;
-  col *= 1.0 - 0.38 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.4);
   return vec4(col, 1.0) * qt_Opacity;
 }
 

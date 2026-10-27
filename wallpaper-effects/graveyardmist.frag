@@ -1,5 +1,5 @@
 // label: Graveyard mist
-// hint: an old cemetery at night with leaning crosses, a weeping angel statue and a dead tree under a veiled moon, low mist drifting between the stones, green-white wisps rising; the pointer calls the wisps to gather around it
+// hint: your picture is veiled in cold green-grey mist that pools where it is dark and low, with a veiled moon halo over its brightest spot, a few painted graveyard silhouettes standing in the fog and will-o-wisps that curl around the pointer. No scenery: your picture stays
 // category: Dark tales
 #version 440
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -22,6 +22,7 @@ layout(std140, binding = 0) uniform buf {
   float zoom;
 };
 layout(binding = 1) uniform sampler2D src;
+layout(binding = 2) uniform sampler2D sprites; // graveyardmist.png: 4 x 2 cells of 256 px, painted cut-outs (0,1 crosses, 2 angel, 3 dead tree, 4 lantern)
 
 vec2 coverUV(vec2 uv) {
   float ra = res.x / res.y;
@@ -30,293 +31,198 @@ vec2 coverUV(vec2 uv) {
   return (uv - 0.5) * s + 0.5;
 }
 vec3 wall(vec2 uv) { return texture(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.05) + 0.5, 0.0, 1.0))).rgb; } // the picture stays unzoomed; only the effect scales
-float gm_hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// a blurred read of the picture: the mist follows broad shadows, not every leaf
+vec3 wallBlur(vec2 uv, float lod) { return textureLod(src, coverUV(clamp((uv - 0.5) * max(zoom, 0.05) + 0.5, 0.0, 1.0)), lod).rgb; }
+
+float gm_sq(float x) { return x * x; }
+float gm_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+float gm_hash(vec2 p) { vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float gm_h1(float n) { return gm_hash(vec2(n, n * 0.7 + 4.0)); }
 float gm_noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
   return mix(mix(gm_hash(i), gm_hash(i + vec2(1, 0)), f.x), mix(gm_hash(i + vec2(0, 1)), gm_hash(i + vec2(1, 1)), f.x), f.y);
 }
-float gm_fbm(vec2 p) {
-  float v = 0.0, a = 0.5;
-  for (int i = 0; i < 5; i++) { v += a * gm_noise(p); p = p * 2.03 + 17.0; a *= 0.5; }
-  return v;
-}
-float gm_fbm3(vec2 p) {
-  float v = 0.0, a = 0.5;
-  for (int i = 0; i < 3; i++) { v += a * gm_noise(p); p = p * 2.03 + 17.0; a *= 0.5; }
-  return v;
-}
-float gm_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-vec2 gm_rot(vec2 q, float a) { float c = cos(a), s = sin(a); return vec2(c * q.x - s * q.y, s * q.x + c * q.y); }
-float gm_box(vec2 q, vec2 h) { vec2 d = abs(q) - h; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
-float gm_ell(vec2 q, vec2 r) { return (length(q / r) - 1.0) * min(r.x, r.y); }
-float gm_seg(vec2 p, vec2 a, vec2 b, float w0, float w1) {
-  vec2 ba = b - a;
-  float h = clamp(dot(p - a, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
-  return length(p - a - ba * h) - mix(w0, w1, h);
-}
+// two octaves only; the two mist layers together stay inside the four-octave budget
+float gm_f2(vec2 p) { return 0.64 * gm_noise(p) + 0.36 * gm_noise(p * 2.17 + 11.3); }
 
-const float GM_HZ = 0.66;                       // horizon
-
-// a cross, leaning: base point, size, lean angle. y grows downward so "up" is -y
-float gm_cross(vec2 p, vec2 base, float s, float lean) {
-  vec2 q = gm_rot(p - base, -lean) / s;
-  float d1 = gm_box(q + vec2(0.0, 0.50), vec2(0.075, 0.50));
-  float d2 = gm_box(q + vec2(0.0, 0.74), vec2(0.27, 0.07));
-  return min(d1, d2) * s;
+// the sprites that stand in the mist: x, base y (fractions of the screen), half cell size (fraction of the height), atlas cell
+vec4 gm_spot(int i) {
+  if (i == 0) return vec4(0.140, 1.045, 0.240, 3.0);  // dead twisted tree, bottom left, cropped
+  if (i == 1) return vec4(0.207, 0.560, 0.060, 4.0);  // lantern, hanging from a branch of the tree
+  if (i == 2) return vec4(0.330, 0.990, 0.092, 0.0);  // leaning stone cross
+  if (i == 3) return vec4(0.705, 1.000, 0.200, 2.0);  // weeping angel
+  return vec4(0.900, 0.968, 0.112, 1.0);              // iron cross, far right
 }
-// a headstone with a rounded top
-float gm_stone(vec2 p, vec2 base, float s, float lean, float wd) {
-  vec2 q = gm_rot(p - base, -lean) / s;
-  float d1 = gm_box(q + vec2(0.0, 0.40), vec2(wd, 0.40));
-  float d2 = length(q + vec2(0.0, 0.80)) - wd;
-  return min(d1, d2) * s;
-}
-// an obelisk
-float gm_obel(vec2 p, vec2 base, float s, float lean) {
-  vec2 q = gm_rot(p - base, -lean) / s;
-  float h = -q.y;
-  float hw = mix(0.17, 0.09, clamp(h / 1.0, 0.0, 1.0));
-  float d = max(abs(q.x) - hw, max(-h, h - 1.0));
-  float cap = max(abs(q.x) - (1.0 - clamp((h - 1.0) / 0.14, 0.0, 1.0)) * 0.09, max(1.0 - h, h - 1.14));
-  return min(d, cap) * s;
-}
-// one row of grave markers (cells along x, a marker per cell, three neighbours checked)
-float gm_row(vec2 p, float baseY, float s, float dens, float seed, float cover) {
-  float cell = floor(p.x * dens);
-  float d = 1.0;
-  for (int k = -1; k <= 1; k++) {
-    float id = cell + float(k);
-    float h1 = gm_hash(vec2(id, seed));
-    float h2 = gm_hash(vec2(id, seed + 5.0));
-    float h3 = gm_hash(vec2(id, seed + 9.0));
-    if (h1 > cover) continue;
-    vec2 base = vec2((id + 0.2 + 0.6 * h2) / dens, baseY + (h3 - 0.5) * 0.02 * s / 0.1);
-    float ss = s * (0.7 + 0.6 * h3);
-    float lean = (h2 - 0.5) * 0.36;
-    float dd;
-    float typ = gm_hash(vec2(id, seed + 13.0));
-    if (typ < 0.38) dd = gm_cross(p, base, ss * 1.1, lean);
-    else if (typ < 0.80) dd = gm_stone(p, base, ss, lean, 0.22 + 0.12 * h1);
-    else dd = gm_obel(p, base, ss * 1.2, lean * 0.4);
-    d = min(d, dd);
-  }
-  return d;
-}
-// the angel statue on its plinth: local unit s = statue height; y grows downward
-float gm_angel(vec2 p, vec2 base, float s) {
-  vec2 q = (p - base) / s;
-  float h = -q.y;
-  float plinth = min(gm_box(q + vec2(0.0, 0.07), vec2(0.21, 0.07)), gm_box(q + vec2(0.0, 0.17), vec2(0.155, 0.035)));
-  float t = clamp((h - 0.20) / 0.50, 0.0, 1.0);
-  float hw = mix(0.185, 0.075, pow(t, 0.7));
-  float robe = max(abs(q.x - 0.01 * t) - hw, max(0.20 - h, h - 0.70));
-  float shoulder = gm_ell(q + vec2(-0.01, 0.69), vec2(0.115, 0.06));
-  float head = length(q - vec2(0.035, -0.785)) - 0.060;
-  float neck = gm_box(q + vec2(-0.02, 0.72), vec2(0.026, 0.04));
-  float armL = gm_seg(q, vec2(-0.085, -0.66), vec2(-0.02, -0.50), 0.042, 0.036);
-  float armR = gm_seg(q, vec2(0.105, -0.66), vec2(0.04, -0.50), 0.042, 0.036);
-  vec2 wl = gm_rot(q - vec2(-0.185, -0.80), 0.45);
-  vec2 wr = gm_rot(q - vec2(0.205, -0.80), -0.45);
-  float wingL = gm_ell(wl, vec2(0.075, 0.27 + 0.012 * sin(wl.y * 40.0)));
-  float wingR = gm_ell(wr, vec2(0.075, 0.27 + 0.012 * sin(wr.y * 40.0)));
-  vec2 wl2 = gm_rot(q - vec2(-0.125, -0.75), 0.12);
-  vec2 wr2 = gm_rot(q - vec2(0.145, -0.75), -0.12);
-  wingL = min(wingL, gm_ell(wl2, vec2(0.055, 0.22)));
-  wingR = min(wingR, gm_ell(wr2, vec2(0.055, 0.22)));
-  float d = min(min(plinth, robe), min(shoulder, min(head, neck)));
-  d = min(d, min(min(wingL, wingR), min(armL, armR)));
-  return d * s;
-}
-float gm_dtree(vec2 p, vec2 base, float s) {
-  vec2 q = (p - base) / s;
-  q += 0.035 * vec2(gm_noise(q * 8.0), gm_noise(q * 8.0 + 5.0)) - 0.0175;
-  float d = gm_seg(q, vec2(0.0, 0.0), vec2(0.015, -0.95), 0.040, 0.014);
-  for (int i = 0; i < 6; i++) {
-    float fi = float(i);
-    float hh = gm_hash(vec2(fi, 3.0));
-    float sd = (mod(fi, 2.0) < 0.5) ? -1.0 : 1.0;
-    float y0 = -0.28 - 0.11 * fi;
-    vec2 a = vec2(0.012 * (-y0), y0);
-    float ang = sd * (0.55 + 0.55 * hh);
-    float len = 0.30 - 0.025 * fi + 0.06 * hh;
-    vec2 b = a + vec2(sin(ang), -cos(ang)) * len;
-    d = min(d, gm_seg(q, a, b, 0.016, 0.004));
-    vec2 c1 = b + vec2(sin(ang + sd * 0.7), -cos(ang + sd * 0.7)) * len * 0.55;
-    vec2 c2 = b + vec2(sin(ang - sd * 0.5), -cos(ang - sd * 0.5)) * len * 0.45;
-    d = min(d, gm_seg(q, b, c1, 0.006, 0.0015));
-    d = min(d, gm_seg(q, b, c2, 0.005, 0.0012));
-  }
-  d = min(d, gm_seg(q, vec2(0.015, -0.95), vec2(0.07, -1.12), 0.012, 0.003));
-  d = min(d, gm_seg(q, vec2(0.015, -0.95), vec2(-0.08, -1.08), 0.011, 0.003));
-  d = min(d, gm_seg(q, vec2(0.0, 0.0), vec2(-0.09, 0.03), 0.040, 0.012));
-  d = min(d, gm_seg(q, vec2(0.0, 0.0), vec2(0.09, 0.03), 0.040, 0.012));
-  return d * s;
-}
-float gm_mistl(vec2 p, float yc, float th, float sc, float sp, float seed, float t) {
-  float n = gm_fbm(vec2(p.x * sc - t * sp, p.y * sc * 2.6) + seed);
-  float prof = exp(-pow((p.y - yc) / th, 2.0));
-  return prof * smoothstep(0.28, 0.78, n);
-}
-float gm_m(float sd, float aa) { return smoothstep(aa, -aa, sd); }
 
 vec4 fxMain(vec2 mpx) {
   vec2 uv = qt_TexCoord0;
   float asp = res.x / res.y;
   vec2 p = vec2(uv.x * asp, uv.y);
-  vec2 m = mpx / res;
-  bool onScr = m.x > 0.0 && m.x < 1.0 && m.y > 0.0 && m.y < 1.0;
-  vec2 mp = vec2(m.x * asp, m.y);
   float t = time;
-  float aa = 1.4 / res.y;
+  bool has = mpx.x > -5000.0;
+  vec2 mp = has ? vec2(mpx.x / res.y, mpx.y / res.y) : vec2(-10.0);
+  vec2 par = has ? (vec2(mpx.x / res.x, mpx.y / res.y) - 0.5) : vec2(0.0);
+
   vec3 pic = wall(uv);
   float pl = gm_luma(pic);
+  float plb = gm_luma(wallBlur(uv, 4.5));          // broad brightness: the mist keys off this
 
-  // ---- sky: cold blue-green, brighter low down, the picture's stars show faintly through
-  float up = 1.0 - clamp(uv.y / GM_HZ, 0.0, 1.0);
-  vec3 skyHi = vec3(0.012, 0.028, 0.045);
-  vec3 skyLo = vec3(0.11, 0.18, 0.19);
-  vec3 sky = mix(skyLo, skyHi, smoothstep(0.0, 1.0, pow(up, 0.55)));
-  sky += vec3(0.10, 0.15, 0.15) * min(pl, 0.55) * (0.5 + 0.5 * up);
-  // moon and its veil of thin cloud
-  vec2 moon = vec2(asp * 0.27, 0.22);
+  // ---- the picture itself: a touch desaturated and pulled towards green-grey
+  float lum = gm_luma(pic);
+  vec3 col = mix(pic, vec3(lum) * vec3(0.90, 1.00, 0.94), 0.30);
+  col *= 0.94 + 0.06 * smoothstep(0.9, 0.2, uv.y);
+
+  // ---- the brightest patch of the picture, found on a coarse 4 x 4 grid of the upper half (no arrays)
+  vec2 bc = vec2(0.0);
+  float bw = 1e-4, bmax = 0.0;
+  for (int i = 0; i < 16; i++) {
+    vec2 g = vec2((mod(float(i), 4.0) + 0.5) / 4.0, 0.07 + 0.49 * (floor(float(i) / 4.0) + 0.5) / 4.0);
+    float l = gm_luma(wallBlur(g, 6.0));
+    float w = max(l - 0.14, 0.0); w = w * w; w = w * w + 2e-4;
+    bc += g * w; bw += w; bmax = max(bmax, l);
+  }
+  vec2 moonUV = bc / bw;
+  vec2 moon = vec2(moonUV.x * asp, moonUV.y);
+  moon += vec2(0.004 * sin(t * 0.05), 0.003 * cos(t * 0.04));
+
+  // ---- pointer: it stirs the mist into a slow curl and calls the wisps in
+  vec2 dm = p - mp;
+  float rm = length(dm);
+  float swirl = has ? exp(-rm * rm / 0.020) : 0.0;
+  vec2 curl = vec2(-dm.y, dm.x) / (rm + 0.07) * swirl * 0.10;
+  float gather = has ? exp(-rm * rm / 0.045) : 0.0;
+
+  // ---- two mist layers drifting at different speeds (far one behind the silhouettes, near one in front)
+  vec2 fa = vec2(p.x * 1.65 - t * 0.0115 + par.x * 0.020, uv.y * 3.3 - t * 0.004) + curl * 0.35;
+  float nf = gm_f2(fa);
+  vec2 na = vec2(p.x * 2.85 + t * 0.0265 + par.x * 0.055, uv.y * 5.1 + t * 0.006) + nf * 0.60 + curl;
+  float nn = gm_f2(na);
+
+  float dark = smoothstep(0.60, 0.07, plb);        // thick where the picture is dark
+  float low = smoothstep(0.10, 0.90, uv.y);        // and thick low down
+  float key = clamp(0.34 + 0.44 * dark + 0.50 * low + 0.28 * gather, 0.0, 1.15);
+  float farA = smoothstep(0.33, 0.85, nf) * key * 0.34;
+  float nearA = smoothstep(0.40, 0.93, nn) * key * 0.40;
+
+  // the mist takes the picture's own brightness but none of its colour, so it reads as fog
+  // over a bright gradient just as well as over a dark forest
+  vec3 mistC = mix(vec3(0.335, 0.415, 0.380), vec3(0.740, 0.800, 0.760), smoothstep(0.04, 0.80, plb));
+
+  // ---- the lantern's warm light: it flickers and it is the mist that shows it
+  vec4 lsp = gm_spot(1);
+  vec2 lpos = vec2(lsp.x * asp, lsp.y) + par * 0.018 + vec2(0.010 * sin(t * 0.33), 0.004 * sin(t * 0.52));
+  float flick = 0.80 + 0.14 * sin(t * 4.3) * sin(t * 1.7) + 0.06 * sin(t * 11.0 + 1.3);
+  float dl = length(p - lpos);
+  float lamp = (exp(-dl / 0.075) * 0.55 + exp(-dl / 0.26) * 0.22) * flick;
+  vec3 lampC = vec3(1.00, 0.63, 0.26);
+
+  // ---- the veiled moon halo over that bright patch; the thin cloud veil breathes
   float dmn = length(p - moon);
-  float disc = smoothstep(0.050 + aa, 0.050 - aa, dmn);
-  float crater = 0.85 + 0.15 * gm_fbm3((p - moon) * 26.0);
-  vec3 moonC = vec3(0.86, 0.93, 0.90);
-  vec2 cq = vec2(p.x * 1.3 - t * 0.014, p.y * 7.0);
-  float cl = gm_fbm(cq + gm_fbm3(cq * 0.8 + t * 0.01) * 1.3);
-  float veil = smoothstep(0.42, 0.74, cl) * smoothstep(0.02, 0.45, up);
-  sky += moonC * (exp(-dmn / 0.06) * 0.26 + exp(-dmn / 0.30) * 0.13) * (1.0 - 0.25 * veil);
-  sky = mix(sky, vec3(0.07, 0.11, 0.13) + moonC * 0.10 * exp(-dmn / 0.2), veil * 0.45);
-  float shade = 0.86 - 0.18 * smoothstep(-0.05, 0.05, p.x - moon.x + (p.y - moon.y) * 0.4);   // the lit limb
-  sky = mix(sky, moonC * crater * shade, disc);
-  // a thin cloud crossing the moon, lit along its edge
-  float by = p.y - moon.y - 0.006 - 0.010 * sin(p.x * 6.0 + t * 0.03) - 0.02 * (gm_fbm3(vec2(p.x * 5.0 - t * 0.02, 1.0)) - 0.5);
-  float band = exp(-pow(by / 0.013, 2.0)) * smoothstep(0.30, 0.65, gm_fbm3(vec2(p.x * 9.0 - t * 0.035, p.y * 30.0)));
-  vec3 cloudC = vec3(0.10, 0.15, 0.17) + moonC * 0.22 * exp(-dmn / 0.10);
-  sky = mix(sky, cloudC, band * 0.75);
+  vec2 vq = vec2(p.x * 1.6 - t * 0.010, uv.y * 4.0);
+  float veil = smoothstep(0.35, 0.80, gm_f2(vq + nf * 0.5));
+  float halo = (exp(-dmn / 0.085) * 0.50 + exp(-dmn / 0.33) * 0.26) * (0.60 + 0.40 * veil);
+  vec3 moonC = vec3(0.80, 0.90, 0.85);
+  float moonAmt = 0.30 * (1.0 - 0.45 * smoothstep(0.35, 0.85, bmax));   // on an already bright sky it only whispers
+  col += moonC * halo * moonAmt;
+  col = mix(col, mistC * 0.9, halo * veil * 0.16);                      // the cloud that veils it greys the picture a little
 
-  // ---- distant hills and ground
-  float hill = 0.640 + 0.028 * gm_fbm3(vec2(p.x * 2.2 + 3.0, 2.0)) - 0.012 * sin(p.x * 3.1);
-  vec3 col = sky;
-  col = mix(col, vec3(0.030, 0.050, 0.058), smoothstep(hill + aa, hill - aa, uv.y) * 0.0 + smoothstep(hill - aa, hill + aa, uv.y));
-  float gdepth = clamp((uv.y - hill) / (1.0 - hill), 0.0, 1.0);
-  vec3 ground = mix(vec3(0.045, 0.072, 0.078), vec3(0.008, 0.014, 0.016), pow(gdepth, 0.55));
-  float grass = gm_noise(vec2(p.x * 90.0, uv.y * 26.0)) * gm_noise(vec2(p.x * 17.0, uv.y * 40.0));
-  ground += vec3(0.02, 0.035, 0.03) * grass * (1.0 - gdepth);
-  ground += vec3(0.04, 0.06, 0.06) * exp(-abs(p.x - moon.x) / 0.5) * (1.0 - gdepth) * 0.6;
-  col = mix(col, ground, smoothstep(hill - aa, hill + aa, uv.y));
+  // far mist behind the silhouettes
+  mistC += lampC * lamp * 0.55;
+  col = mix(col, mistC, farA);
 
-  // pointer: gently stirs the mist near it (shifts the noise)
-  float stir = onScr ? exp(-dot(p - mp, p - mp) / 0.05) : 0.0;
-  vec2 pm = p + vec2(0.05 * stir * sin(t * 0.6), -0.015 * stir);
-
-  vec3 mistC = vec3(0.34, 0.47, 0.46);
-  vec3 sil = vec3(0.007, 0.013, 0.016);
-  vec3 rimC = vec3(0.22, 0.30, 0.30);
-
-  // far mist behind the first markers
-  float m0 = gm_mistl(pm, 0.665, 0.050, 3.2, 0.045, 1.0, t);
-  col = mix(col, mistC * 0.85, m0 * 0.62);
-
-  // ---- far row of markers
-  float dFar = gm_row(p, 0.690, 0.055, 9.0, 21.0, 0.75);
-  float mFar = gm_m(dFar, aa);
-  col = mix(col, mix(vec3(0.020, 0.036, 0.042), sil, 0.5), mFar);
-
-  // dead tree on the left, against the sky
-  float dT = gm_dtree(p, vec2(asp * 0.115, 0.745), 0.46);
-  float mT = gm_m(dT, aa);
-  float tr = smoothstep(0.50, 0.20, uv.y);
-  col = mix(col, sil + rimC * 0.07 * tr, mT);
-
-  // the little owl's perch is elsewhere; here, mist rolls between the rows
-  float m1 = gm_mistl(pm, 0.735, 0.060, 2.4, 0.060, 7.0, t);
-  col = mix(col, mistC, m1 * 0.66);
-
-  // ---- middle row and the angel
-  float dMid = gm_row(p, 0.775, 0.095, 5.2, 41.0, 0.82);
-  float mMid = gm_m(dMid, aa);
-  float rimMid = smoothstep(-0.006, 0.0, dMid) * (1.0 - smoothstep(0.0, 0.05, uv.y - (0.775 - 0.09)));
-  col = mix(col, sil + vec3(0.02, 0.03, 0.03), mMid);
-  col += rimC * 0.25 * mMid * smoothstep(-0.007, 0.0, dMid);
-
-  vec2 ab = vec2(asp * 0.665, 0.815);
-  float sA = 0.44;
-  if (abs(p.x - ab.x) < 0.42 * sA && p.y > ab.y - 1.12 * sA && p.y < ab.y + 0.01) {
-    float dA = gm_angel(p, ab, sA);
-    float e = 0.004;
-    vec2 g = vec2(gm_angel(p + vec2(e, 0.0), ab, sA) - gm_angel(p - vec2(e, 0.0), ab, sA),
-                  gm_angel(p + vec2(0.0, e), ab, sA) - gm_angel(p - vec2(0.0, e), ab, sA));
-    vec2 nrm = normalize(g + 1e-6);
-    vec2 toMoon = normalize(moon - ab);
-    float facing = max(dot(-nrm, toMoon) * -1.0 + 0.0, 0.0);
-    float mA = gm_m(dA, aa);
-    float band = smoothstep(-0.010, 0.0, dA);
-    vec3 stat = sil + vec3(0.025, 0.04, 0.042) * smoothstep(ab.y - 0.45, ab.y - 0.1, uv.y) * 0.0;
-    col = mix(col, stat, mA);
-    col += vec3(0.50, 0.64, 0.62) * mA * band * (0.04 + 0.42 * max(dot(nrm, -toMoon), 0.0));
+  // ---- the silhouettes: painted cut-outs read as dark shapes standing in the fog
+  for (int i = 0; i < 5; i++) {
+    float fi = float(i);
+    vec4 sp = gm_spot(i);
+    float r = sp.z;
+    bool hang = (i == 1);
+    float depth = 0.45 + 0.55 * smoothstep(0.06, 0.25, r);
+    vec2 c = vec2(sp.x * asp, sp.y - (hang ? 0.0 : r * 0.90)) + par * depth * 0.024 * vec2(-1.0, -1.0);
+    float sway = (hang ? 0.012 : 0.0030 + 0.004 * r) * sin(t * (hang ? 0.33 : 0.21 + 0.07 * fi) + fi * 1.9);
+    c.x += sway;
+    vec2 q0 = p - c;
+    float ext = r * 1.75;
+    if (abs(q0.x) < ext && abs(q0.y) < ext) {
+      // the fog banks up a little behind each shape, so a black silhouette still reads on a dark picture
+      if (!hang) {
+        vec2 qe = q0 / r;
+        float aur = exp(-dot(qe, qe) * 1.15) * (0.30 + 1.00 * dark) * (0.45 + 0.85 * nn)
+                    * (1.0 - 0.45 * smoothstep(0.10, 0.24, r));   // the big tree does not drag a whole bank with it
+        col = mix(col, mistC * 1.14, clamp(aur, 0.0, 1.0) * 0.28 * (0.45 + 0.75 * key));
+      }
+    }
+    if (abs(q0.x) < r && abs(q0.y) < r) {
+      float tilt = (hang ? 0.09 * sin(t * 0.33) : 0.0);
+      float cs = cos(tilt), sn = sin(tilt);
+      vec2 q = vec2(cs * q0.x + sn * q0.y, -sn * q0.x + cs * q0.y) / r;
+      if (i == 4) q.x = -q.x;                                  // the far cross leans the other way
+      vec2 base = (vec2(mod(sp.w, 4.0), floor(sp.w / 4.0)) + 0.5) / vec2(4.0, 2.0);
+      vec2 cuv = base + q * 0.453 / vec2(4.0, 2.0);
+      vec4 s = texture(sprites, cuv);
+      float a = s.a;
+      if (a > 0.004) {
+        // the fog eats the feet of everything that stands on the ground
+        float sink = hang ? 0.0 : smoothstep(0.35, 1.0, (q.y + 0.9)) * (0.45 + 0.45 * nearA / 0.40);
+        a *= clamp(1.0 - sink, 0.0, 1.0);
+        a *= 0.90 - 0.30 * farA / 0.34;
+        // a cold rim where the shape faces the moon, found from the cut-out's own alpha
+        vec2 toM = normalize(moon - c + 1e-5) * 0.0105 / vec2(4.0, 2.0);
+        float rim = a * (1.0 - texture(sprites, cuv + toM).a);
+        float sl = gm_luma(s.rgb);
+        vec3 silC = vec3(0.030, 0.045, 0.042) + vec3(0.035, 0.050, 0.046) * sl;   // the painting's own shading, almost blacked out
+        // only the warm pixels of the cut-out burn: that is the lantern's little flame behind its glass
+        float emis = smoothstep(0.06, 0.30, s.r - s.b) * smoothstep(0.18, 0.55, sl);
+        silC += lampC * emis * (0.55 + 0.75 * flick);
+        col = mix(col, silC, a);
+        col += vec3(0.40, 0.54, 0.49) * rim * (0.30 + 0.60 * clamp(bmax, 0.0, 1.0));
+      }
+    }
   }
 
-  // the mist in front of the angel's plinth, thicker in the middle ground
-  float m2 = gm_mistl(pm, 0.805, 0.055, 2.0, 0.075, 13.0, t);
-  col = mix(col, mistC * 1.05, m2 * 0.66);
+  // the lantern's glow on the picture and, more strongly, on the mist in front of it
+  col += lampC * lamp * (0.16 + 0.55 * (farA + nearA));
 
-  // ---- near row (dark, big, cropped) with moonlit tops
-  float dNear = gm_row(p, 0.985, 0.30, 2.6, 61.0, 0.70);
-  float mNear = gm_m(dNear, aa);
-  vec3 nearC = sil * 0.9;
-  col = mix(col, nearC, mNear);
-  col += rimC * 0.22 * mNear * smoothstep(-0.010, 0.0, dNear);
+  // ---- near mist layer: it drifts in front of the silhouettes
+  col = mix(col, mistC * 1.04, nearA);
 
-  // ---- wisps: green-white lights that rise from the graves; near the pointer they gather around it
-  vec3 wispC = vec3(0.66, 1.0, 0.82);
-  float wsum = 0.0;
-  float wglow = 0.0;
-  for (int i = 0; i < 9; i++) {
-    float fi = float(i);
-    float hx = gm_hash(vec2(fi, 11.0));
-    float hy = gm_hash(vec2(fi, 17.0));
-    float hs = gm_hash(vec2(fi, 23.0));
-    float per = 11.0 + 6.0 * hs;
-    float ph = fract(t / per + hy);
-    float cyc = floor(t / per + hy);
-    float x0 = asp * (0.06 + 0.88 * gm_hash(vec2(fi, cyc + 31.0)));
-    float rise = ph;
-    vec2 h = vec2(x0 + 0.035 * sin(ph * 7.0 + fi * 2.0) , mix(0.80, 0.30, rise));
-    float fade = smoothstep(0.0, 0.16, ph) * (1.0 - smoothstep(0.65, 1.0, ph));
+  // ---- will-o-wisps: a few pale green lights that rise, and curl around the pointer when it is here
+  vec3 wispC = vec3(0.56, 0.95, 0.72);
+  float wsum = 0.0, wglow = 0.0;
+  for (int k = 0; k < 7; k++) {
+    float fk = float(k);
+    float hs = gm_h1(fk + 5.0);
+    float per = 13.0 + 7.0 * hs;
+    float ph = fract(t / per + gm_h1(fk + 11.0));
+    float cyc = floor(t / per + gm_h1(fk + 11.0));
+    vec2 h = vec2(asp * (0.07 + 0.86 * gm_hash(vec2(fk, cyc + 3.0))) + 0.026 * sin(ph * 6.0 + fk * 2.0),
+                  mix(1.00, 0.60, ph));
+    float fade = smoothstep(0.0, 0.18, ph) * (1.0 - smoothstep(0.55, 1.0, ph));
     float on = 1.0;
-    if (i >= 6) {                                               // three extra wisps exist only while the pointer is here
-      float ang = fi * 2.4 + t * 0.35;
-      h = mp + vec2(cos(ang), 0.7 * sin(ang * 1.3)) * (0.07 + 0.035 * hs);
-      on = onScr ? 1.0 : 0.0;
-      fade = 0.55 + 0.45 * sin(t * 0.9 + fi);
-    } else if (onScr) {                                         // the others lean in
+    if (k >= 4) {                                   // three wisps exist only while the pointer is on this screen
+      float ang = fk * 2.3 + t * 0.55 * (1.0 + 0.3 * hs);
+      float orb = 0.055 + 0.035 * hs + 0.012 * sin(t * 0.8 + fk);
+      h = mp + vec2(cos(ang), 0.72 * sin(ang * 1.21)) * orb;
+      on = has ? 1.0 : 0.0;
+      fade = 0.55 + 0.45 * sin(t * 1.1 + fk * 2.0);
+    } else if (has) {                               // the rising ones lean towards the pointer
       vec2 dd = mp - h;
-      float pull = exp(-dot(dd, dd) / 0.20);
-      h += dd * 0.72 * pull;
+      h += dd * 0.62 * exp(-dot(dd, dd) / 0.14);
     }
     vec2 d = p - h;
-    float head = exp(-dot(d, d) / 0.00011);
-    float dy = max(d.y, 0.0);                                   // tail trails below the head
-    float sway = 0.010 * sin(dy * 16.0 - t * 1.6 + fi * 1.7) * min(dy * 6.0, 1.0);
-    float wdt = 0.0030 + 0.012 * dy;
-    float tail = exp(-pow((d.x - sway) / wdt, 2.0)) * exp(-dy / 0.085) * step(0.0, d.y) * smoothstep(0.0, 0.01, d.y);
-    float halo = exp(-dot(d, d) / 0.0030);
-    wsum += (head * 1.0 + tail * 0.50) * fade * on;
-    wglow += halo * fade * on;
+    float head = exp(-dot(d, d) / 0.00008);
+    float dy = max(d.y, 0.0);
+    float tail = exp(-gm_sq((d.x - 0.008 * sin(dy * 20.0 - t * 1.5 + fk * 1.7)) / (0.0024 + 0.014 * dy)))
+                 * exp(-dy / 0.030) * smoothstep(0.0, 0.008, d.y);
+    wsum += (head + 0.30 * tail) * fade * on;
+    wglow += exp(-dot(d, d) / 0.0030) * fade * on;
   }
-  col += wispC * wglow * 0.18;                                  // greenish light on the mist and the stones
-  col = mix(col, wispC * 1.15, clamp(wsum, 0.0, 1.0) * 0.55 * 0.0);
-  col += wispC * wsum * 0.55;
+  col += wispC * wglow * 0.17 * (0.4 + 1.6 * (farA + nearA));   // their light shows in the mist
+  col += wispC * wsum * 0.42;
 
-  // low ground mist in front of everything, lit faintly by the wisps
-  float m3 = gm_mistl(pm, 0.965, 0.090, 1.5, 0.090, 29.0, t);
-  col = mix(col, mistC * 0.95 + wispC * wglow * 0.2, m3 * 0.42);
-
-  // vignette
-  col *= 1.0 - 0.45 * pow(length((uv - 0.5) * vec2(1.0, 1.1)), 2.3);
+  // ---- a last cold breath: vignette and a thin veil at the very bottom
+  col = mix(col, mistC * 0.96, smoothstep(0.90, 1.0, uv.y) * 0.16 * key);
+  col *= 1.0 - 0.20 * pow(length((uv - 0.5) * vec2(1.0, 1.08)), 2.4);
   return vec4(col, 1.0) * qt_Opacity;
 }
 

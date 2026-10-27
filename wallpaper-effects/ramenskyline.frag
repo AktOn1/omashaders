@@ -259,7 +259,7 @@ vec4 fxMain(vec2 mpx) {
     col = mix(col, vec3(1.0, 0.70, 0.12), rs_ell(p, bowlC + vec2(-0.020, -0.001), vec2(0.0044, 0.0028), 0.3));
     float gr = 0.0;
     for (int i = 0; i < 5; i++) {
-      vec2 gp = bowlC + vec2(0.006 + 0.0095 * float(i) - 0.003 * float(i % 2), -0.003 + 0.0035 * float(i % 3) * 0.5);
+      vec2 gp = bowlC + vec2(0.006 + 0.0095 * float(i) - 0.003 * mod(float(i), 2.0), -0.003 + 0.0035 * mod(float(i), 3.0) * 0.5);
       gr = max(gr, rs_ell(p, gp, vec2(0.0034, 0.0026), 0.3));
     }
     col = mix(col, vec3(0.30, 0.85, 0.35), gr * surf);

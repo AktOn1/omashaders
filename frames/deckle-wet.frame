@@ -1,0 +1,12 @@
+# category: Border
+# desc: Thin indigo to slate-blue gradient border with a soft pale-blue damp glow beneath and a pale grey-blue inactive edge, like a deckle-edged sheet of soaked washi
+rounding=2
+border_size=2
+border_colors=1c2f6eff,4a6a9cff,2a3f86ff
+border_angle=90
+border_inactive=aab6c8aa
+shadow_range=22
+shadow_power=3
+shadow_color=a9c4e6aa
+shadow_offset=0,4
+shadow_inactive=b8c8dc44

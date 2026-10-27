@@ -25,7 +25,7 @@ if subprocess.call(["which", "node"], stdout=subprocess.DEVNULL) != 0:
     print("skip: node is not installed (CLI checks only)")
     o = None
 else:
-    names = "wallCapState lineWh themeRenamed optsWithWh themeCompose"
+    names = "wallCapState lineWh themeRenamed optsWithWh themeCompose themeWallPlan lineWithWh themeSavedPlan settingsEntry"
     prog = """
 const src = %s + '\\nmodule.exports = { %s };';
 const module = { exports: {} }; new Function('module', src)(module);
@@ -33,6 +33,13 @@ const M = module.exports;
 const out = {};
 const S = (...a) => M.wallCapState(...a);
 out.none = S('', false, '', false, '');
+out.noneUnset = S('', false, '', false, '', true);
+out.noneBusy = S('', false, '', true, '', true);
+out.rem = S('', false, 'zzzzzz', false, '', true);
+out.remDefault = S('', false, 'zzzzzz', false, '');
+out.unsaved = S('', false, 'zzzzzz', false, '', false);
+out.noneNoTheme = S('', false, '', false, '', false);
+out.stillDl = S('abc123', false, 'zzzzzz', false, '', false);
 out.dl = S('abc123', false, '', false, '');
 out.set = S('abc123', true, 'zzzzzz', false, '');
 out.cur = S('abc123', true, 'abc123', false, '');
@@ -43,8 +50,20 @@ out.errThenCur = S('abc123', true, 'abc123', false, 'Download failed');
 const line = 'neonrain|aurora|glow|neon-noir|Night|||frame1|fx=60,wall=65,wh=abc123';
 out.whOf = [M.lineWh(line), M.lineWh('a|b|c|d'), M.lineWh('a|b|c|d|n|||||fx=50'), M.lineWh('a|b|c|d|n||||wh=ABCDEF'), M.lineWh('a|b|c|d|n||||fx=5,wh=abc1234')];
 out.copy = M.themeRenamed(line, 'Night copy');
+out.addWh = [M.lineWithWh(line, 'qqqqqq'), M.lineWithWh('s|w|m|c|Old', 'qqqqqq'), M.lineWithWh('s|w|m|c|Old||||fx=50,wall=60', 'qqqqqq'), M.lineWithWh('s|w|m|c|Old|e|k|f', 'qqqqqq')];
 out.copyNoOpts = M.themeRenamed('s|w|m|c|Old', 'New');
 out.keep = [M.optsWithWh('fx=60', 'abc123'), M.optsWithWh('fx=60,wh=qqqqqq', 'abc123'), M.optsWithWh('', 'abc123'), M.optsWithWh('fx=60', ''), M.optsWithWh('', '')];
+const P = (...a) => M.themeWallPlan(...a);
+out.plan = {
+  off: P(false, 'abc123', '', ''), offUndef: P(undefined, 'abc123', '', ''), offStr: P('true', 'abc123', '', ''),
+  noWh: P(true, '', '', ''), noWhUndef: P(true, undefined, '', ''),
+  fetch: P(true, 'abc123', 'zzzzzz', ''), fetchNone: P(true, 'abc123', '', ''),
+  have: P(true, 'abc123', 'abc123', ''), wait: P(true, 'abc123', '', 'abc123'), queue: P(true, 'abc123', '', 'qqqqqq'),
+};
+out.saved = [M.themeSavedPlan('zzzzzz', ''), M.themeSavedPlan('zzzzzz', 'abc123'), M.themeSavedPlan('', ''), M.themeSavedPlan('', 'abc123'), M.themeSavedPlan(undefined, undefined)];
+const base = { includeAnimated: true, fps: 60, useThemeWallpaper: false };
+out.entry = [M.settingsEntry('x.y', base, 'useThemeWallpaper', true), M.settingsEntry('x.y', { id: 'other', a: 1 }, 'useThemeWallpaper', false), M.settingsEntry('x.y', undefined, 'useThemeWallpaper', true)];
+out.entryBaseUntouched = base.useThemeWallpaper;
 console.log(JSON.stringify(out));
 """ % (json.dumps(m.group(1)), ", ".join(names.split()))
     r = subprocess.run(["node", "-e", prog], capture_output=True, text=True)
@@ -53,7 +72,17 @@ console.log(JSON.stringify(out));
         sys.exit(1)
     o = json.loads(r.stdout)
     st = lambda k: o[k]["kind"]
-    check("no Wallhaven id: no capsule", st("none") == "none", o["none"])
+    check("no Wallhaven id, nothing on screen: muted text, no action",
+          st("none") == "none" and o["none"]["label"] == "No Wallhaven picture saved for this theme" and o["none"]["enabled"] is False
+          and o["noneUnset"] == o["none"] and o["noneNoTheme"]["kind"] == "none" and o["noneBusy"]["kind"] == "none", (o["none"], o["noneNoTheme"]))
+    check("no id, a Wallhaven picture on screen: offer to remember it (also when the caller does not say whether a theme is selected)",
+          st("rem") == "remember" and o["rem"]["label"] == "Remember Wallhaven zzzzzz for this theme" and o["rem"]["enabled"] is True and o["remDefault"] == o["rem"], o["rem"])
+    check("no id, picture on screen, but the look is not a saved theme: nothing to remember yet, points at F",
+          st("unsaved") == "unsaved" and o["unsaved"]["enabled"] is False and "F" in o["unsaved"]["label"] and "zzzzzz" in o["unsaved"]["label"], o["unsaved"])
+    check("a theme that has an id ignores the remember offer", st("stillDl") == "download", o["stillDl"])
+    check("remembering adds wh= to the 9th field (new field, existing numbers, window fields kept) and leaves the rest alone",
+          o["addWh"] == ["neonrain|aurora|glow|neon-noir|Night|||frame1|fx=60,wall=65,wh=abc123", "s|w|m|c|Old||||wh=qqqqqq",
+                         "s|w|m|c|Old||||fx=50,wall=60,wh=qqqqqq", "s|w|m|c|Old|e|k|f|wh=qqqqqq"], o["addWh"])
     check("id, not on disk: download button", st("dl") == "download" and o["dl"]["label"] == "Download and set", o["dl"])
     check("id, on disk, other picture on screen: Set wallpaper", st("set") == "set" and o["set"]["label"] == "Set wallpaper", o["set"])
     check("id is already the wallpaper: ticked, disabled", st("cur") == "current" and o["cur"]["label"] == "Wallpaper set" and o["cur"]["enabled"] is False, o["cur"])
@@ -68,6 +97,32 @@ console.log(JSON.stringify(out));
     check("copy of a line without numbers stays short", o["copyNoOpts"] == "s|w|m|c|New", o["copyNoOpts"])
     check("saving keeps the theme's own picture when the screen shows none of Wallhaven's",
           o["keep"] == ["fx=60,wh=abc123", "fx=60,wh=qqqqqq", "wh=abc123", "fx=60", ""], o["keep"])
+
+    check("F on a look that is already a saved theme attaches the Wallhaven picture on screen when the theme has none, else says already saved",
+          o["saved"] == ["attach", "already", "already", "already", "already"], o["saved"])
+    check("the checkbox writes useThemeWallpaper into the plugin's own entry and keeps its other keys (same entry the settings screen edits)",
+          o["entry"] == [{"id": "x.y", "includeAnimated": True, "fps": 60, "useThemeWallpaper": True}, {"id": "x.y", "a": 1, "useThemeWallpaper": False},
+                         {"id": "x.y", "useThemeWallpaper": True}] and o["entryBaseUntouched"] is False, o["entry"])
+    check("Core.qml: the checkbox (key L) is in the capsule row, listed in the hint strip, and writes through updateEntryInline",
+          "id: autoBox" in src and "Use theme wallpapers" in src and 'else if (t === "L") setUseThemeWallpaper(!useThemeWallpaper)' in src
+          and src.count('k: ["L"], t: autoHint') == 2 and "updateEntryInline(moduleName, entry)" in src and "setUseThemeWallpaper(!root.useThemeWallpaper)" in src)
+    check("Core.qml: F (startSave) and the save command go through alreadySaved, not a bare 'Already saved'",
+          src.count("alreadySaved(") >= 3 and 'flash("Already saved: " + themeItem(dup[0])' not in src)
+
+    pl = o["plan"]
+    check("setting off (default): applying a theme never fetches, whatever the theme holds",
+          pl["off"] == "none" and pl["offUndef"] == "none" and pl["offStr"] == "none", pl)
+    check("setting on, theme without a Wallhaven id: the wallpaper is left alone", pl["noWh"] == "none" and pl["noWhUndef"] == "none", pl)
+    check("setting on, theme with an id, other picture on screen: fetch and set", pl["fetch"] == "fetch" and pl["fetchNone"] == "fetch", pl)
+    check("setting on, the picture is already the wallpaper: nothing to do", pl["have"] == "have", pl)
+    check("setting on, same picture already being fetched: wait; another one: queue", pl["wait"] == "wait" and pl["queue"] == "queue", pl)
+    check("apply gives the wallpaper only to the callers that ask for it (menu, key/IPC, random), not to restore/undo/revert",
+          len(re.findall(r"applyTheme\(.*, (true, true|keep, true)\)", src)) == 4
+          and "withWallpaper === true) themeWallpaper(it)" in src and 'setting("useThemeWallpaper", false) === true' in src)
+    mf = json.load(open(os.path.join(ROOT, "manifest.json")))["barWidget"]
+    sc = [x for x in mf["schema"] if x["key"] == "useThemeWallpaper"]
+    check("manifest: useThemeWallpaper is a boolean, off by default", len(sc) == 1 and sc[0]["type"] == "boolean" and sc[0]["defaultValue"] is False
+          and mf["defaults"].get("useThemeWallpaper") is False, sc)
 
 # ---- 1b. AI-made themes keep the id of the picture they were made for
 sys.path.insert(0, HERE)

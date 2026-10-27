@@ -15,8 +15,14 @@ does not take it along; plain setsid when there is no user bus). It runs `ai-the
 PROGRESS lines and is the only writer of job.json while the job runs. A draft is only a draft: it is added to the themes list by
 `job save` (= chat keep) and the effects it generated are deleted by `job discard`.
 
-  aijobs.py list [--json] | show ID [--json] | cancel ID | save ID [--name N] | discard ID | dismiss ID | form [get|set JSON]
-  (start / change / retry are in bin/ai-theme, they need its argument parser)
+  aijobs.py list [--json] | show ID [--json] | cancel ID | save ID [--name N] [--replace] | discard ID | dismiss ID | form [get|set JSON]
+            | regen-undo ID SLOTS
+  (start / change / regen / load / retry are in bin/ai-theme, they need its argument parser)
+
+Regenerate (v1.50.0): `job regen ID SLOTS [direction]` is one more run on a finished draft, like `change`, but only the chosen parts are made again
+(the child is `chat regen`; the rest of the theme stays as it was). `job load N|current` opens a saved theme as a draft (no AI call, the job is
+"done" at once) so it can be regenerated, changed, and saved: `save ID --replace` rewrites that theme's own line, without it the draft is a new theme.
+`job regen-undo ID SLOTS` takes back the last regenerated version of those parts (no AI call).
 """
 import sys
 sys.dont_write_bytecode = True
@@ -202,7 +208,20 @@ def new_id():
     return "j%s-%04x" % (time.strftime("%y%m%d-%H%M%S"), int.from_bytes(os.urandom(2), "big"))
 
 
-def estimate_steps(mode, argv, follow):
+def estimate_steps(mode, argv, follow, verb="turn"):
+    if verb == "regen":
+        try:
+            import airegen
+            n = len(airegen.parse_slots(argv[0] if argv else ""))
+        except (L.Bad, ImportError):
+            n = 1
+        if mode == "rich":
+            try:
+                r = int(argv[argv.index("--rounds") + 1]) if "--rounds" in argv else 2
+            except (ValueError, IndexError):
+                r = 2
+            return 2 + n + 2 * max(0, min(3, r))
+        return 2 + (n if mode == "invent" else 0)
     n = STEPS.get(mode, 3)
     if mode == "rich":
         try:
@@ -255,6 +274,64 @@ def change(jid, message, est=""):
     return view(read(jid))
 
 
+def regen(jid, slots_text, direction="", rounds=None, est=""):
+    """make the chosen parts of the draft again (a different take); everything else stays. Runs in the background like a change."""
+    import airegen
+    job = settle(jid)
+    if job is None:
+        raise L.Bad("There is no job %s" % jid)
+    if job["state"] in LIVE:
+        raise L.Bad("That theme is still being made")
+    if not job.get("result"):
+        raise L.Bad("There is no draft to regenerate; use retry")
+    slots = airegen.parse_slots(slots_text)
+    direction = airegen.direction_text(direction)
+    argv = [",".join(slots)] + ([direction] if direction else []) + (["--rounds", str(int(rounds))] if rounds is not None else [])
+    if live_count() >= MAX_JOBS:
+        raise L.Bad("%d themes are already being made. Wait for one to finish, or cancel one." % MAX_JOBS)
+    words = "Regenerate: " + airegen.label_of(slots) + ((" (" + direction + ")") if direction else "")
+    update(jid, state="starting", started=now(), run_started=now(), finished=0, step=0, steps_total=estimate_steps(job["mode"], argv, True, "regen"),
+           progress="Starting…", error="", est=est or job.get("est", ""), run={"verb": "regen", "argv": argv, "new": False, "message": words}, pid=0, ticks=0)
+    spawn(jid)
+    return view(read(jid))
+
+
+def load(which="", line="", mode="pick"):
+    """open a saved theme (or the look on now) as a draft: no AI call, the job is done at once"""
+    if mode not in STEPS:
+        raise L.Bad("Unknown mode %r" % mode)
+    jid = new_id()
+    with Lock(jid):
+        pass
+    try:
+        ai = with_chat(jid)
+        res = ai.load_theme(which, line, invent=(mode == "invent"), rich=(mode == "rich"))
+    except Exception:
+        shutil.rmtree(job_dir(jid), ignore_errors=True)
+        raise
+    job = {"v": 1, "id": jid, "state": "done", "mode": mode, "request": ("Edit: " + res["name"])[:400], "started": now(), "run_started": now(), "updated": now(), "finished": now(),
+           "step": 1, "steps_total": 1, "progress": "Done", "pid": 0, "boot": "", "ticks": 0, "scope": "", "form": {}, "est": "", "turn": 0, "history": [],
+           "run": {"argv": [], "new": False, "message": ""}, "result": res, "error": "", "loaded": True}
+    with Lock(jid):
+        write(jid, job)
+    return view(read(jid))
+
+
+def regen_undo(jid, slots_text):
+    """take back the last regenerated version of the chosen parts (no AI call)"""
+    job = get(jid)
+    if job["state"] in LIVE:
+        raise L.Bad("That theme is still being made")
+    if not job["has_result"]:
+        raise L.Bad("There is no draft")
+    res = with_chat(jid).regen_undo(slots_text)
+    hist = list(job.get("history") or [])
+    hist += [{"role": "user", "text": "Previous: " + res.get("reply", "").split(": ", 1)[-1].rstrip("."), "changes": []},
+             {"role": "ai", "text": res.get("reply") or "Went back to the earlier version.", "changes": list(res.get("changes") or [])}]
+    update(jid, result=res, history=hist, turn=res.get("turn", job.get("turn", 0)))
+    return view(read(jid))
+
+
 def retry(jid):
     """run the last request again (a failed or interrupted job)"""
     job = get(jid)
@@ -263,7 +340,7 @@ def retry(jid):
     if live_count() >= MAX_JOBS:
         raise L.Bad("%d themes are already being made. Wait for one to finish, or cancel one." % MAX_JOBS)
     run = job["run"]
-    update(jid, state="starting", started=now(), run_started=now(), finished=0, step=0, steps_total=estimate_steps(job["mode"], run["argv"], not run["new"]),
+    update(jid, state="starting", started=now(), run_started=now(), finished=0, step=0, steps_total=estimate_steps(job["mode"], run["argv"], not run["new"], run.get("verb", "turn")),
            progress="Starting…", error="", pid=0, ticks=0)
     spawn(jid)
     return view(read(jid))
@@ -332,7 +409,8 @@ def run(jid):
     d = job_dir(jid)
     run_ = job["run"]
     update(jid, state="running", pid=os.getpid(), boot=boot_id(), ticks=start_ticks(os.getpid()))
-    cmd = [sys.executable, ai_theme_path(), "chat", "turn"] + list(run_["argv"]) + (["--new"] if run_.get("new") else []) + ["--json"]
+    verb = run_.get("verb", "turn")
+    cmd = [sys.executable, ai_theme_path(), "chat", verb] + list(run_["argv"]) + (["--new"] if run_.get("new") else []) + ["--json"]
     child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
                              env=dict(os.environ, OMASHADERS_CHAT_DIR=d), preexec_fn=pdeathsig)
 
@@ -438,13 +516,13 @@ def with_chat(jid):
     return aichat
 
 
-def save(jid, name=""):
+def save(jid, name="", replace=False):
     job = get(jid)
     if job["state"] in LIVE:
         raise L.Bad("That theme is still being made")
     if not job["has_result"]:
         raise L.Bad("There is no theme to save yet")
-    res = with_chat(jid).keep(name)
+    res = with_chat(jid).keep(name, replace=replace)
     shutil.rmtree(job_dir(jid), ignore_errors=True)
     return res
 
@@ -518,7 +596,7 @@ def main(a):
             else:
                 print(json.dumps(form_get()))
             return 0
-        if sub in ("show", "cancel", "save", "discard", "dismiss", "_run", "retry"):
+        if sub in ("show", "cancel", "save", "discard", "dismiss", "_run", "retry", "regen-undo"):
             if not rest:
                 raise L.Bad("%s needs a job id" % sub)
             jid = rest[0]
@@ -533,15 +611,17 @@ def main(a):
             elif sub == "retry":
                 res = retry(jid)
             elif sub == "save":
-                res = save(jid, rest[rest.index("--name") + 1] if "--name" in rest and rest.index("--name") + 1 < len(rest) else "")
+                res = save(jid, rest[rest.index("--name") + 1] if "--name" in rest and rest.index("--name") + 1 < len(rest) else "", replace="--replace" in rest)
+            elif sub == "regen-undo":
+                res = regen_undo(jid, rest[1] if len(rest) > 1 else "")
             elif sub == "discard":
                 res = discard(jid)
             else:
                 res = dismiss(jid)
             if js:
-                print(json.dumps({"ok": True, "job": res} if sub in ("cancel", "retry") else res))
+                print(json.dumps({"ok": True, "job": res} if sub in ("cancel", "retry", "regen-undo") else res))
             else:
-                print(("job %s: %s" % (jid, res["state"])) if sub in ("cancel", "retry") else json.dumps(res))
+                print(("job %s: %s" % (jid, res["state"])) if sub in ("cancel", "retry", "regen-undo") else json.dumps(res))
             return 0
         print(__doc__.strip(), file=sys.stderr)
         return 2

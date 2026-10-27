@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Race livery: a three-pixel border that runs signal red to white to signal red, small rounded corners, a deep charcoal shadow underneath, and a dim asphalt-grey edge when the window is not focused
+rounding=4
+border_size=3
+border_colors=e8140cff,f6f4f0ff,e8140cff
+border_angle=90
+border_inactive=3a3b40aa
+shadow_range=22
+shadow_power=3
+shadow_color=0c0c10cc
+shadow_offset=0,4
+shadow_inactive=00000044

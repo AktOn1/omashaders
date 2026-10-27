@@ -18,6 +18,7 @@ STATE = os.path.join(TMP, "state")
 os.makedirs(STATE)
 os.environ["OMASHADERS_STATE_DIR"] = STATE
 os.environ["XDG_STATE_HOME"] = os.path.join(TMP, "xdg")
+os.environ["OMS_SPRITE_CANDIDATES"] = "1"   # the older checks count one picture per cell; the best-of-several checks pass candidates=3 themselves
 sys.path.insert(0, HERE)
 import aigen as _G  # noqa: E402
 if _G.render_ready():  # painted sprites ride on the Invent flow, which needs the render check
@@ -55,6 +56,19 @@ if "JUNK" in prompt:
     arr = rng.integers(0, 255, (S, S, 3)).astype("uint8")
 elif "BRIGHT" in prompt:
     arr = np.full((S, S, 3), 235, "uint8")
+elif "PICKY" in prompt:   # tries in turn: cropped by the border, a flat grey blob, a shaded coloured object
+    n = len(open(log).read().split("\n")) - 1
+    img = np.broadcast_to(np.array([10, 10, 14], np.float32), (S, S, 3)).copy()
+    if n % 3 == 1:
+        d = np.sqrt(((xx - 20) / 300) ** 2 + ((yy - 380) / 260) ** 2)
+        img[d < 1.0] = (200, 90, 40)
+    elif n % 3 == 2:
+        d = np.sqrt(((xx - 384) / 120) ** 2 + ((yy - 384) / 120) ** 2)
+        img[d < 1.0] = (120, 120, 120)
+    else:
+        d = np.sqrt(((xx - 384) / 200) ** 2 + ((yy - 384) / 230) ** 2)
+        img[d < 1.0] = (np.array([230, 110, 40], np.float32) * (1.0 - 0.55 * d)[..., None] + 12 * np.sin(xx[..., None] / 9.0))[d < 1.0]
+    arr = np.clip(img, 0, 255).astype("uint8")
 else:
     bg = np.array([10, 10, 14], np.float32)
     img = np.broadcast_to(bg, (S, S, 3)).copy()
@@ -233,6 +247,20 @@ def unit_tests():
     check("paint: only the sprite prompts reach the image model (no file path, no wallpaper, no theme text)",
           all(("wallpaper" not in x.lower() and "/home" not in x and os.sep + "tmp" not in x) for x in ps), ps[0][:200])
     check("paint: each prompt is that cell's object", all(CELLS[i] in ps[i] for i in range(8)))
+    # best of several tries per cell
+    open(tool_log, "w").close()
+    specp = {"style": "x", "cells": ["PICKY a", "PICKY b"] + CELLS[2:]}
+    pngp, notesp = SP.paint(specp, ch, None, 60, candidates=3)
+    n_calls = len(lines(tool_log))
+    check("paint: 3 tries per cell (8 x 3 calls)", n_calls == 24, str(n_calls))
+    check("paint: the user is told it is the best of 3", "best of 3" in notesp[0], str(notesp))
+    ap = np.asarray(Image.open(io.BytesIO(pngp)).convert("RGBA"))
+    c0 = ap[0:256, 0:256]
+    sol = c0[..., 3] > 250
+    check("paint: the shaded coloured try was kept over the cropped and the flat one (cell 0)",
+          sol.any() and (c0[..., 0][sol].astype(int) - c0[..., 2][sol]).mean() > 60 and c0[..., 0][sol].std() > 8, "%s" % (c0[..., 0][sol].std() if sol.any() else None))
+    _o, _n = SP.paint(SPEC, ch, None, 60, candidates=1)
+    check("paint: candidates=1 paints once per cell", len(lines(tool_log)) == n_calls + 8)
     # one junk cell: asked again, then left empty
     open(tool_log, "w").close()
     spec1 = {"style": "x", "cells": CELLS[:2] + ["JUNK cell"] + CELLS[3:]}

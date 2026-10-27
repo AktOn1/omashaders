@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Dread rot: a dark rusted blood-red edge that sinks into black, a faint red glow around the focused window and a near-black edge on the others
+rounding=4
+border_size=2
+border_colors=7a1a14ff,3a0a0cff,0d0305ff
+border_angle=120
+border_inactive=0a0c0b88
+shadow_range=36
+shadow_power=3
+shadow_color=6a0e1255
+shadow_offset=0,3
+shadow_inactive=00000000

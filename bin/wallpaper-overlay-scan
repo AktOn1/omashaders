@@ -11,7 +11,7 @@ W, H = 480, 270
 TIMES = (7.0, 23.0)
 MEAN_MAX, FRAC_MAX = 20.0, 40.0
 # by eye (contact sheets): these keep most of the picture's pixels but still paint a landscape or heavy shapes over it (paint) or bend/warp/pixelate it (warp)
-NOT_LIGHT = {"dunes": "paint", "lavenderfields": "paint", "mistpines": "paint", "cloudscape": "paint", "caustics": "paint", "droplets": "paint",
+NOT_LIGHT = {"dunes": "paint", "lavenderfields": "paint", "mistpines": "paint", "caustics": "paint", "droplets": "paint",
              "chroma": "warp", "kaleido": "warp", "blackhole": "warp", "pixel": "warp", "glitch": "warp", "vhs": "warp", "grid": "warp",
              "xray": "warp", "shock": "warp", "lens": "warp", "liquid": "warp",
              "aquarelle-wash": "paint", "auroralake": "paint", "librarybeams": "paint", "ega-desk": "warp"}

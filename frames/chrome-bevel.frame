@@ -1,0 +1,11 @@
+# category: Border
+# desc: Chrome bevel: a light-to-dark steel border with a thin bright highlight and a cool shadow under it
+rounding=10
+border_size=3
+border_colors=eef3faff,8e9bacff,2b323eff,b9c4d2ff
+border_angle=120
+border_inactive=39404cff
+shadow_range=26
+shadow_power=3
+shadow_color=0b1018aa
+shadow_inactive=00000044

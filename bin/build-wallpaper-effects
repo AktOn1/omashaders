@@ -1,7 +1,8 @@
 #!/bin/bash
 # Compiles effects/*.frag into effects/*.frag.qsb (Qt shader bundles; needs qt6-shadertools).
 export PATH="$PATH:/usr/lib/qt6/bin"
-cd "$(dirname "$0")/../wallpaper-effects" || exit 1
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here/../wallpaper-effects" || exit 1
 for f in *.frag; do
   qsb --qt6 -o "$f.qsb" "$f" || exit 1
 done
@@ -17,4 +18,5 @@ done
 for q in *.frag.qsb ../mouse-effects/*.frag.qsb; do
   r=$(python3 ../bin/fxcheck.py check "$q") || { echo "ERROR: $q: $r" >&2; bad=1; }
 done
+"$here/qt-glsl-check" || bad=1
 exit $bad

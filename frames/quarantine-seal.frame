@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Quarantine seal: a thin steel-blue edge that sinks into near-black, a faint cold cyan glow around the focused window ending in a slim amber accent, and a near-black edge on the others
+rounding=3
+border_size=2
+border_colors=5f7f94ff,2a3d4cff,0b1118ff,ffa73cff
+border_angle=125
+border_inactive=0a0f1488
+shadow_range=34
+shadow_power=3
+shadow_color=3fcfe84a
+shadow_offset=0,2
+shadow_inactive=00000000

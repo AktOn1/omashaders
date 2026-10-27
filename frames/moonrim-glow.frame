@@ -1,0 +1,11 @@
+# category: Glow
+# desc: Pale moon-silver edge fading to indigo, with a wide cold glow around the focused window
+rounding=11
+border_size=2
+border_colors=eaf2ffff,9fb6e6ff,4a5aa8ff
+border_angle=120
+border_inactive=38436e55
+shadow_range=58
+shadow_power=2
+shadow_color=8fa8e0aa
+shadow_inactive=00000000

@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Thin hot-pink to electric-cyan gradient border with a soft plum glow underneath and a dim lavender inactive edge, like a chat window lit by its own screen
+rounding=10
+border_size=2
+border_colors=ff4fa8ff,b79affff,3df0ffff
+border_angle=40
+border_inactive=3a2a6088
+shadow_range=34
+shadow_power=3
+shadow_color=4a1a8099
+shadow_offset=0,4
+shadow_inactive=00000044

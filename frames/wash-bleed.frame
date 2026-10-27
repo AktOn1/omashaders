@@ -1,0 +1,12 @@
+# category: Border
+# desc: Watercolour wash edge: a soft teal-alizarin-ultramarine border like pigment that ran to the rim of a wet sheet, over a wide damp blue shadow
+rounding=5
+border_size=2
+border_colors=2f8f93ff,b03a52ff,3a4bb0ff
+border_angle=120
+border_inactive=7f8f9a55
+shadow_range=34
+shadow_power=3
+shadow_color=28406688
+shadow_offset=0,6
+shadow_inactive=2840663a

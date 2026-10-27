@@ -1,0 +1,12 @@
+# category: Border
+# desc: Thin cold-teal border that warms to lamp amber at one corner, with a deep ink shadow and a dim inactive edge, like a window lit from a far lamp
+rounding=12
+border_size=2
+border_colors=4f7a82ff,d99a52ff
+border_angle=40
+border_inactive=2a3a4488
+shadow_range=26
+shadow_power=3
+shadow_color=04080f99
+shadow_offset=0,5
+shadow_inactive=00000055

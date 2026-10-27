@@ -1,0 +1,12 @@
+# category: Glow
+# desc: Solder-mask green border with a gold edge line, like the rim of a circuit board: a fine one pixel green to copper-gold gradient, a small dark green shadow underneath and a dim dark green inactive edge
+rounding=1
+border_size=1
+border_colors=2f8f57ff,1f6b40ff,d8a846ff
+border_angle=45
+border_inactive=14301fcc
+shadow_range=8
+shadow_power=3
+shadow_color=04140ccc
+shadow_offset=0,2
+shadow_inactive=00000033

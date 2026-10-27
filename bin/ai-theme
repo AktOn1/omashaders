@@ -11,6 +11,8 @@
   ai-theme check [--json]                 is the chosen AI available? (nothing is sent)
   ai-theme estimate [WORDS] [--invent|--rich] [--rounds N] [--part KEY=TEXT] [--current|--wallhaven ID|--picture FILE] [--json]
                                           tokens (and a rough price) a run would use; nothing is sent
+  ai-theme estimate --regen SLOTS [--invent|--rich] [--rounds N] [--json]
+                                          the same for making only the chosen parts again (SLOTS = screen,color,wallpaper,cursor,windows,frame)
   ai-theme make "a rainy neon night" [--wallhaven ID | --current] [--subtle] [--json]
                                           PICK EXISTING: the AI chooses from the effects that exist; the answer is checked and saved as a theme
   ai-theme make "..." --invent [--part screen=TEXT] [--part window=TEXT] ... [--keep-out DIR]
@@ -27,9 +29,24 @@
   ai-theme chat turn "make the windows red" [--invent|--rich] [--wallhaven ID | --current] [--new] [--json]
                                           THEME AS A CHAT: the first turn builds the theme, each next turn changes it (only what you ask for).
                                           Nothing is added to the list: it prints the theme line to apply live.
-  ai-theme chat keep [--name N] | discard | status
-                                          save the chat's theme (and keep the effects it generated) | throw it away | show the history
-  ai-theme job start "..." [the chat turn flags] | change ID "less fog" | retry ID | list | show ID | cancel ID | save ID [--name N] | discard ID | dismiss ID
+  ai-theme chat keep [--name N] [--replace] | discard | status
+                                          save the chat's theme (and keep the effects it generated) | throw it away | show the history.
+                                          After `chat load`, keep makes a NEW theme; --replace rewrites the opened theme's own line instead
+                                          (refused for a built-in theme, which can only be saved as a new one).
+  ai-theme chat load N|current [--line LINE] [--invent|--rich]
+                                          EDIT AN EXISTING THEME: open theme number N of the list (yours or a built-in one), or the look on now
+                                          (--line gives its theme line), as a chat. Its parts and strengths are the session theme, the picture is the
+                                          current wallpaper, the mode (Pick / Quick = --invent / Rich = --rich) is your choice. No AI call.
+  ai-theme chat regen SLOT[,SLOT...] ["direction"] [--rounds N] [--json]
+                                          MAKE ONLY THESE PARTS AGAIN, as a different take (SLOT = screen color wallpaper cursor windows frame).
+                                          Every other part comes back byte for byte, strengths included; the direction applies to the chosen parts
+                                          only. Pick chooses other existing effects, Quick writes new ones for those parts (safety gate), Rich runs
+                                          only their Builders and the Reviewer. A part that is absent is ADDED. Nothing is saved until `chat keep`.
+  ai-theme chat regen-undo SLOT[,SLOT...]
+                                          take back the last regenerated version of those parts (no AI call)
+  ai-theme job start "..." [the chat turn flags] | change ID "less fog" | retry ID | list | show ID | cancel ID | save ID [--name N] [--replace] | discard ID | dismiss ID
+  ai-theme job regen ID SLOTS ["direction"] [--rounds N] | regen-undo ID SLOTS | load N|current [--line LINE] [--invent|--rich]
+                                          regenerate chosen parts of a draft as a background job | take back the last version | open a saved theme as a draft
                                           THE SAME AS A BACKGROUND JOB: it keeps running when the dialog, the menu or the shell closes, the
                                           finished theme waits as a draft (save / discard / change), a killed one shows as interrupted
                                           (retry). Two at a time. See bin/aijobs.py.
@@ -70,7 +87,7 @@ def availability():
 
 
 def parse_args(a):
-    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "only": "", "sprites": False, "keep_out": "", "picture": "", "words": [], "rest": []}
+    o = {"json": False, "wh": "", "current": False, "subtle": False, "invent": False, "rich": False, "rounds": None, "genre": "", "surprise": False, "parts": {}, "only": "", "sprites": False, "keep_out": "", "picture": "", "line": "", "regen": "", "words": [], "rest": []}
     it = iter(a)
     for x in it:
         if x == "--json":
@@ -93,6 +110,10 @@ def parse_args(a):
             o["surprise"] = True
         elif x == "--sprites":
             o["sprites"] = True
+        elif x == "--line":
+            o["line"] = next(it, "")
+        elif x == "--regen":
+            o["regen"] = next(it, "")
         elif x == "--rounds":
             try:
                 o["rounds"] = max(0, min(3, int(next(it, ""))))
@@ -308,6 +329,17 @@ def cmd_estimate(a):
         path, _ = picture_for(o, use=False)
     ch = P.choice()
     cat = L.catalog()
+    if o["regen"]:
+        import airegen
+        slots = airegen.parse_slots(o["regen"])
+        mode = "rich" if o["rich"] else ("invent" if o["invent"] else "pick")
+        path = path or current_background()
+        e = airegen.estimate(mode, slots, o["request"], path, ch, cat, 2 if o["rounds"] is None else o["rounds"])
+        if "--json" in a:
+            print(json.dumps(e))
+        else:
+            print(e["summary"] + (" (" + e["note"] + ")" if e["note"] else ""))
+        return 0
     if o["rich"]:
         import airich
         e = airich.estimate(o["request"], path, ch, cat, airich.DEFAULT_ROUNDS if o["rounds"] is None else o["rounds"], o["genre"], o["sprites"])
@@ -354,24 +386,45 @@ def cmd_keep(a, drop=False):
 
 def cmd_chat(a):
     import aichat
-    if not a or a[0] not in ("turn", "keep", "discard", "status"):
-        raise L.Bad("chat needs turn, keep, discard or status")
+    if not a or a[0] not in ("turn", "keep", "discard", "status", "load", "regen", "regen-undo"):
+        raise L.Bad("chat needs turn, keep, discard, status, load, regen or regen-undo")
     sub, rest = a[0], list(a[1:])
-    if sub == "turn":
+    progress = lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True)
+    if sub == "load":
+        o = parse_args(rest)
+        which = o["words"][0] if o["words"] else ""
+        if which == "current":
+            if not o["line"]:
+                raise L.Bad("The look on now is given with --line LINE")
+            which = ""
+        elif o["line"]:
+            which = ""
+        elif not which:
+            raise L.Bad("Name the theme by its number in the list, or current")
+        res = aichat.load_theme(which, o["line"], invent=o["invent"], rich=o["rich"])
+    elif sub == "regen":
+        o = parse_args(rest)
+        if not o["words"]:
+            raise L.Bad('regen needs the parts: chat regen screen,windows "optional direction"')
+        res = aichat.regen(o["words"][0], " ".join(o["words"][1:]), progress=progress, rounds=o["rounds"])
+    elif sub == "regen-undo":
+        o = parse_args(rest)
+        res = aichat.regen_undo(o["words"][0] if o["words"] else "")
+    elif sub == "turn":
         o = parse_args(rest)
         res = aichat.turn(o["request"], invent=o["invent"], wh=o["wh"], current=o["current"], new="--new" in rest, subtle=o["subtle"], parts=o["parts"],
                           rich=o["rich"], rounds=o["rounds"], genre=o["genre"], surprise=o["surprise"], sprites=o["sprites"], only=o["only"],
                           progress=lambda m: print("PROGRESS " + m, file=sys.stderr, flush=True))
     elif sub == "keep":
         name = rest[rest.index("--name") + 1] if "--name" in rest and rest.index("--name") + 1 < len(rest) else ""
-        res = aichat.keep(name)
+        res = aichat.keep(name, replace="--replace" in rest)
     elif sub == "discard":
         res = aichat.discard()
     else:
         res = aichat.status()
     if "--json" in rest:
         print(json.dumps(res))
-    elif sub == "turn":
+    elif sub in ("turn", "load", "regen", "regen-undo"):
         print("%s (turn %d)\n%s" % (res["name"], res["turn"], res["reply"]))
         for c in res["changes"]:
             print("changed: " + c)
@@ -386,10 +439,10 @@ def cmd_chat(a):
 def cmd_job(a):
     """background jobs (bin/aijobs.py); start / change / retry need the argument parser here, the rest lives in aijobs"""
     import aijobs
-    if not a or a[0] not in ("start", "change", "retry", "list", "show", "cancel", "save", "discard", "dismiss", "form", "_run"):
-        raise L.Bad("job needs start, change, retry, list, show, cancel, save, discard, dismiss or form")
+    if not a or a[0] not in ("start", "change", "regen", "regen-undo", "load", "retry", "list", "show", "cancel", "save", "discard", "dismiss", "form", "_run"):
+        raise L.Bad("job needs start, change, regen, regen-undo, load, retry, list, show, cancel, save, discard, dismiss or form")
     sub, rest = a[0], list(a[1:])
-    if sub not in ("start", "change"):
+    if sub not in ("start", "change", "regen", "load"):
         return aijobs.main(a)
     form, est = {}, ""
     for flag in ("--form", "--est"):
@@ -406,7 +459,25 @@ def cmd_job(a):
                 est = val[:200]
     js = "--json" in rest
     rest = [x for x in rest if x != "--json"]
-    if sub == "change":
+    if sub == "regen":
+        o = parse_args(rest)
+        if len(o["words"]) < 2:
+            raise L.Bad('regen needs a job id and the parts: job regen ID screen,windows "optional direction"')
+        av = P.availability(P.choice())
+        if not av["available"]:
+            raise L.Bad("AI needed. " + av["hint"])
+        res = aijobs.regen(o["words"][0], o["words"][1], " ".join(o["words"][2:]), o["rounds"], est)
+    elif sub == "load":
+        o = parse_args(rest)
+        which = o["words"][0] if o["words"] else ""
+        if o["line"] or which == "current":
+            if not o["line"]:
+                raise L.Bad("The look on now is given with --line LINE")
+            which = ""
+        elif not which:
+            raise L.Bad("Name the theme by its number in the list, or current")
+        res = aijobs.load(which, o["line"], "rich" if o["rich"] else ("invent" if o["invent"] else "pick"))
+    elif sub == "change":
         if len(rest) < 2:
             raise L.Bad('change needs a job id and what to change: job change ID "less fog"')
         res = aijobs.change(rest[0], " ".join(rest[1:]), est)
@@ -629,6 +700,9 @@ def cmd_selftest(a):
     r = subprocess.run([sys.executable, os.path.join(L.HERE, "aijobs_selftest.py")], capture_output=True, text=True)
     print(r.stdout.strip() or r.stderr.strip()[-600:])
     check(r.returncode == 0, "background jobs: survive the starter, draft, interrupted + retry, explicit cancel, cap of two (fake AI, scratch state)")
+    r = subprocess.run([sys.executable, os.path.join(L.HERE, "airegen_selftest.py")], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip()[-600:])
+    check(r.returncode == 0, "regenerate chosen parts and edit saved themes: locked parts, previous version, save in place / as new, built-in refused, no stray effects (stub AIs, scratch state)")
     t = catalog_text(cat)
     print("info: catalog ~%d tokens, guide ~%d tokens" % (len(t) // 4, len(guide_text()) // 4))
     print("selftest: %s" % ("PASS" if not bad else "FAIL (%d)" % len(bad)))

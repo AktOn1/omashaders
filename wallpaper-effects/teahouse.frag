@@ -68,7 +68,7 @@ float th_bamboo(vec2 p, float x0, float width, float t, float sd, float asp) {
   for (int i = 0; i < 5; i++) {
     float fi = float(i);
     float ly = 0.12 + 0.17 * fi + 0.04 * th_h(vec2(fi, sd));
-    float side = (i % 2 == 0) ? 1.0 : -1.0;
+    float side = (mod(float(i), 2.0) < 0.5) ? 1.0 : -1.0;
     vec2 c = vec2(xs + side * 0.01 + sway * 0.4, ly);
     float flutter = sin(t * 0.5 + fi * 2.0 + sd * 5.0) * 0.08;
     lv += th_leaf(p, c, 0.5 + side * -0.9 + flutter, 0.15, 0.011);

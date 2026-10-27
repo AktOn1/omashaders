@@ -1,0 +1,13 @@
+# category: Border
+# desc: Square silver bevel border that turns navy on the focused window, with a hard offset shadow and a grey unfocused edge, like a mid-nineties desktop window
+rounding=0
+border_size=3
+border_colors=000080ff,1084d0ff
+border_angle=0
+border_inactive=c0c0c0ff
+shadow_range=1
+shadow_power=1
+shadow_color=000000aa
+shadow_inactive=00000066
+shadow_offset=4,4
+shadow_sharp=1
